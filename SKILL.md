@@ -107,9 +107,17 @@ mkdir -p "$RUN_DIR"
 
 Then every intermediate — resume text, folder context, sub-agent outputs — writes into `$RUN_DIR/`, not `/tmp/`.
 
-### AskUserQuestion pattern for free-text values
+### Interactive prompt pattern (cross-host)
 
-⚠️ **`AskUserQuestion` requires a MINIMUM of 2 real options in the `options` array.** "Other" is auto-added by the tool and does NOT count toward the minimum. Supplying only 1 option crashes with `InputValidationError: Too small: expected array to have >=2 items`. This is the #1 first-run-setup bug to avoid.
+This skill runs on Claude Code, Codex CLI, and Gemini CLI. Each host has a different tool name but the same contract: present 2+ real options, let the student type free text in an "Other" field. The tools are:
+
+- **Claude Code:** `AskUserQuestion`
+- **Codex CLI:** `request_user_input` (NOT `ask_user_question` — that's an unshipped enhancement request)
+- **Gemini CLI:** `ask_user`
+
+Wherever this document says "use the question tool" or names `AskUserQuestion`, use whichever tool your host provides. Reference them with backticks — models match fenced tool names more reliably than bare prose.
+
+⚠️ **All three tools require a MINIMUM of 2 real options.** "Other" is auto-added and does NOT count toward the minimum. Supplying only 1 option crashes with `InputValidationError: Too small: expected array to have >=2 items` (Claude) or `"request_user_input requires non-empty options for every question"` (Codex). Gemini is similarly strict. This is the #1 first-run-setup bug to avoid.
 
 Your job when collecting a free-text value is to avoid TWO separate mistakes:
 
@@ -163,6 +171,25 @@ Doubles the prompts; the student could have pasted in round 1's Other directly.
 
 Apply pattern A or B to every free-text collection: name, email, phone, location, LinkedIn, photo path, GitHub username.
 
+### No interactive tool available — hard-fail fallback
+
+If none of the three question tools is available (e.g., `codex exec` non-interactive mode, a CI script run, or a host that doesn't yet ship any of them), do NOT guess values from context. Silent inference produced wrong configs for ambiguous inputs in v0.1 — students got run-time decisions they didn't make.
+
+Instead:
+
+1. Stop before Phase 1.
+2. Write a skeleton `.resumasher/config.json` in `$STUDENT_CWD` with every required field set to the sentinel string `"__ASK__"`. Include `name`, `email`, `phone`, `linkedin`, `location`, `default_style`, `include_photo`, `photo_path`, `github_username`, and `github_prompted: false`.
+3. Print exactly this message to stdout, then exit with code 2:
+
+   ```
+   resumasher needs answers to its setup questions but this host does not
+   support interactive prompts. Edit .resumasher/config.json, replace every
+   "__ASK__" value with your real answer (use "" to skip optional fields
+   like linkedin/photo_path), then re-run the skill.
+   ```
+
+This halt-and-resume path is the ONLY acceptable fallback. Never infer name, email, GitHub username, or style from resume content or JD location.
+
 ---
 
 ### Phase 0 — First-run setup (skip if already done)
@@ -182,9 +209,9 @@ Print the GDPR notice:
 > `.resumasher/` inside this folder. Nothing is uploaded. If this folder is a
 > git repo, we will add `.resumasher/` to your .gitignore automatically.
 
-**Pre-fill from resume.pdf when possible.** If a `resume.pdf` is present, extract its text (`"$RS" orchestration read-resume resume.pdf`) and try to spot the candidate's name, email, LinkedIn, and location. Show those extracted values as the defaults in your questions so the student only has to CONFIRM, not retype them. Saves 3+ AskUserQuestion rounds on first-run setup.
+**Pre-fill from resume.pdf when possible.** If a `resume.pdf` is present, extract its text (`"$RS" orchestration read-resume resume.pdf`) and try to spot the candidate's name, email, LinkedIn, and location. Show those extracted values as the defaults in your questions so the student only has to CONFIRM, not retype them. Saves 3+ prompt rounds on first-run setup.
 
-Use AskUserQuestion to collect the remaining values. Follow the "AskUserQuestion pattern for free-text values" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
+Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to collect the remaining values. Follow the "Interactive prompt pattern (cross-host)" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
 
 Concrete question shapes. Every free-text question has EXACTLY 2 or more explicit options in `options` array (plus the auto-added Other). Anything less crashes with `InputValidationError`.
 
@@ -287,7 +314,7 @@ Parse the job source:
 
 This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."}`.
 
-If `mode == "url"`: fetch the page with the WebFetch tool. If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via AskUserQuestion to paste the JD text manually, then treat the response as `mode: "literal"`.
+If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to paste the JD text manually, then treat the response as `mode: "literal"`.
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
@@ -491,7 +518,7 @@ FIT_SCORE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-score)
 COMPANY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-company)
 ```
 
-If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via AskUserQuestion: "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
+If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
 
 Compute the output directory:
 
@@ -540,7 +567,7 @@ If you cannot complete the task for any other reason, return:
 FAILURE: <one-line reason>
 ```
 
-If the sub-agent returns a FAILURE sentinel, prompt the student via AskUserQuestion: "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
+If the sub-agent returns a FAILURE sentinel, prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
 
 Save the research to `$OUT_DIR/company-research.md`.
 
@@ -870,7 +897,7 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
 
 2. For each bullet, Read the full line (including any `<!--SOFT: ... -->` comment), parse out the placeholder tokens (`[INSERT TEAM SIZE]`, etc.) and the SOFT alternate content.
 
-3. Batch questions — up to 4 bullets per AskUserQuestion call. For each bullet:
+3. Batch questions — up to 4 bullets per question-tool call (`AskUserQuestion` / `request_user_input` / `ask_user`; all three support batching 2-4 questions per call). For each bullet:
 
    ```
    Question: "This bullet in tailored-resume.md has placeholders:
