@@ -73,12 +73,24 @@ def _have_gh() -> bool:
 
 def _gh_call(endpoint: str) -> dict | list:
     """Call the GitHub API via `gh api`. Uses the user's existing auth."""
-    result = subprocess.run(
-        ["gh", "api", endpoint],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        result = subprocess.run(
+            ["gh", "api", endpoint],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        raise APIError(
+            f"transport=gh endpoint={endpoint}: `gh` binary not found on PATH "
+            f"inside the Python subprocess. Interactive shell may have it but "
+            f"the skill's subprocess may have a different PATH."
+        )
+    except subprocess.TimeoutExpired:
+        raise APIError(
+            f"transport=gh endpoint={endpoint}: `gh api` timed out after 30s. "
+            f"Likely network stall or sandbox hang."
+        )
     if result.returncode != 0:
         stderr = result.stderr.strip()
         # gh signals rate-limit / auth issues in stderr.
@@ -86,7 +98,13 @@ def _gh_call(endpoint: str) -> dict | list:
             raise RateLimitError(stderr)
         if "Not Found" in stderr or "404" in stderr:
             raise NotFoundError(stderr)
-        raise APIError(f"gh api failed: {stderr}")
+        # Include exit code + stderr head so truncated traces still show the
+        # fault. Empty stderr is itself a signal (sandbox may be silencing it).
+        stderr_display = stderr if stderr else "(empty stderr)"
+        raise APIError(
+            f"transport=gh endpoint={endpoint} exit={result.returncode} "
+            f"stderr={stderr_display[:500]}"
+        )
     return json.loads(result.stdout)
 
 
@@ -110,10 +128,20 @@ def _urllib_call(endpoint: str) -> dict | list:
             body = exc.read().decode("utf-8", errors="replace")
             if "rate limit" in body.lower() or "API rate limit exceeded" in body:
                 raise RateLimitError(body)
-            raise APIError(f"HTTP 403: {body}")
+            raise APIError(f"transport=urllib endpoint={endpoint} HTTP 403: {body[:500]}")
         if exc.code == 404:
-            raise NotFoundError(f"HTTP 404: {endpoint}")
-        raise APIError(f"HTTP {exc.code}: {exc.reason}")
+            raise NotFoundError(f"transport=urllib endpoint={endpoint} HTTP 404")
+        raise APIError(f"transport=urllib endpoint={endpoint} HTTP {exc.code}: {exc.reason}")
+    except urllib.error.URLError as exc:
+        # Covers DNS failure, connection refused, sandbox blocks, etc.
+        raise APIError(
+            f"transport=urllib endpoint={endpoint} URLError: {exc.reason!r}. "
+            f"Likely sandbox blocking outbound HTTPS or DNS resolution."
+        )
+    except OSError as exc:
+        raise APIError(
+            f"transport=urllib endpoint={endpoint} OSError: {exc!r}"
+        )
 
 
 def _api_call(endpoint: str, prefer_gh: bool = True) -> dict | list:

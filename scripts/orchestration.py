@@ -632,30 +632,51 @@ def _cli() -> int:
         if args.github_username:
             # Import lazily so folder-only runs don't pay the import cost.
             import github_mine as gm
+
+            def _persist_warning(msg: str) -> None:
+                """
+                Write the warning to a file so it survives trace rollup in
+                non-Claude hosts (Codex truncates long stderr blocks and
+                summarizes them into a paraphrased history entry). The file
+                is a durable ground-truth record the student can paste into
+                a bug report.
+                """
+                try:
+                    run_dir = cwd / ".resumasher" / "run"
+                    run_dir.mkdir(parents=True, exist_ok=True)
+                    (run_dir / "github-mine-error.txt").write_text(msg, encoding="utf-8")
+                except OSError:
+                    pass  # best-effort; don't fail the mine just because we can't log
+
             try:
                 github_prose = gm.mine_github(args.github_username, cwd=cwd)
                 parts.append(github_prose)
             except gm.RateLimitError as exc:
-                print(
-                    f"\n=== GITHUB_MINE_WARNING ===\n"
+                msg = (
+                    f"=== GITHUB_MINE_WARNING ===\n"
                     f"GitHub rate limit hit; continuing without GitHub evidence.\n"
                     f"Install `gh` and run `gh auth login` for a 5000/hr limit.\n"
-                    f"Details: {exc}\n",
-                    file=sys.stderr,
+                    f"Details: {exc}\n"
                 )
+                print("\n" + msg, file=sys.stderr)
+                _persist_warning(msg)
             except gm.NotFoundError:
-                print(
-                    f"\n=== GITHUB_MINE_WARNING ===\n"
+                msg = (
+                    f"=== GITHUB_MINE_WARNING ===\n"
                     f"GitHub user '{args.github_username}' not found or has "
-                    f"no public repos. Continuing without GitHub evidence.\n",
-                    file=sys.stderr,
+                    f"no public repos. Continuing without GitHub evidence.\n"
                 )
+                print("\n" + msg, file=sys.stderr)
+                _persist_warning(msg)
             except gm.APIError as exc:
-                print(
-                    f"\n=== GITHUB_MINE_WARNING ===\n"
-                    f"GitHub API error: {exc}. Continuing without GitHub evidence.\n",
-                    file=sys.stderr,
+                msg = (
+                    f"=== GITHUB_MINE_WARNING ===\n"
+                    f"GitHub API error: {exc}\n"
+                    f"Continuing without GitHub evidence. "
+                    f"Full error written to .resumasher/run/github-mine-error.txt\n"
                 )
+                print("\n" + msg, file=sys.stderr)
+                _persist_warning(msg)
         print("\n\n".join(parts))
         return 0
 
