@@ -20,7 +20,7 @@ From inside your resume folder, run:
 /resumasher "Senior Data Analyst at Acme Corp. Requirements: SQL, Python..."
 ```
 
-Within ~3 minutes you get `./applications/<company>-<date>/` containing:
+A few minutes later you get `./applications/<company>-<date>/` containing:
 
 | File | What it is |
 |---|---|
@@ -95,7 +95,7 @@ cd ~/.claude/skills/resumasher/GOLDEN_FIXTURES
 /resumasher sample-jd.md
 ```
 
-In ~2 minutes you should see three PDFs in `./applications/deloitte-consulting-<today>/`.
+A few minutes later you should see three PDFs in `./applications/deloitte-consulting-<today>/`. Wall-clock time depends on the LLM model in use, GitHub fetch latency (if configured), and your network.
 
 (If you used the project-scope install, replace `~/.claude/skills/resumasher/` with `~/my-job-applications/.claude/skills/resumasher/`.)
 
@@ -103,7 +103,7 @@ In ~2 minutes you should see three PDFs in `./applications/deloitte-consulting-<
 
 ### First-run setup (one time per folder)
 
-The first time you run `/resumasher` in a folder, it will ask for your contact info, default style (EU or US), and whether to include a photo by default. Takes about 2 minutes.
+The first time you run `/resumasher` in a folder, it will ask for your contact info, default style (EU or US), and whether to include a photo by default. Short one-time setup.
 
 Everything is stored locally in `.resumasher/config.json`. Nothing is uploaded.
 

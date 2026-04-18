@@ -197,7 +197,7 @@ On first invocation, skill detects no `.resumasher/` exists and runs a one-time 
 3. Ask for default style preference (EU or US) and whether to include photo by default.
 4. Write `.resumasher/config.json`. Write/append `.gitignore` entry.
 
-Setup target: <2 minutes, ≤4 prompts total. Once done, `/resumasher <job>` is one command.
+Setup target: short, ≤4 prompts total. Once done, `/resumasher <job>` is one command.
 
 ## Test Plan
 
@@ -228,7 +228,7 @@ Test every deterministic helper in SKILL.md orchestration (extracted as Python f
 - 3 PDFs produced in `./applications/fixture-deloitte-<date>/`
 - All 3 PDFs pass `assert_ats_roundtrip`
 - `history.jsonl` has exactly 1 new line with correct fields
-- Total runtime <3 minutes (measured in the test)
+- Total runtime recorded for regression tracking (no hard time budget — depends on LLM model latency, network, and whether GitHub fetch is enabled)
 
 **E2E edge cases (required):**
 - No resume in CWD → skill halts, no partial output created
@@ -255,7 +255,7 @@ Test every deterministic helper in SKILL.md orchestration (extracted as Python f
 
 ## Success Criteria
 
-- **Time to first application bundle:** <3 minutes from `/resumasher <job>` to 3 PDFs on disk, for a student who has already done the one-time setup.
+- **Time to first application bundle:** not measured against a hard budget. Latency is dominated by LLM calls (6+ phases) and external fetches (WebSearch for company research, optional GitHub API mine). A few minutes is typical; pipeline runs longer on slower models or large GitHub profiles.
 - **Evidence-citation rate:** ≥80% of rewritten resume bullets reference a concrete artifact in the student's folder (file path, commit count, metric, deployment URL).
 - **ATS parseability:** 100% of generated PDFs round-trip cleanly through pdfminer.six — every line of content recoverable as text. Verified in automated test.
 - **Cohort adoption:** ≥50% of your ~19 students use it for at least one real application during the semester. Measure by asking the class.
