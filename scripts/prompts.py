@@ -177,6 +177,20 @@ FAILURE: <one-line reason>
 TAILOR_PROMPT = """\
 Rewrite the candidate's resume to tailor it for the job described below.
 
+## Header — use this EXACTLY
+
+The two lines below are the confirmed header for this candidate, built from
+their first-run configuration. **Copy them verbatim as the first two lines of
+your output.** Do NOT infer or override contact details from the resume text
+that follows — the resume PDF may show an older location or omit a LinkedIn
+URL; the values below are the ones the candidate configured and confirmed.
+
+{contact_info}
+
+If any field above is empty, the header is already formatted correctly — do
+not invent a replacement value. Put a blank line after the header, then
+continue with the rest of the resume per the schema later in this prompt.
+
 Original resume:
 <<<RESUME_BEGIN>>>
 {resume_text}
@@ -545,7 +559,7 @@ PROMPT_KINDS: dict[str, PromptSpec] = {
     ),
     "tailor": PromptSpec(
         template=TAILOR_PROMPT,
-        required_vars=("resume_text", "folder_summary", "jd_text"),
+        required_vars=("contact_info", "resume_text", "folder_summary", "jd_text"),
     ),
     "cover-letter": PromptSpec(
         template=COVER_LETTER_PROMPT,
@@ -558,6 +572,38 @@ PROMPT_KINDS: dict[str, PromptSpec] = {
 }
 
 
+def format_contact_info(
+    name: str,
+    email: str = "",
+    phone: str = "",
+    linkedin: str = "",
+    location: str = "",
+) -> str:
+    """
+    Build the pre-formatted header block that the tailor must copy verbatim.
+    Produces exactly two lines:
+
+        # <Name>
+        <email> | <phone> | <linkedin> | <location>
+
+    Empty fields are omitted from the second line so you get
+    ``earino@gmail.com | +1 650 200 7168`` instead of
+    ``earino@gmail.com | +1 650 200 7168 |  | Vienna``.
+
+    Name is required because a resume without a name is nonsense. The rest
+    are optional — an empty string skips the field.
+    """
+    if not name or not name.strip():
+        raise ValueError("format_contact_info: name is required")
+
+    fields = [f for f in (email, phone, linkedin, location) if f and f.strip()]
+    contact_line = " | ".join(fields)
+
+    if contact_line:
+        return f"# {name}\n{contact_line}"
+    return f"# {name}"
+
+
 def build_prompt(
     kind: str,
     *,
@@ -568,6 +614,7 @@ def build_prompt(
     company: Optional[str] = None,
     company_research: Optional[str] = None,
     tailored_resume: Optional[str] = None,
+    contact_info: Optional[str] = None,
 ) -> str:
     """
     Build a ready-to-dispatch prompt for the given sub-agent kind.
@@ -591,6 +638,7 @@ def build_prompt(
         "company": company,
         "company_research": company_research,
         "tailored_resume": tailored_resume,
+        "contact_info": contact_info,
     }
 
     missing = [v for v in spec.required_vars if supplied.get(v) is None]

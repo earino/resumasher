@@ -501,7 +501,7 @@ Save the research to `$OUT_DIR/company-research.md`.
 PROMPT=$("$RS" orchestration build-prompt --kind tailor --cwd "$STUDENT_CWD")
 ```
 
-Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt contains the full tailoring spec — schema, length targets, multi-role tenure format, `[INSERT ...]` placeholder rules, SOFT-alternate requirement, and the non-negotiable ANCHORING RULE that forbids fabricating experience to match the JD. Template: `scripts/prompts.py` `tailor` kind (the canonical source — edits go there, not here).
+Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt contains the full tailoring spec — schema, length targets, multi-role tenure format, `[INSERT ...]` placeholder rules, SOFT-alternate requirement, and the non-negotiable ANCHORING RULE that forbids fabricating experience to match the JD. It also contains a pre-built contact header at the top, read from `.resumasher/config.json` — the tailor copies that header verbatim rather than inferring contact info from the resume PDF (which may lack the student's LinkedIn URL or show a stale location). Template: `scripts/prompts.py` `tailor` kind (the canonical source — edits go there, not here).
 
 Save the output to `$OUT_DIR/tailored-resume.md`.
 

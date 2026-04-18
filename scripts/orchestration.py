@@ -48,7 +48,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Import the prompt registry eagerly so the CLI's --kind choices can be
 # populated. The prompts module has no heavy deps (just stdlib + dataclasses),
 # so the import cost is negligible.
-from prompts import PROMPT_KINDS as _PROMPT_KINDS, build_prompt as _build_prompt
+from prompts import (
+    PROMPT_KINDS as _PROMPT_KINDS,
+    build_prompt as _build_prompt,
+    format_contact_info as _format_contact_info,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -915,6 +919,45 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
             if content is None:
                 return _missing(var, out_dir / "tailored-resume.md", "the tailor sub-agent in Phase 5")
             kwargs[var] = content
+        elif var == "contact_info":
+            # Read configured contact fields from .resumasher/config.json and
+            # format as a pre-built 2-line header the tailor must copy verbatim.
+            # This exists because tailor sub-agents on some hosts (observed
+            # under Gemini) don't have access to config — they'd otherwise
+            # emit [INSERT LINKEDIN URL] placeholders or fall back to the
+            # resume's stale location. With contact_info pre-formatted here,
+            # the tailor has no ambiguity and no way to drift.
+            config_path = cwd / ".resumasher" / "config.json"
+            config_text = _read_if_exists(config_path)
+            if config_text is None:
+                return _missing(
+                    var, config_path,
+                    "first-run setup in Phase 0 (writes .resumasher/config.json)",
+                )
+            try:
+                config = json.loads(config_text)
+            except json.JSONDecodeError as exc:
+                print(
+                    f"FAILURE: build-prompt --kind {args.kind}: "
+                    f"could not parse {config_path}: {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                kwargs[var] = _format_contact_info(
+                    name=config.get("name", ""),
+                    email=config.get("email", ""),
+                    phone=config.get("phone", ""),
+                    linkedin=config.get("linkedin", ""),
+                    location=config.get("location", ""),
+                )
+            except ValueError as exc:
+                print(
+                    f"FAILURE: build-prompt --kind {args.kind}: {exc}. "
+                    f"Fix the 'name' field in {config_path} and re-run.",
+                    file=sys.stderr,
+                )
+                return 2
 
     prompt = _build_prompt(args.kind, **kwargs)
     sys.stdout.write(prompt)

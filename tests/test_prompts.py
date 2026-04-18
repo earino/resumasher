@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.prompts import PROMPT_KINDS, build_prompt
+from scripts.prompts import PROMPT_KINDS, build_prompt, format_contact_info
 
 
 # ---------------------------------------------------------------------------
@@ -58,16 +58,19 @@ def test_company_researcher_substitutes_company():
     assert "{company}" not in p
 
 
-def test_tailor_substitutes_all_three():
+def test_tailor_substitutes_all_four():
     p = build_prompt(
         "tailor",
+        contact_info="# CONTACT_MARKER\ne@x.com | p | l | loc",
         resume_text="RESUME_MARKER",
         folder_summary="EVIDENCE_MARKER",
         jd_text="JD_MARKER",
     )
+    assert "CONTACT_MARKER" in p
     assert "RESUME_MARKER" in p
     assert "EVIDENCE_MARKER" in p
     assert "JD_MARKER" in p
+    assert "{contact_info}" not in p
     assert "{resume_text}" not in p
     assert "{folder_summary}" not in p
     assert "{jd_text}" not in p
@@ -116,7 +119,13 @@ def test_interview_coach_substitutes_all_three():
 
 
 def test_tailor_preserves_schema_literals():
-    p = build_prompt("tailor", resume_text="R", folder_summary="E", jd_text="J")
+    p = build_prompt(
+        "tailor",
+        contact_info="# Name\ne@x.com",
+        resume_text="R",
+        folder_summary="E",
+        jd_text="J",
+    )
     # These must survive untouched — they're LLM output schema markers.
     for literal in ("{Full Name}", "{Title}", "{Company}", "{Degree}", "{Institution}"):
         assert literal in p, f"schema literal {literal!r} was eaten by build_prompt"
@@ -153,7 +162,12 @@ KIND_FIXTURES: dict[str, dict[str, str]] = {
     "folder-miner": {"folder_context": "FOLDER"},
     "fit-analyst": {"resume_text": "R", "folder_summary": "E", "jd_text": "J"},
     "company-researcher": {"company": "Acme"},
-    "tailor": {"resume_text": "R", "folder_summary": "E", "jd_text": "J"},
+    "tailor": {
+        "contact_info": "# Test\nt@x.com",
+        "resume_text": "R",
+        "folder_summary": "E",
+        "jd_text": "J",
+    },
     "cover-letter": {"tailored_resume": "R", "jd_text": "J", "company_research": "C"},
     "interview-coach": {"tailored_resume": "R", "folder_summary": "E", "jd_text": "J"},
 }
@@ -190,6 +204,186 @@ def test_missing_required_var_raises():
     with pytest.raises(ValueError, match="requires"):
         build_prompt("fit-analyst", resume_text="R", folder_summary="E")
         # jd_text missing
+
+
+def test_tailor_without_contact_info_raises():
+    """
+    After the contact_info refactor, tailor requires 4 vars not 3.
+    Forgetting contact_info should fail fast with a clear error.
+    """
+    with pytest.raises(ValueError, match="contact_info"):
+        build_prompt(
+            "tailor",
+            resume_text="R",
+            folder_summary="E",
+            jd_text="J",
+        )
+
+
+# ---------------------------------------------------------------------------
+# format_contact_info — header construction from config fields
+# ---------------------------------------------------------------------------
+
+
+def test_format_contact_info_full():
+    """All fields present produces a 2-line header with pipe-separated contact."""
+    ci = format_contact_info(
+        name="Eduardo Ariño de la Rubia",
+        email="earino@gmail.com",
+        phone="+1 650 200 7168",
+        linkedin="https://linkedin.com/in/earino",
+        location="Vienna",
+    )
+    assert ci == (
+        "# Eduardo Ariño de la Rubia\n"
+        "earino@gmail.com | +1 650 200 7168 | https://linkedin.com/in/earino | Vienna"
+    )
+
+
+def test_format_contact_info_omits_empty_fields():
+    """
+    Empty optional fields must be omitted from the contact line, not left
+    as empty cells between pipes. Avoids rendering '| |' gaps that look
+    like formatting bugs.
+    """
+    ci = format_contact_info(
+        name="Ana Müller",
+        email="ana@x.com",
+        phone="+43 1 234",
+        linkedin="",  # not on LinkedIn
+        location="Vienna",
+    )
+    assert ci == "# Ana Müller\nana@x.com | +43 1 234 | Vienna"
+    assert "| |" not in ci
+    assert "|  |" not in ci
+
+
+def test_format_contact_info_only_name():
+    """
+    All optional fields empty should produce just the name line — no
+    trailing pipe separator line at all.
+    """
+    ci = format_contact_info(name="Jiří Novák")
+    assert ci == "# Jiří Novák"
+    assert "|" not in ci
+
+
+def test_format_contact_info_whitespace_only_fields_treated_as_empty():
+    """A field that's just spaces should be omitted, not render as blank."""
+    ci = format_contact_info(
+        name="Björn Åkerström",
+        email="b@x.com",
+        phone="   ",  # whitespace only
+        location="Stockholm",
+    )
+    assert ci == "# Björn Åkerström\nb@x.com | Stockholm"
+
+
+def test_format_contact_info_missing_name_raises():
+    """Name is the only required field. Empty / whitespace-only should fail."""
+    with pytest.raises(ValueError, match="name is required"):
+        format_contact_info(name="")
+    with pytest.raises(ValueError, match="name is required"):
+        format_contact_info(name="   ")
+
+
+def test_format_contact_info_handles_non_ascii():
+    """
+    Non-ASCII names (Müller, Arino with tilde, Jiří) must flow through
+    unchanged — no mangling, no stripping, no 'replace' encoding.
+    """
+    ci = format_contact_info(name="Ana Müller", email="ana@x.com")
+    assert "Ana Müller" in ci
+    assert "ü" in ci  # byte-level confirmation
+
+
+# ---------------------------------------------------------------------------
+# CLI: build-prompt reads config.json for tailor kind
+# ---------------------------------------------------------------------------
+
+
+def test_cli_build_prompt_tailor_reads_config(skill_tree: Path):
+    """
+    End-to-end: the CLI reads .resumasher/config.json, formats a header,
+    substitutes it into the tailor prompt. This is the fix for Gemini's
+    [INSERT LINKEDIN URL] placeholder bug — tailor no longer has to
+    guess contact info.
+    """
+    config = {
+        "name": "Eduardo Ariño de la Rubia",
+        "email": "earino@gmail.com",
+        "phone": "+1 650 200 7168",
+        "linkedin": "https://linkedin.com/in/earino",
+        "location": "Vienna",
+        "default_style": "eu",
+        "include_photo": True,
+        "photo_path": "/Users/earino/Desktop/headshot.png",
+        "github_username": "earino",
+        "github_prompted": True,
+    }
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+
+    r = _run_build_prompt("--kind", "tailor", "--cwd", str(skill_tree))
+    assert r.returncode == 0, r.stderr
+    assert "Eduardo Ariño de la Rubia" in r.stdout
+    assert "earino@gmail.com" in r.stdout
+    assert "https://linkedin.com/in/earino" in r.stdout
+    assert "Vienna" in r.stdout
+    assert "{contact_info}" not in r.stdout
+    # Resume-text and other required vars still present
+    assert "RESUME_FILE_CONTENT" in r.stdout
+
+
+def test_cli_build_prompt_tailor_omits_empty_config_fields(skill_tree: Path):
+    """
+    Config with missing LinkedIn should produce a contact line without a
+    stray pipe. Regression guard for '| |' rendering.
+    """
+    config = {
+        "name": "Ana Müller",
+        "email": "ana@x.com",
+        "phone": "",  # intentionally empty
+        "linkedin": "",
+        "location": "Vienna",
+    }
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    r = _run_build_prompt("--kind", "tailor", "--cwd", str(skill_tree))
+    assert r.returncode == 0, r.stderr
+    assert "Ana Müller" in r.stdout
+    assert "ana@x.com | Vienna" in r.stdout
+    assert "| |" not in r.stdout
+    assert "|  |" not in r.stdout
+
+
+def test_cli_build_prompt_tailor_missing_config_exits_2(skill_tree: Path):
+    """
+    Missing .resumasher/config.json should exit 2 with an actionable
+    error pointing at Phase 0 first-run setup.
+    """
+    # skill_tree fixture doesn't create config.json — only resume/context/jd
+    r = _run_build_prompt("--kind", "tailor", "--cwd", str(skill_tree))
+    assert r.returncode == 2
+    assert "config.json" in r.stderr
+    assert "first-run" in r.stderr.lower() or "Phase 0" in r.stderr
+
+
+def test_cli_build_prompt_tailor_empty_name_exits_2(skill_tree: Path):
+    """
+    Config with empty name can't produce a valid header. Fail loudly
+    rather than silently emit '# \\n...' which would render as a blank
+    name line.
+    """
+    config = {"name": "", "email": "x@y.com"}
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps(config), encoding="utf-8"
+    )
+    r = _run_build_prompt("--kind", "tailor", "--cwd", str(skill_tree))
+    assert r.returncode == 2
+    assert "name" in r.stderr.lower()
 
 
 def test_empty_string_is_allowed_not_missing():
@@ -302,11 +496,17 @@ def test_cli_build_prompt_interview_coach(skill_tree: Path):
 
 
 def test_cli_build_prompt_tailor(skill_tree: Path):
+    # Tailor now requires config.json for contact_info — write a minimal one.
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps({"name": "Test Candidate", "email": "t@x.com"}),
+        encoding="utf-8",
+    )
     r = _run_build_prompt("--kind", "tailor", "--cwd", str(skill_tree))
     assert r.returncode == 0, r.stderr
     assert "RESUME_FILE_CONTENT" in r.stdout
     assert "CACHE_FILE_CONTENT" in r.stdout
     assert "JD_FILE_CONTENT" in r.stdout
+    assert "Test Candidate" in r.stdout
 
 
 def test_cli_build_prompt_missing_file_exits_2(tmp_path: Path):
