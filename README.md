@@ -183,7 +183,7 @@ MIT — see [LICENSE](LICENSE). Fork it, extend it, ship it to your students.
 
 ## Credits
 
-Built by [Eduardo Ariño de la Rubia](https://github.com/earino) for the CEU Vienna MS in Business Analytics program.
+Built by [Eduardo Ariño de la Rubia](https://github.com/earino) for his wonderful students, and anyone else who may find it useful.
 
 Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-eng-review skills) and built with [Claude Code](https://claude.com/claude-code).
 
