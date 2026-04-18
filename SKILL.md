@@ -46,7 +46,10 @@ for c in \
   "$REPO_ROOT/.claude/skills/resumasher" \
   "$HOME/.codex/skills/resumasher" \
   "$PWD/.codex/skills/resumasher" \
-  "$REPO_ROOT/.codex/skills/resumasher"; do
+  "$REPO_ROOT/.codex/skills/resumasher" \
+  "$HOME/.gemini/skills/resumasher" \
+  "$PWD/.gemini/skills/resumasher" \
+  "$REPO_ROOT/.gemini/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   if [ -x "$c/.venv/bin/python" ]; then
@@ -1069,7 +1072,10 @@ for c in \
   "$REPO_ROOT/.claude/skills/resumasher" \
   "$HOME/.codex/skills/resumasher" \
   "$PWD/.codex/skills/resumasher" \
-  "$REPO_ROOT/.codex/skills/resumasher"; do
+  "$REPO_ROOT/.codex/skills/resumasher" \
+  "$HOME/.gemini/skills/resumasher" \
+  "$PWD/.gemini/skills/resumasher" \
+  "$REPO_ROOT/.gemini/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break
