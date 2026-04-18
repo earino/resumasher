@@ -1,0 +1,4 @@
+title: resumasher
+description: A cross-host AI-CLI skill that tailors resumes, writes cover letters, and builds interview prep bundles. Runs on Claude Code, OpenAI Codex CLI, and Google Gemini CLI.
+theme: jekyll-theme-cayman
+show_downloads: false

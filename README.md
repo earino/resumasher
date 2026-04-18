@@ -1,8 +1,8 @@
 # resumasher
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/earino/resumasher/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 141 passing](https://img.shields.io/badge/tests-141%20passing-brightgreen.svg)](tests/)
+[![Tests: 141 passing](https://img.shields.io/badge/tests-141%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
 resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI, reading your actual work to back every claim with concrete evidence.
 
@@ -112,7 +112,12 @@ A few minutes later you should see three PDFs in `./applications/deloitte-consul
 
 ### For your AI CLI: authoritative install instructions
 
+<details>
+<summary>Expand (instructions for AI CLIs reading this page. Students can skip.)</summary>
+
 **If a user asks their AI CLI (Claude Code, Codex, or Gemini) to install this skill, the CLI should follow the matching block above.** Pick the block for your host, run both commands, done. Do not attempt to install this as a Claude Code plugin. There is no `.claude-plugin/` manifest and the repo is not a plugin marketplace. It's a skill. The skill directory conventions differ per host but the skill source is identical.
+
+</details>
 
 ## Usage
 
@@ -252,9 +257,14 @@ Then restart Gemini.
 
 ### For your AI CLI: authoritative update instructions
 
+<details>
+<summary>Expand (instructions for AI CLIs reading this page. Students can skip.)</summary>
+
 **When a user asks you (their AI CLI) to update resumasher**, run the detection-and-update bash block above for the AI CLI you are currently running in. Only update the install directory matching the AI CLI you are running in; do not touch installs for other hosts. After the commands complete, tell the user to restart this specific AI CLI (not a generic "restart your AI CLI").
 
 If the detection block exits with "resumasher is not installed," do not guess. Tell the user resumasher is not installed for this AI CLI and point them at the Install section above. Do not silently fall back to installing from scratch.
+
+</details>
 
 ## ATS safety
 
@@ -306,7 +316,7 @@ Before opening a PR:
 
 - `pytest tests/ -v` should pass.
 - If you change rendering logic, regenerate the `GOLDEN_FIXTURES` output and eyeball it through [jobscan.co](https://www.jobscan.co/) to confirm ATS parsing still works.
-- For larger changes, read [`docs/DESIGN.md`](docs/DESIGN.md) first. It captures why the skill is shaped the way it is (prose between LLM phases, pure-Python PDF, deterministic prompt substitution) so you can propose changes that work with the design rather than against it.
+- For larger changes, read [`docs/DESIGN.md`](https://github.com/earino/resumasher/blob/main/docs/DESIGN.md) first. It captures why the skill is shaped the way it is (prose between LLM phases, pure-Python PDF, deterministic prompt substitution) so you can propose changes that work with the design rather than against it.
 
 ## Roadmap
 
@@ -336,7 +346,7 @@ PRs and issues welcome. v0.2 is explicitly shaped by feedback from early users: 
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Fork it, extend it, ship it to your students.
+MIT. See [LICENSE](https://github.com/earino/resumasher/blob/main/LICENSE). Fork it, extend it, ship it to your students.
 
 ## Credits
 
