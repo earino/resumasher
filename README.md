@@ -10,6 +10,8 @@ Every other AI resume tool is a web app that only sees the summary you paste in.
 
 Runs on **Claude Code**, **OpenAI Codex CLI**, and **Google Gemini CLI**. Built for students, generalizes to anyone with real project evidence to draw from.
 
+![resumasher running: terminal walkthrough from `/resumasher job.md` through fit assessment, tailor, placeholder fill, and PDF render](assets/img/demo.gif)
+
 ## What you get
 
 From your resume folder, run:
