@@ -1,0 +1,312 @@
+/*
+ * resumasher landing page: styled like a resume.
+ *
+ * The product generates ATS-safe single-column resumes, so the site
+ * itself is rendered as one. Warm paper tone, classic serif body,
+ * section headings in small caps under a single underline, a single
+ * muted accent color, no chrome.
+ */
+
+:root {
+  --paper: #fafaf7;
+  --ink: #1a1a1a;
+  --ink-soft: #4a4a4a;
+  --rule: #1a1a1a;
+  --muted: #6b6b6b;
+  --surface: #efede6;
+  --accent: #8b3a3a;
+  --accent-dim: #a85a5a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--paper);
+  margin: 0;
+  padding: 0;
+  /* Subtle paper-grain via a barely-there background gradient.
+   * Actual paper texture images would be heavier than they're worth. */
+  background-image: radial-gradient(ellipse at top, #fcfbf6 0%, #fafaf7 70%);
+}
+
+.document {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4rem 2rem 6rem;
+}
+
+/* --- Name / header treatment --- */
+/* H1 is the document "name" line. Big, confident, a single rule under it
+ * mirrors the resumes the tool generates. */
+h1 {
+  font-size: 2.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.25rem;
+  line-height: 1.1;
+}
+
+/* The paragraph right under H1 is the "tagline" line. On a real resume
+ * it'd be the contact line. Here it's the tool's pitch. */
+h1 + p,
+h1 + p + p {
+  font-size: 1.05rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0.5rem 0;
+}
+
+/* The badge paragraph sits between H1 and the pitch — make it compact. */
+h1 + p a img {
+  vertical-align: middle;
+}
+
+/* --- Section headings: resume section-rule style --- */
+h2 {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+  border-bottom: 1.5px solid var(--rule);
+  padding-bottom: 0.35rem;
+  margin: 3rem 0 1.25rem;
+}
+
+h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 2rem 0 0.5rem;
+  letter-spacing: -0.005em;
+}
+
+h4 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 1.25rem 0 0.4rem;
+}
+
+/* Paragraphs */
+p {
+  margin: 0.9rem 0;
+}
+
+strong {
+  font-weight: 700;
+}
+
+em {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+/* --- Links --- */
+a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: color 120ms ease;
+}
+
+a:hover {
+  color: var(--accent-dim);
+}
+
+/* --- Lists --- */
+ul, ol {
+  padding-left: 1.3rem;
+  margin: 0.9rem 0;
+}
+
+li {
+  margin: 0.3rem 0;
+}
+
+/* --- Code --- */
+/* Inline code: a monospace callout, subtle enough to sit in running
+ * prose without shouting. */
+code {
+  font-family: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+/* Code block: slightly inset, warm surface, no syntax highlighting
+ * flourishes. A resume doesn't have code, but the install commands need
+ * to live somewhere. This treats them as "attached technical appendix". */
+pre {
+  background: var(--surface);
+  padding: 1rem 1.2rem;
+  border-left: 3px solid var(--rule);
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 1rem 0;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* --- Tables --- */
+/* The "what you get" table should feel like a resume skills/experience
+ * matrix: no filled-in row striping, just clean horizontal rules. */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2rem 0;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid #d8d5cc;
+  vertical-align: top;
+}
+
+th {
+  font-weight: 700;
+  border-bottom: 2px solid var(--rule);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.85rem;
+}
+
+/* --- Blockquotes --- */
+blockquote {
+  border-left: 3px solid var(--rule);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+/* --- Details / summary --- */
+/* These are the "For your AI CLI: authoritative instructions" blocks.
+ * Understated so students skim past them. */
+details {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+details[open] {
+  padding-bottom: 1rem;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  list-style: none;
+  outline: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::before {
+  content: "▸ ";
+  display: inline-block;
+  margin-right: 0.25rem;
+  transition: transform 150ms ease;
+}
+
+details[open] > summary::before {
+  content: "▾ ";
+}
+
+details > *:not(summary) {
+  margin-top: 0.75rem;
+}
+
+/* --- Horizontal rule --- */
+hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 2.5rem 0;
+}
+
+/* --- Image / badge adjustments --- */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Shields.io badges look fine at natural size; don't stretch them. */
+p > a > img[src*="shields.io"] {
+  margin: 0.1rem 0.2rem 0.1rem 0;
+}
+
+/* --- Responsive --- */
+@media (max-width: 640px) {
+  .document {
+    padding: 2.5rem 1.25rem 4rem;
+  }
+
+  h1 {
+    font-size: 2.2rem;
+  }
+
+  h2 {
+    font-size: 0.9rem;
+    margin-top: 2.5rem;
+  }
+
+  pre {
+    font-size: 0.85rem;
+    padding: 0.8rem 1rem;
+  }
+
+  body {
+    font-size: 16px;
+  }
+}
+
+/* --- Print: output the document the way it renders on screen,
+ * because the screen already looks like a printed resume. --- */
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .document {
+    max-width: none;
+    padding: 0.5in;
+  }
+
+  details {
+    background: transparent;
+    border: 1px solid #ccc;
+  }
+
+  details:not([open]) > *:not(summary) {
+    display: none;
+  }
+
+  a {
+    color: var(--ink);
+    text-decoration: underline;
+  }
+}

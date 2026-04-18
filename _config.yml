@@ -1,4 +1,36 @@
 title: resumasher
 description: A cross-host AI-CLI skill that tailors resumes, writes cover letters, and builds interview prep bundles. Runs on Claude Code, OpenAI Codex CLI, and Google Gemini CLI.
-theme: jekyll-theme-cayman
-show_downloads: false
+
+# Intentionally no theme: key. Custom _layouts/default.html + assets/css/style.css
+# render the site as a resume-looking document, which fits the product. Relying on
+# a built-in GitHub Pages theme (cayman, minimal, etc.) produced the generic
+# "shipped on a weekend" look. This is the same content, rendered on its own terms.
+
+# Use GitHub Pages' official plugins that process the site.
+plugins:
+  - jekyll-relative-links
+
+# Let jekyll-relative-links rewrite any relative .md links (though we've
+# already rewritten them to absolute github.com URLs for portability).
+relative_links:
+  enabled: true
+  collections: false
+
+# Exclude noise from the built site.
+exclude:
+  - scripts/
+  - tests/
+  - bin/
+  - GOLDEN_FIXTURES/
+  - docs/
+  - install.sh
+  - requirements.txt
+  - requirements-dev.txt
+  - conftest.py
+  - pytest.ini
+  - TODOS.md
+  - CHANGELOG.md
+  - trace_comparison/
+  - .venv/
+  - .gstack/
+  - .github/
