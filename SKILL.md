@@ -912,14 +912,25 @@ If the student interrupts mid-fill or expresses frustration with the process, of
 
 Use `render-pdf.py` to produce three PDFs. Pass `--photo` only for EU resumes where the config says photo=true and the photo file exists. US resumes suppress the photo regardless (enforced inside `render-pdf.py`).
 
+Build the photo argument as a bash array — unquoted string expansion (`$PHOTO_ARG`) breaks when the path has spaces or special characters, and has been seen to fail expansion entirely in some shell environments.
+
 ```bash
+# Read photo config fresh in this shell invocation (shell state does not persist between Bash calls).
+INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
+PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
+
+PHOTO_ARGS=()
+if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
+  PHOTO_ARGS=(--photo "$PHOTO_PATH")
+fi
+
 # Resume
 "$RS" render_pdf \
   --input "$OUT_DIR/tailored-resume.md" \
   --kind resume \
   --style "$STYLE" \
   --output "$OUT_DIR/resume.pdf" \
-  ${PHOTO_ARG}
+  "${PHOTO_ARGS[@]}"
 
 # Cover letter
 "$RS" render_pdf \
@@ -1067,19 +1078,19 @@ PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
 
 **Re-render the one(s) the student edited:**
 
-For the **resume** — pass `--photo` only if style is EU and include_photo is true:
+For the **resume** — pass `--photo` only if style is EU and include_photo is true. Use a bash array, not an unquoted string variable — the latter mis-expands on paths with spaces and has been seen to fail silently in some shell environments.
 
 ```bash
-PHOTO_ARG=""
+PHOTO_ARGS=()
 if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
-  PHOTO_ARG="--photo $PHOTO_PATH"
+  PHOTO_ARGS=(--photo "$PHOTO_PATH")
 fi
 "$RS" render_pdf \
   --input "$OUT_DIR/tailored-resume.md" \
   --kind resume \
   --style "$STYLE" \
   --output "$OUT_DIR/resume.pdf" \
-  $PHOTO_ARG
+  "${PHOTO_ARGS[@]}"
 ```
 
 For the **cover letter**:

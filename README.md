@@ -8,7 +8,7 @@ A Claude Code skill that tailors your resume + writes a cover letter + builds an
 
 Built for an MS Business Analytics cohort, but the shape generalizes to any student with a portfolio of code, notebooks, and PDF reports.
 
-**TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher runs locally, so it reads your actual project files — code, notebooks, READMEs, PDFs — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
+**TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher reads your actual work — your public GitHub repos and any project files in the working directory — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
 
 ## For Claude Code — how to install this skill
 
@@ -67,13 +67,17 @@ A few minutes later you get `./applications/<company>-<date>/` containing:
 | `company-research.md` | 3-5 recent facts about the company with citations |
 | `tailored-resume.md`, `cover-letter.md`, `interview-prep.md` | Markdown sources (edit and re-render) |
 
-## The unfair advantage: folder access
+## The unfair advantage: it sees your actual work
 
-Every other resume-tailoring tool is a web app that only sees the summary you paste in. resumasher runs locally, so it reads your `capstone/`, `ml-final/`, `text-mining/` folders and cites specific evidence in your resume.
+Every other resume-tailoring tool is a web app that only sees the summary you paste in. resumasher runs inside Claude Code, so it pulls from two evidence sources the web tools cannot reach:
 
-Your bullet becomes: "Built an XGBoost churn classifier on 2.3M rows, F1=0.82, deployed to Flask — see `/projects/churn-model/`" instead of "built a machine learning model."
+**Your public GitHub.** One-time setup, then every run mines your non-fork repos — names, descriptions, topics, README content, last-push date. For most students this is where the evidence lives, especially on a borrowed or clean laptop.
 
-Competitors cannot do this. resumasher can because it lives in the filesystem.
+**Your working directory.** If you keep project files locally — capstone code, ML notebooks, text-mining writeups, PDF reports — resumasher reads those too and cites specific files.
+
+Your bullet becomes: "Built an XGBoost churn classifier on 2.3M rows, F1=0.82, deployed to Flask — see `github.com/you/churn-model`" instead of "built a machine learning model."
+
+Competitors cannot do this. resumasher can because it's a Claude Code skill, not a web form.
 
 ## Install
 
@@ -181,6 +185,8 @@ my-job-search/
 ```
 
 See `GOLDEN_FIXTURES/` in this repo for a full example.
+
+**Tip when iterating in the same folder:** each run's JD file sits alongside your resume. If you apply to several roles from one folder, delete or archive the old JD file before the next run, or put each JD in its own subfolder. Otherwise the folder miner will pick up every JD you've tried and hand them to the tailor as context, which wastes tokens and can confuse the sub-agent.
 
 ### GitHub profile (optional, auto-used when configured)
 
