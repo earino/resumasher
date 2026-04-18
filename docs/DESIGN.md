@@ -6,6 +6,12 @@ Repo: resumasher
 Status: APPROVED
 Mode: Builder
 
+> **⚠ Read this first.** This document captures the *original design rationale* as approved by the eng review on 2026-04-18. It explains *why* the skill is shaped the way it is (prose between LLM phases, pure-Python PDF, scope-reduced file tree, etc.) so contributors can propose changes that work with the design rather than against it.
+>
+> **This is NOT a current-state reference.** The shipped code has evolved past this design — GitHub profile mining, interactive placeholder fill, a `bin/` wrapper, multi-role sub-block rendering, and several fixes driven by real user traces are all post-design additions. For the current state of the code (file tree, features, install instructions), see [README.md](../README.md).
+>
+> Keep this document frozen-ish. Update it only when the *rationale* itself shifts, not every time the code moves. That preserves the "why" as a historical record.
+
 ## Problem Statement
 
 An MS Business Analytics cohort (~19 students from mixed international backgrounds) needs to apply to data/BI/consulting roles at major employers across DACH and the EU. Every application should be tailored — but tailoring 20 resumes by hand in a weekend is soul-crushing, and the SaaS tools available (Jobscan, Rezi, PitchMeAI) only see the resume summary, not the actual work.

@@ -74,28 +74,59 @@ Then every intermediate — resume text, folder context, sub-agent outputs — w
 
 ### AskUserQuestion pattern for free-text values
 
-Claude Code's `AskUserQuestion` tool requires 2–4 options per question. When you need to collect a free-text value (phone number, photo path, GitHub username, location), **do NOT** create a three-option question like `[Yes/No/I'll provide it]` that requires a second round of AskUserQuestion to actually collect the value. That doubles the prompts and the student will just paste into "Other" anyway.
+⚠️ **`AskUserQuestion` requires a MINIMUM of 2 real options in the `options` array.** "Other" is auto-added by the tool and does NOT count toward the minimum. Supplying only 1 option crashes with `InputValidationError: Too small: expected array to have >=2 items`. This is the #1 first-run-setup bug to avoid.
 
-✅ **Correct pattern** — 2 options, student pastes real value in Other:
+Your job when collecting a free-text value is to avoid TWO separate mistakes:
 
-```
-Question: "Phone number for your resume?"
-  A) Skip (save phone=null in config, you can add it later)
-  Other: paste your phone number (e.g., +43 664 1234567)
-```
+1. Passing only 1 explicit option (API error, nothing happens).
+2. Designing a middleman flow where round 1 asks "will you provide a value?" and round 2 actually collects it (API works, but doubles the prompts).
 
-The student types in Other, the value arrives, done in one round.
+Both are avoidable with the right 2-option + Other shape.
 
-❌ **Wrong pattern** — three-option with middleman:
+✅ **Correct pattern A — when a default value exists** (e.g., you extracted `name` / `email` / `phone` / `linkedin` / `location` from a `resume.pdf`):
 
 ```
-Question: "Phone number for your resume?"
+Question: "Phone number for the resume?"
+  A) Use the value from your resume: "+43 664 1234567"
+  B) Skip — don't include phone on the tailored resume
+  Other: paste a different phone number
+```
+
+Two real options (A = accept default, B = skip), plus Other for the student to override. One round, collects the value immediately.
+
+✅ **Correct pattern B — when no default exists** (e.g., GitHub username, photo path — the PDF doesn't contain these):
+
+```
+Question: "Do you have a GitHub? We can leverage it for this."
+  A) I have one — paste the username/URL in Other below
+  B) Skip — leave blank; set github_prompted=true so we don't re-ask
+  Other: paste your GitHub username or profile URL
+```
+
+Two real options (A = I'll provide a value, use the Other field on this screen, B = skip permanently), plus Other for the actual value. Student picks "Other" in practice (since that's where the input is) — `A` exists purely to satisfy the minimum-2 constraint AND to give a visible hint that there IS an input field.
+
+❌ **Wrong pattern 1** — 1 real option (API error):
+
+```
+Question: "Phone number?"
   A) Skip
-  B) I'll provide it   ← WRONG: forces a second question to actually collect
-  Other: ...
+  Other: paste your phone   ← InputValidationError, too few options
 ```
 
-Apply this pattern for every free-text collection: phone, location, photo path, GitHub username. One round, not two.
+❌ **Wrong pattern 2** — middleman (2 rounds):
+
+```
+Round 1: "Phone number?"
+  A) Skip
+  B) I'll enter it          ← Student picks B
+Round 2: "Type your phone number in Other field"
+  A) (forced placeholder)
+  Other: paste real value   ← Actual value arrives here
+```
+
+Doubles the prompts; the student could have pasted in round 1's Other directly.
+
+Apply pattern A or B to every free-text collection: name, email, phone, location, LinkedIn, photo path, GitHub username.
 
 ---
 
@@ -120,55 +151,82 @@ Print the GDPR notice:
 
 Use AskUserQuestion to collect the remaining values. Follow the "AskUserQuestion pattern for free-text values" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
 
-Concrete question shapes:
+Concrete question shapes. Every free-text question has EXACTLY 2 or more explicit options in `options` array (plus the auto-added Other). Anything less crashes with `InputValidationError`.
 
-1. **Name** (usually confirmed from PDF):
+1. **Name** (usually extracted from PDF):
    ```
    Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
-     A) Yes, use this exact name
-     Other: paste the exact name you want (if the PDF extract has artifacts)
+     A) Yes, use '{name}' exactly as shown
+     B) Skip — no name on the resume (unusual but allowed)
+     Other: paste the exact name to use instead
    ```
 
-2. **Phone** — free text:
+2. **Email** (usually extracted from PDF):
    ```
-   Question: "Phone number for your resume?"
-     A) Skip (leave phone off the resume)
-     Other: paste your phone (e.g., +43 664 1234567)
-   ```
-
-3. **Location** — free text:
-   ```
-   Question: "City, country to show on the resume?"
-     A) Use Vienna, Austria  (if PDF extract suggested this)
-     Other: paste the location you want
+   Question: "Email for the resume?"
+     A) Use '{email}' from your resume
+     B) Skip — no email on the resume
+     Other: paste a different email
    ```
 
-4. **Style**:
+3. **Phone** (may or may not be in PDF):
+   ```
+   Question: "Phone number for the resume?"
+     A) Use '{phone_from_pdf}'     ← only include this option if extraction found a phone
+     B) Skip — don't include phone
+     Other: paste a different phone (e.g., +43 664 1234567)
+   ```
+   If no phone extracted, drop option A and fall back to pattern B:
+   ```
+     A) I have one — paste it in Other below
+     B) Skip — don't include phone
+     Other: paste your phone
+   ```
+
+4. **LinkedIn** (usually extracted from PDF):
+   ```
+   Question: "LinkedIn URL for the resume?"
+     A) Use '{linkedin_url}' from your resume
+     B) Skip — don't include LinkedIn
+     Other: paste a different URL (we'll normalize to https://)
+   ```
+
+5. **Location** (usually extracted from PDF):
+   ```
+   Question: "City, country for the resume?"
+     A) Use '{location}' from your resume
+     B) Skip — don't include location
+     Other: paste a different location
+   ```
+
+6. **Style** — genuine 2-option choice (no Other path expected):
    ```
    Question: "Default resume style?"
      A) EU (recommended for DACH / EU applications)
      B) US (recommended for US applications, no photo)
    ```
 
-5. **Photo include**:
+7. **Photo include** — genuine 2-option choice:
    ```
    Question: "Include a photo on EU-style resumes by default?"
      A) Yes, include a photo
      B) No photo (more common for anglophone markets)
    ```
 
-6. **Photo path** (only if include-photo=yes) — free text:
+8. **Photo path** (only if include-photo=yes):
    ```
    Question: "Where's the photo file? Paste the absolute path in Other."
-     A) Skip photo for this run (I'll add a path later by editing .resumasher/config.json)
+     A) I have one — paste the absolute path in Other below
+     B) Skip photo for this run — I'll add a path later by editing .resumasher/config.json
      Other: absolute path (e.g., /Users/you/Desktop/headshot.png)
    ```
    After the student answers, verify the file exists with `ls -la <path>`. If missing, re-ask; don't silently fall through.
 
-7. **GitHub profile** — free text:
+9. **GitHub profile**:
    ```
-   Question: "Do you have a GitHub? We can leverage it for this. Paste your username, or pick Skip to leave blank."
-     A) Skip (I'll add it later; set github_prompted=true so we don't re-ask)
+   Question: "Do you have a GitHub? We can leverage it for this."
+     A) I have one — paste the username or profile URL in Other
+     B) Skip — leave blank (sets github_prompted=true so we don't re-ask)
      Other: username (e.g., earino) or profile URL (we'll strip the prefix)
    ```
 

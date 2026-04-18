@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 65 passing](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](tests/)
+[![Tests: 95 passing](https://img.shields.io/badge/tests-95%20passing-brightgreen.svg)](tests/)
 
 A Claude Code skill that tailors your resume + writes a cover letter + builds an interview prep bundle for a specific job, by mining the evidence already in your working directory.
 
@@ -111,12 +111,17 @@ bash install.sh                       # refreshes the venv if deps changed
 
 Restart Claude Code after pulling so the updated SKILL.md takes effect. Recent fixes you probably want:
 
-- `resume.pdf` accepted directly (no manual markdown conversion needed)
-- `.claude/` folder ignored during mining (skills don't mine themselves on project-scope installs)
-- Photos downscaled before embedding (PDF sizes went from ~1MB to ~150KB)
-- `**bold**` markdown rendered as bold in PDFs instead of literal asterisks
-- GitHub profile mining during first-run setup
-- Resume length / recency / multi-role-tenure guidance in the tailor prompt
+- **Interactive placeholder fill** before PDFs are rendered — no more `[INSERT TEAM SIZE]` shipping in your resume by accident
+- **Multi-role tenures render correctly** (Meta → Senior Director → Director → Manager as sub-bullets under one company entry, not three separate entries)
+- **`bin/resumasher-exec` wrapper** — self-locating helper that resolves SKILL_ROOT and venv Python in one call
+- **Intermediate files moved** from `/tmp/` to `$CWD/.resumasher/run/` (gitignored, scoped to your folder, privacy-safe on shared machines)
+- **AskUserQuestion pattern fix** for free-text fields — one round of questions instead of two
+- **`resume.pdf` accepted directly** (no manual markdown conversion needed)
+- **`.claude/` folder ignored** during mining (skills don't mine themselves on project-scope installs)
+- **Photos downscaled** before embedding (PDF sizes went from ~1MB to ~150KB)
+- **`**bold**` markdown** rendered as bold in PDFs instead of literal asterisks
+- **GitHub profile mining** during first-run setup
+- **Resume length / recency / multi-role-tenure guidance** in the tailor prompt
 
 ## Usage
 
@@ -200,17 +205,20 @@ Every generated PDF passes `pdfminer.six` round-trip extraction. We've also manu
 
 ## Architecture
 
-- `SKILL.md` — the orchestration prompt Claude follows when you invoke `/resumasher`.
-- `scripts/render_pdf.py` — pure-Python PDF renderer using reportlab + DejaVu Sans (bundled). Handles EU / US styles.
-- `scripts/orchestration.py` — deterministic helpers (job source parsing, folder mining, fit-score extraction, history logging).
+- `SKILL.md` — the orchestration prompt Claude follows when you invoke `/resumasher`. Nine phases from first-run setup through log + summary.
+- `bin/resumasher-exec` — self-locating bash wrapper. Finds its own SKILL_ROOT and execs the venv Python with the right script. Saves SKILL.md from having to discover paths on every Bash tool call.
+- `scripts/orchestration.py` — deterministic helpers (job source parsing, resume discovery with PDF support, folder mining with `.claude/` ignored, fit-score extraction, history logging, company slug, first-run config, etc.).
+- `scripts/render_pdf.py` — pure-Python PDF renderer using reportlab + DejaVu Sans (bundled). Handles EU / US styles, multi-role sub-blocks, bold markdown, and photo downscaling to keep output under 200KB.
+- `scripts/github_mine.py` — fetches a student's public GitHub profile via `gh api` (or unauthenticated fallback), filters forks/archived/empty repos, returns prose evidence for the folder-miner.
 - `assets/DejaVuSans.ttf` — fallback font with broad Unicode coverage. Renders Björn, François, Jiří, 🐍 correctly.
+- `docs/DESIGN.md` — the design rationale. Read before a large PR.
 
-The LLM pipeline runs prose between phases (no JSON), with small sentinel lines (`FIT_SCORE: 7`, `COMPANY: Deloitte`, `FAILURE: ...`) where structure actually matters. Sub-agents dispatch via Claude Code's Task tool with `subagent_type="general-purpose"`.
+The LLM pipeline runs prose between phases (no JSON), with small sentinel lines (`FIT_SCORE: 7`, `COMPANY: Deloitte`, `FAILURE: ...`) where structure actually matters. Sub-agents dispatch via Claude Code's Task tool with `subagent_type="general-purpose"`. Job descriptions and company-research output are wrapped in `<<<UNTRUSTED_*>>>` markers before reaching sub-agents that have file/web access — basic prompt-injection containment.
 
 ## Development
 
 ```bash
-# Run the test suite (65 tests, ~1 second)
+# Run the test suite (95 tests, ~1 second)
 source .venv/bin/activate
 pytest tests/ -v
 
@@ -224,33 +232,45 @@ cd GOLDEN_FIXTURES
 ```
 resumasher/
 ├── SKILL.md              # Orchestration prompt Claude follows at runtime
+├── bin/
+│   └── resumasher-exec   # Self-locating wrapper around venv Python
 ├── scripts/
+│   ├── orchestration.py  # Deterministic helpers (CLI + importable)
 │   ├── render_pdf.py     # Pure-Python PDF renderer (reportlab + DejaVu Sans)
-│   └── orchestration.py  # Deterministic helpers (CLI + importable)
+│   └── github_mine.py    # GitHub profile evidence fetcher
 ├── assets/
 │   ├── DejaVuSans.ttf        # Bundled Unicode font (regular)
 │   └── DejaVuSans-Bold.ttf   # Bundled Unicode font (bold)
+├── docs/
+│   └── DESIGN.md         # Design rationale — read before a large PR
 ├── GOLDEN_FIXTURES/      # Sample portfolio for testing and demo
-├── tests/                # pytest suite (65 tests)
-├── install.sh            # One-liner installer
+├── tests/                # pytest suite (95 tests)
+├── install.sh            # One-liner installer + venv setup
 ├── requirements.txt      # reportlab, pdfminer.six, chardet, nbconvert
 └── requirements-dev.txt  # + pytest, jupyter
 ```
 
 ## Roadmap
 
-**v0.1 (ships today):**
-- EU + US resume styles
+**v0.1 (shipped, and improving weekly):**
+- EU + US resume styles, ATS-safe single-column layout
 - English-only JD input (pasted, file, or URL)
-- Pipeline: fit check → company research → tailor → cover letter → interview prep → PDFs
-- ATS round-trip gate
-- Local history log per student
+- Nine-phase pipeline: first-run setup → intake → folder + GitHub mine → fit analysis → company research → tailor → parallel cover-letter + interview-prep → interactive placeholder fill → PDF render → log + summary
+- Multi-role tenures rendered correctly (e.g., Meta progression shown as one company entry with sub-role bullets, not three separate entries)
+- Photos auto-downscaled to keep output PDFs <200KB (phone-camera headshots previously bloated PDFs to 1MB+)
+- `resume.pdf` accepted when no markdown source exists
+- GitHub profile mining as additional evidence source (`gh api` preferred, unauthenticated fallback)
+- `[INSERT ...]` placeholder pattern for missing metrics, with interactive fill-in before PDFs render (student chooses Specifics / Soften / Drop per bullet)
+- Prompt-injection defense via `<<<UNTRUSTED_*>>>` markers around JD / company-research content
+- ATS round-trip gate (pdfminer.six + Jobscan calibration)
+- Local history log per student (`.resumasher/history.jsonl`)
 
 **v0.2 (after first cohort feedback):**
-- `--review` mode: step-by-step interactive rewriting (pedagogy first)
-- GitHub Actions CI with automated PDF round-trip
+- `--review` mode: step-by-step interactive rewriting for every bullet (pedagogy first, not just placeholders)
+- GitHub Actions CI with automated PDF round-trip on every push
 - Incremental folder-mine cache invalidation
-- German JD translation pre-pass
+- German / French JD translation pre-pass
+- Facts persistence: remember placeholder-fill answers across runs so the second application to a similar role doesn't re-ask the same `[INSERT TEAM SIZE]` questions
 
 ## License
 
@@ -269,5 +289,5 @@ PRs welcome. Before opening a large one, please read [`docs/DESIGN.md`](docs/DES
 If you hit a bug or have an idea, open an issue. v0.2 is explicitly shaped by feedback from early users.
 
 Before submitting a PR:
-- `pytest tests/ -v` should pass (65 tests, ~1 second).
+- `pytest tests/ -v` should pass (95 tests, ~1 second).
 - If you change any rendering logic, regenerate the GOLDEN_FIXTURES output and eyeball it through [jobscan.co](https://www.jobscan.co/) to confirm ATS parsing still works.
