@@ -73,6 +73,20 @@ Works on macOS, Linux, and Windows (WSL or native Python). No native dependencie
 
 The skill should now be available as `/resumasher`.
 
+### Install for a single project only
+
+The default install above is **user-scope** — `/resumasher` is available in every folder you open in Claude Code. If you'd rather have it **project-scope** (available only inside one specific folder, like `~/my-job-applications/`), clone into that project's `.claude/skills/` instead:
+
+```bash
+cd ~/my-job-applications
+git clone https://github.com/earino/resumasher.git .claude/skills/resumasher \
+  && bash .claude/skills/resumasher/install.sh
+```
+
+Now `/resumasher` only appears when Claude Code is running inside `~/my-job-applications/`. It won't pollute any other project. Use this if you want all your job-application work (resumes, JDs, the skill itself) checked into one folder, or if you just prefer clean scoping.
+
+You probably want to add `.claude/skills/resumasher/.venv/` to that project's `.gitignore` so the Python venv doesn't get checked in.
+
 ### Verify the install
 
 ```bash
@@ -82,6 +96,8 @@ cd ~/.claude/skills/resumasher/GOLDEN_FIXTURES
 ```
 
 In ~2 minutes you should see three PDFs in `./applications/deloitte-consulting-<today>/`.
+
+(If you used the project-scope install, replace `~/.claude/skills/resumasher/` with `~/my-job-applications/.claude/skills/resumasher/`.)
 
 ## Usage
 
