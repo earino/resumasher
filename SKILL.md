@@ -26,19 +26,62 @@ The skill requires Python 3.10+ with these packages (see `requirements.txt`):
 
 ## Workflow
 
-Follow these phases in order. Every deterministic helper is available via
-`python -m scripts.orchestration <subcommand>` and every LLM phase dispatches
-via the Task tool with `subagent_type="general-purpose"`.
+Follow these phases in order. Every deterministic helper is available as a Python module under `scripts/`, and every LLM phase dispatches via the Task tool with `subagent_type="general-purpose"`.
 
-**Cache the skill root path** at the start so later commands can find `scripts/`:
+### Setup: resolve paths BEFORE any Python call
+
+**This step is non-optional. Skipping it will cause `ModuleNotFoundError: No module named 'scripts'` and `ModuleNotFoundError: No module named 'reportlab'`.**
+
+Two paths need to exist as shell variables for the entire skill run:
+
+- `SKILL_ROOT` — absolute path to the installed skill directory (user-scope OR project-scope).
+- `PY` — absolute path to the venv Python inside that skill directory. This is critical: the system Python does NOT have the required dependencies (reportlab, pdfminer.six, chardet, nbconvert). Only the venv does.
+
+Resolve them with this block. The `[ -d ... ]` checks handle both user-scope and project-scope installs:
 
 ```bash
-SKILL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]:-SKILL.md}")" && pwd)
-# Or resolve it from the known install location if invoked via slash command:
-[ -z "$SKILL_ROOT" ] && SKILL_ROOT="$HOME/.claude/skills/resumasher"
+# Locate the skill root. Check user-scope first, then project-scope
+# (CWD, then the git repo root if we're inside a git repo).
+SKILL_ROOT=""
+for candidate in \
+    "$HOME/.claude/skills/resumasher" \
+    "$PWD/.claude/skills/resumasher" \
+    "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/SKILL.md" ] && [ -x "$candidate/.venv/bin/python" ]; then
+    SKILL_ROOT="$candidate"
+    break
+  fi
+done
+
+if [ -z "$SKILL_ROOT" ]; then
+  echo "ERROR: cannot locate the resumasher skill with a ready venv." >&2
+  echo "  Expected one of:" >&2
+  echo "    $HOME/.claude/skills/resumasher/.venv/bin/python" >&2
+  echo "    $PWD/.claude/skills/resumasher/.venv/bin/python" >&2
+  echo "  Run the installer: bash <skill-dir>/install.sh" >&2
+  exit 1
+fi
+
+PY="$SKILL_ROOT/.venv/bin/python"
+# The student's working directory is the current pwd. Keep it distinct from
+# SKILL_ROOT — they are different directories.
+STUDENT_CWD="$PWD"
+
+echo "Using skill at: $SKILL_ROOT"
+echo "Working in: $STUDENT_CWD"
 ```
 
-The student's working directory (where the resume and projects live) is the current `pwd` when the command ran, NOT the skill root. Keep them distinct in your mind.
+Every later command in this workflow that invokes Python MUST use `"$PY"` (the venv Python) and pass the full script path `"$SKILL_ROOT/scripts/<name>.py"`. Do NOT use bare `python` and do NOT use `python -m scripts.orchestration`, because:
+
+- Bare `python` picks up whatever happens to be on PATH first (miniconda, homebrew, system), which will NOT have resumasher's dependencies installed and will crash with `ModuleNotFoundError: No module named 'reportlab'`.
+- `python -m scripts.orchestration` only works when CWD is the skill root, but we deliberately keep CWD at the student's folder so file paths resolve correctly. It will crash with `ModuleNotFoundError: No module named 'scripts'`.
+
+The helper invocation pattern throughout this document is:
+
+```bash
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" <subcommand> [args...]
+"$PY" "$SKILL_ROOT/scripts/render_pdf.py" --input ... --output ...
+```
 
 ---
 
@@ -48,7 +91,7 @@ Check whether this folder has been through first-run setup:
 
 ```bash
 cd "$STUDENT_CWD"
-python -m scripts.orchestration first-run-needed .
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" first-run-needed .
 ```
 
 If it prints `yes` and exits 1: run the setup flow.
@@ -72,7 +115,7 @@ Use AskUserQuestion to collect:
 Write `.resumasher/config.json` with those values, then:
 
 ```bash
-python -m scripts.orchestration ensure-gitignore .
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" ensure-gitignore .
 ```
 
 (Idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
@@ -84,7 +127,7 @@ python -m scripts.orchestration ensure-gitignore .
 Parse the job source:
 
 ```bash
-python -m scripts.orchestration parse-job-source "$JOB_SOURCE_ARG"
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" parse-job-source "$JOB_SOURCE_ARG"
 ```
 
 This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."}`.
@@ -100,7 +143,7 @@ If `mode == "url"`: fetch the page with the WebFetch tool. If the returned text 
 Locate the resume:
 
 ```bash
-python -m scripts.orchestration discover-resume "$STUDENT_CWD"
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" discover-resume "$STUDENT_CWD"
 ```
 
 If this exits with `FAILURE: no resume.md / cv.md found`, halt the skill with:
@@ -110,14 +153,14 @@ If this exits with `FAILURE: no resume.md / cv.md found`, halt the skill with:
 Otherwise: read the resume.
 
 ```bash
-RESUME_PATH=$(python -m scripts.orchestration discover-resume "$STUDENT_CWD")
-python -m scripts.orchestration read-resume "$RESUME_PATH" > /tmp/resumasher-resume.txt
+RESUME_PATH=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" discover-resume "$STUDENT_CWD")
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" read-resume "$RESUME_PATH" > /tmp/resumasher-resume.txt
 ```
 
 Compute the folder state hash and check the cache:
 
 ```bash
-FOLDER_HASH=$(python -m scripts.orchestration folder-state-hash "$STUDENT_CWD")
+FOLDER_HASH=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" folder-state-hash "$STUDENT_CWD")
 CACHE_PATH="$STUDENT_CWD/.resumasher/cache.txt"
 CACHE_HASH_PATH="$STUDENT_CWD/.resumasher/cache.hash"
 
@@ -126,7 +169,7 @@ if [ -f "$CACHE_HASH_PATH" ] && [ "$(cat "$CACHE_HASH_PATH")" = "$FOLDER_HASH" ]
   FOLDER_SUMMARY=$(cat "$CACHE_PATH")
 else
   # Build the context block and ask the folder-miner sub-agent to summarize.
-  python -m scripts.orchestration mine-context "$STUDENT_CWD" > /tmp/resumasher-context.txt
+  "$PY" "$SKILL_ROOT/scripts/orchestration.py" mine-context "$STUDENT_CWD" > /tmp/resumasher-context.txt
   # Dispatch sub-agent (see FOLDER_MINER_PROMPT below) with /tmp/resumasher-context.txt as input.
   # Save the sub-agent's prose summary to $CACHE_PATH and the hash to $CACHE_HASH_PATH.
 fi
@@ -228,8 +271,8 @@ on its own line and nothing else.
 Parse the output:
 
 ```bash
-FIT_SCORE=$(echo "$FIT_OUTPUT" | python -m scripts.orchestration extract-fit-score)
-COMPANY=$(echo "$FIT_OUTPUT" | python -m scripts.orchestration extract-company)
+FIT_SCORE=$(echo "$FIT_OUTPUT" | "$PY" "$SKILL_ROOT/scripts/orchestration.py" extract-fit-score)
+COMPANY=$(echo "$FIT_OUTPUT" | "$PY" "$SKILL_ROOT/scripts/orchestration.py" extract-company)
 ```
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via AskUserQuestion: "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
@@ -237,7 +280,7 @@ If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the st
 Compute the output directory:
 
 ```bash
-SLUG=$(python -m scripts.orchestration company-slug "$COMPANY")
+SLUG=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" company-slug "$COMPANY")
 DATE=$(date +%Y%m%d)
 OUT_DIR="$STUDENT_CWD/applications/$SLUG-$DATE"
 mkdir -p "$OUT_DIR"
@@ -485,7 +528,7 @@ Use `render-pdf.py` to produce three PDFs. Pass `--photo` only for EU resumes wh
 
 ```bash
 # Resume
-python "$SKILL_ROOT/scripts/render_pdf.py" \
+"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
   --input "$OUT_DIR/tailored-resume.md" \
   --kind resume \
   --style "$STYLE" \
@@ -493,13 +536,13 @@ python "$SKILL_ROOT/scripts/render_pdf.py" \
   ${PHOTO_ARG}
 
 # Cover letter
-python "$SKILL_ROOT/scripts/render_pdf.py" \
+"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
   --input "$OUT_DIR/cover-letter.md" \
   --kind cover-letter \
   --output "$OUT_DIR/cover-letter.pdf"
 
 # Interview prep
-python "$SKILL_ROOT/scripts/render_pdf.py" \
+"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
   --input "$OUT_DIR/interview-prep.md" \
   --kind interview-prep \
   --output "$OUT_DIR/interview-prep.pdf"
@@ -514,7 +557,7 @@ If a markdown input was a stub (cover letter or interview prep generation failed
 Append the history record:
 
 ```bash
-python -m scripts.orchestration append-history "$STUDENT_CWD" "$(cat <<EOF
+"$PY" "$SKILL_ROOT/scripts/orchestration.py" append-history "$STUDENT_CWD" "$(cat <<EOF
 {
   "ts": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "company": "$COMPANY",
