@@ -39,7 +39,15 @@ The prologue (paste at the top of every Bash tool call):
 ```bash
 SKILL_ROOT=""
 NEEDS_INSTALL=""
-for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+for c in \
+  "$HOME/.claude/skills/resumasher" \
+  "$PWD/.claude/skills/resumasher" \
+  "$REPO_ROOT/.claude/skills/resumasher" \
+  "$HOME/.codex/skills/resumasher" \
+  "$PWD/.codex/skills/resumasher" \
+  "$REPO_ROOT/.codex/skills/resumasher"; do
+  [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   if [ -x "$c/.venv/bin/python" ]; then
     SKILL_ROOT="$c"; break
@@ -53,7 +61,7 @@ if [ -z "$SKILL_ROOT" ]; then
     echo "This means install.sh was never run after git clone. Fix:" >&2
     echo "  bash $NEEDS_INSTALL/install.sh" >&2
   else
-    echo "ERROR: resumasher is not installed. See https://github.com/earino/resumasher#for-claude-code" >&2
+    echo "ERROR: resumasher is not installed. See https://github.com/earino/resumasher#install" >&2
   fi
   exit 1
 fi
@@ -1054,7 +1062,15 @@ When a student asks to "re-render the resume" or "update the PDF after I edited 
 **Path prologue (required — shell state doesn't persist between Bash tool calls):**
 
 ```bash
-for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+for c in \
+  "$HOME/.claude/skills/resumasher" \
+  "$PWD/.claude/skills/resumasher" \
+  "$REPO_ROOT/.claude/skills/resumasher" \
+  "$HOME/.codex/skills/resumasher" \
+  "$PWD/.codex/skills/resumasher" \
+  "$REPO_ROOT/.codex/skills/resumasher"; do
+  [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break
 done
