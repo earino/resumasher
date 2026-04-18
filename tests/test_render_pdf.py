@@ -275,6 +275,71 @@ def test_render_interview_prep_roundtrip(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_render_interprets_markdown_bold_as_bold_not_asterisks(tmp_path: Path):
+    """
+    Regression: interview-prep output used `**Problem framing.**` syntax and
+    it rendered as literal asterisks in the PDF. reportlab Paragraph supports
+    <b>...</b> tags — _escape() now converts markdown bold to those tags.
+    """
+    md = """# Interview Prep
+
+## Tech
+
+### Walk us through the design
+
+**Problem framing.** Before architecture, I would figure out what this is for.
+
+**Architecture.** Pick boring technology.
+"""
+    out = tmp_path / "prep.pdf"
+    render_interview_prep(md, out)
+    from pdfminer.high_level import extract_text
+    extracted = extract_text(str(out))
+    # The content should still be extractable as text (bold doesn't hide it).
+    assert "Problem framing." in extracted
+    assert "Architecture." in extracted
+    # The literal "**" should NOT appear in the extracted text.
+    assert "**" not in extracted, (
+        f"Found literal '**' in rendered PDF — markdown bold wasn't "
+        f"converted to <b> tags. Extracted:\n{extracted}"
+    )
+
+
+def test_render_bold_in_cover_letter(tmp_path: Path):
+    md = """# Dear Hiring Team,
+
+I lead with **specific evidence** and skip the fluff.
+
+My **Meta tenure** gave me the altitude the role requires.
+"""
+    out = tmp_path / "cover.pdf"
+    render_cover_letter(md, out)
+    from pdfminer.high_level import extract_text
+    extracted = extract_text(str(out))
+    assert "specific evidence" in extracted
+    assert "Meta tenure" in extracted
+    assert "**" not in extracted
+
+
+def test_escape_leaves_lone_asterisk_alone(tmp_path: Path):
+    """A single '*' in prose (e.g., 'footnote*') should not start an unclosed bold."""
+    md = """# Test User
+test@example.com
+
+## Summary
+I shipped a v1.0* — where * means "beta quality".
+"""
+    out = tmp_path / "aster.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    extracted = extract_text(str(out))
+    # Content still renders; we don't demand preservation of the literal
+    # asterisk (reportlab may drop it cleanly), just that render doesn't crash
+    # and the surrounding text survives.
+    assert "v1.0" in extracted
+    assert "beta quality" in extracted
+
+
 def test_assert_ats_roundtrip_raises_on_missing(tmp_path: Path):
     out = tmp_path / "r.pdf"
     render_resume_eu(SAMPLE_RESUME_MD, out)

@@ -391,17 +391,32 @@ def _build_resume_flowables(
     return flow
 
 
+_MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
+
+
 def _escape(text: str) -> str:
-    """Escape the small HTML-ish subset reportlab Paragraph interprets.
+    """Escape the small HTML-ish subset reportlab Paragraph interprets, and
+    convert markdown inline formatting to reportlab's HTML-like tags.
 
     reportlab Paragraph accepts an HTML-like subset for <b>, <i>, etc. Any
     literal &, <, > in user content must be escaped or the parser throws.
+
+    After escaping, we translate `**bold**` → `<b>bold</b>` so markdown
+    emphasis from upstream sub-agents (common in interview-prep and cover
+    letters) renders as bold, not as literal asterisks. Italic (`*x*`) is
+    intentionally skipped — too easy to false-match on single asterisks in
+    prose (e.g., "footnote*").
+
+    The regex requires at least one non-asterisk, non-newline character
+    inside the pair, and forbids the pair from spanning a line break. This
+    keeps "*" alone, "a ** b", and multi-line content safe.
     """
-    return (
+    escaped = (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+    return _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
 
 
 # ---------------------------------------------------------------------------
