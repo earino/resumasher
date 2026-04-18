@@ -78,19 +78,63 @@ Restart Gemini so the skill is discovered. Then run `/resumasher <job>` from ins
 
 ### Updating an existing install
 
-Same pattern on all three hosts — `cd` into wherever the skill was cloned, pull, re-run `install.sh` in case dependencies changed:
+Three commands in the skill's install directory: `git pull` to fetch new code, `bash install.sh` to refresh the venv if `requirements.txt` changed (idempotent if it didn't), then restart the AI CLI so the updated `SKILL.md` gets picked up.
+
+Pick the block matching the AI CLI you're running in. Each block prefers the user-scope install (`~/.<host>/skills/`) and falls back to project-scope (`.<host>/skills/`) if only the latter exists.
+
+#### Claude Code
 
 ```bash
-# Pick whichever path matches your install:
-cd ~/.claude/skills/resumasher      # or .claude/skills/resumasher
-cd ~/.codex/skills/resumasher       # or .codex/skills/resumasher
-cd ~/.gemini/skills/resumasher      # or .gemini/skills/resumasher
-
+if [ -d ~/.claude/skills/resumasher/.git ]; then
+  cd ~/.claude/skills/resumasher
+elif [ -d .claude/skills/resumasher/.git ]; then
+  cd .claude/skills/resumasher
+else
+  echo "resumasher is not installed for Claude Code. See Install section above."; exit 1
+fi
 git pull
 bash install.sh
 ```
 
-Then restart your AI CLI.
+Then restart Claude Code.
+
+#### OpenAI Codex CLI
+
+```bash
+if [ -d ~/.codex/skills/resumasher/.git ]; then
+  cd ~/.codex/skills/resumasher
+elif [ -d .codex/skills/resumasher/.git ]; then
+  cd .codex/skills/resumasher
+else
+  echo "resumasher is not installed for Codex. See Install section above."; exit 1
+fi
+git pull
+bash install.sh
+```
+
+Then restart Codex.
+
+#### Google Gemini CLI
+
+```bash
+if [ -d ~/.gemini/skills/resumasher/.git ]; then
+  cd ~/.gemini/skills/resumasher
+elif [ -d .gemini/skills/resumasher/.git ]; then
+  cd .gemini/skills/resumasher
+else
+  echo "resumasher is not installed for Gemini. See Install section above."; exit 1
+fi
+git pull
+bash install.sh
+```
+
+Then restart Gemini.
+
+### For your AI CLI — authoritative update instructions
+
+**When a user asks you (their AI CLI) to update resumasher**, run the detection-and-update bash block above for the AI CLI you are currently running in. Only update the install directory matching the AI CLI you are running in; do not touch installs for other hosts. After the commands complete, tell the user to restart this specific AI CLI (not a generic "restart your AI CLI").
+
+If the detection block exits with "resumasher is not installed," do not guess — tell the user resumasher is not installed for this AI CLI and point them at the Install section above. Do not silently fall back to installing from scratch.
 
 ## For your AI CLI — authoritative install instructions
 
