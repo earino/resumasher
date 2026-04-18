@@ -45,36 +45,36 @@ resumasher is an [Agent Skills](https://github.com/anthropics/skills) package. I
 
 ### Claude Code
 
-**Project-scope** (skill available only in the current folder):
-
-```bash
-git clone https://github.com/earino/resumasher.git .claude/skills/resumasher
-bash .claude/skills/resumasher/install.sh
-```
-
-**User-scope** (skill available in every folder):
+**User-scope, recommended** (skill available in every folder):
 
 ```bash
 git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
 bash ~/.claude/skills/resumasher/install.sh
 ```
 
+**Project-scope** (skill available only in the current folder — use when you want the skill checked in alongside a specific job-search project):
+
+```bash
+git clone https://github.com/earino/resumasher.git .claude/skills/resumasher
+bash .claude/skills/resumasher/install.sh
+```
+
 Restart Claude Code, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`.
 
 ### OpenAI Codex CLI
 
-**Project-scope:**
-
-```bash
-git clone https://github.com/earino/resumasher.git .codex/skills/resumasher
-bash .codex/skills/resumasher/install.sh
-```
-
-**User-scope:**
+**User-scope, recommended:**
 
 ```bash
 git clone https://github.com/earino/resumasher.git ~/.codex/skills/resumasher
 bash ~/.codex/skills/resumasher/install.sh
+```
+
+**Project-scope** (only when you want the skill scoped to one folder):
+
+```bash
+git clone https://github.com/earino/resumasher.git .codex/skills/resumasher
+bash .codex/skills/resumasher/install.sh
 ```
 
 Restart Codex, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`.
@@ -84,15 +84,15 @@ Restart Codex, then run `/resumasher <job>` from a folder with your `resume.md` 
 Gemini CLI has a first-class `skills install` subcommand that handles the clone for you:
 
 ```bash
-gemini skills install https://github.com/earino/resumasher           # project-scope
-gemini skills install --user https://github.com/earino/resumasher    # user-scope
+gemini skills install --user https://github.com/earino/resumasher    # user-scope, recommended
+gemini skills install https://github.com/earino/resumasher           # project-scope (only when scoped to one folder is what you want)
 ```
 
 Gemini will prompt you to confirm before installing. After it finishes, run the Python installer once:
 
 ```bash
-bash .gemini/skills/resumasher/install.sh          # project-scope
 bash ~/.gemini/skills/resumasher/install.sh        # user-scope
+bash .gemini/skills/resumasher/install.sh          # project-scope
 ```
 
 Restart Gemini, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`.
