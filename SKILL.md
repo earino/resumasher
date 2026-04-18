@@ -34,10 +34,29 @@ Follow these phases in order. Every deterministic helper is available as a Pytho
 
 **Every single Bash tool call that touches resumasher's code MUST begin with the path prologue below.** It's short. Just paste it at the top of every command. Don't try to "remember" values from a prior call — they're gone.
 
-The prologue (compact, one paste):
+The prologue (paste at the top of every Bash tool call):
 
 ```bash
-for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do [ -f "$c/SKILL.md" ] && [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break; done
+SKILL_ROOT=""
+NEEDS_INSTALL=""
+for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
+  [ -f "$c/SKILL.md" ] || continue
+  if [ -x "$c/.venv/bin/python" ]; then
+    SKILL_ROOT="$c"; break
+  else
+    NEEDS_INSTALL="$c"
+  fi
+done
+if [ -z "$SKILL_ROOT" ]; then
+  if [ -n "$NEEDS_INSTALL" ]; then
+    echo "ERROR: resumasher found at $NEEDS_INSTALL but its Python venv is missing." >&2
+    echo "This means install.sh was never run after git clone. Fix:" >&2
+    echo "  bash $NEEDS_INSTALL/install.sh" >&2
+  else
+    echo "ERROR: resumasher is not installed. See https://github.com/earino/resumasher#for-claude-code" >&2
+  fi
+  exit 1
+fi
 RS="$SKILL_ROOT/bin/resumasher-exec"
 STUDENT_CWD="$PWD"
 ```
@@ -46,6 +65,11 @@ This sets:
 - `SKILL_ROOT` — absolute path to the installed skill (user-scope OR project-scope).
 - `RS` — absolute path to the `bin/resumasher-exec` wrapper that auto-locates the venv Python and the right script.
 - `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
+
+The check distinguishes three failure modes:
+- **SKILL_ROOT set, success** — everything good, proceed.
+- **NEEDS_INSTALL set, SKILL_ROOT empty** — skill was cloned but `install.sh` was never run. Error message names the exact command to fix it. This is the "future Claude cloned the repo and forgot the install step" case.
+- **Both empty** — skill isn't installed at all. Point the user at the README install section.
 
 Every helper call in this document looks like:
 

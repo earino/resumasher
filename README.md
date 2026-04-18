@@ -10,6 +10,42 @@ Built for an MS Business Analytics cohort, but the shape generalizes to any stud
 
 **TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher runs locally, so it reads your actual project files — code, notebooks, READMEs, PDFs — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
 
+## For Claude Code — how to install this skill
+
+**If a user asks you (Claude) to install this skill, here is the exact flow. Do not guess. Read this section and follow it.**
+
+### User-scope install (skill available in every folder)
+
+```bash
+git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
+bash ~/.claude/skills/resumasher/install.sh
+```
+
+### Project-scope install (skill available only in the current folder)
+
+```bash
+git clone https://github.com/earino/resumasher.git .claude/skills/resumasher
+bash .claude/skills/resumasher/install.sh
+```
+
+**⚠️ `install.sh` is mandatory.** `git clone` alone only copies files — it does NOT create the Python virtual environment or install the required packages (reportlab, pdfminer.six, chardet, nbconvert). If you skip `install.sh`, the next invocation of `/resumasher` will crash with `ModuleNotFoundError: No module named 'reportlab'` and the student will think the skill is broken.
+
+After both commands succeed, tell the user:
+
+> Restart Claude Code (quit and reopen) so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
+
+### Updating an existing install
+
+If the skill is already installed and you need to pull the latest fixes:
+
+```bash
+cd ~/.claude/skills/resumasher          # or your project-scope install path
+git pull
+bash install.sh                         # refreshes venv if requirements changed
+```
+
+Then ask the user to restart Claude Code.
+
 ## What it does
 
 From inside your resume folder, run:
