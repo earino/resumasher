@@ -1,8 +1,14 @@
 # resumasher
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Tests: 65 passing](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](tests/)
+
 A Claude Code skill that tailors your resume + writes a cover letter + builds an interview prep bundle for a specific job, by mining the evidence already in your working directory.
 
 Built for CEU Vienna's MS in Business Analytics cohort, but the shape generalizes to any student with a portfolio of code, notebooks, and PDF reports.
+
+**TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher runs locally, so it reads your actual project files — code, notebooks, READMEs, PDFs — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
 
 ## What it does
 
@@ -35,14 +41,25 @@ Competitors cannot do this. resumasher can because it lives in the filesystem.
 
 ## Install
 
-### 1. Clone into your Claude Code skills directory
+### Quick install (one-liner)
 
 ```bash
-git clone https://github.com/<your-org>/resumasher.git ~/.claude/skills/resumasher
+git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher \
+  && bash ~/.claude/skills/resumasher/install.sh
+```
+
+Then restart Claude Code.
+
+### Manual install
+
+**1. Clone into your Claude Code skills directory:**
+
+```bash
+git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
 cd ~/.claude/skills/resumasher
 ```
 
-### 2. Install Python dependencies
+**2. Install Python dependencies in a venv:**
 
 ```bash
 python3 -m venv .venv
@@ -52,9 +69,19 @@ pip install -r requirements.txt
 
 Works on macOS, Linux, and Windows (WSL or native Python). No native dependencies — reportlab and pdfminer.six are pure Python.
 
-### 3. Restart Claude Code
+**3. Restart Claude Code.**
 
 The skill should now be available as `/resumasher`.
+
+### Verify the install
+
+```bash
+cd ~/.claude/skills/resumasher/GOLDEN_FIXTURES
+# From a fresh Claude Code session:
+/resumasher sample-jd.md
+```
+
+In ~2 minutes you should see three PDFs in `./applications/deloitte-consulting-<today>/`.
 
 ## Usage
 
@@ -108,13 +135,31 @@ The LLM pipeline runs prose between phases (no JSON), with small sentinel lines 
 ## Development
 
 ```bash
-# Run the test suite
+# Run the test suite (65 tests, ~1 second)
 source .venv/bin/activate
 pytest tests/ -v
 
 # Try the skill on the fixtures
 cd GOLDEN_FIXTURES
 /resumasher sample-jd.md
+```
+
+### Project layout
+
+```
+resumasher/
+├── SKILL.md              # Orchestration prompt Claude follows at runtime
+├── scripts/
+│   ├── render_pdf.py     # Pure-Python PDF renderer (reportlab + DejaVu Sans)
+│   └── orchestration.py  # Deterministic helpers (CLI + importable)
+├── assets/
+│   ├── DejaVuSans.ttf        # Bundled Unicode font (regular)
+│   └── DejaVuSans-Bold.ttf   # Bundled Unicode font (bold)
+├── GOLDEN_FIXTURES/      # Sample portfolio for testing and demo
+├── tests/                # pytest suite (65 tests)
+├── install.sh            # One-liner installer
+├── requirements.txt      # reportlab, pdfminer.six, chardet, nbconvert
+└── requirements-dev.txt  # + pytest, jupyter
 ```
 
 ## Roadmap
@@ -138,4 +183,12 @@ MIT — see [LICENSE](LICENSE). Fork it, extend it, ship it to your students.
 
 ## Credits
 
-Built for the CEU Vienna MS in Business Analytics program. Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-eng-review) and [Claude Code](https://claude.com/claude-code).
+Built by [Eduardo Ariño de la Rubia](https://github.com/earino) for the CEU Vienna MS in Business Analytics program.
+
+Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-eng-review skills) and built with [Claude Code](https://claude.com/claude-code).
+
+## Contributing
+
+PRs welcome. If you're a student in the CEU cohort and you hit a bug or have an idea, please open an issue — the design doc in `~/.gstack/projects/resumasher/` (not in the repo) captures the full rationale for why the skill is shaped the way it is, and v0.2 is explicitly waiting on cohort feedback.
+
+Before submitting a PR: `pytest tests/ -v` should pass, and if you change any rendering logic, please regenerate the GOLDEN_FIXTURES output and eyeball it through jobscan.co to make sure ATS parsing still works.
