@@ -56,28 +56,6 @@ bash ~/.codex/skills/resumasher/install.sh
 
 Restart Codex so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
 
-**Codex tip — switch to Plan mode before running resumasher.** Codex gates its structured interactive prompt tool (`request_user_input`) behind Plan mode. Resumasher needs it twice per run: once during first-run setup (name, email, style, photo, GitHub), and once during per-bullet placeholder fill before PDFs are rendered. In Default mode Codex cannot ask those questions and will fall back to writing a sentinel config skeleton that you have to edit by hand.
-
-After launching Codex, type `/plan` in the TUI to enter Plan mode, then invoke resumasher. Plan mode does **not** restrict code execution — it unlocks `request_user_input` and otherwise behaves like Default mode. Source-verified at Codex v0.121.0 (`codex-rs/tools/src/request_user_input_tool.rs`).
-
-If `/plan` isn't available on your machine, enable it once:
-
-```bash
-codex --enable collaboration_modes
-# or add to ~/.codex/config.toml:
-# [features]
-# collaboration_modes = true
-```
-
-Power-user alternative: skip Plan mode and keep `request_user_input` available in Default mode by adding this to `~/.codex/config.toml`:
-
-```toml
-[features]
-default_mode_request_user_input = true
-```
-
-Restart Codex after either change.
-
 ### Google Gemini CLI
 
 Gemini CLI has a first-class `skills install` subcommand that handles the clone for you:
