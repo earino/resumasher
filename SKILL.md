@@ -834,9 +834,9 @@ Save to `$OUT_DIR/interview-prep.md`.
 ```
 # {Cover Letter | Interview Prep} — generation failed
 
-This document was not generated. Run:
-  /resumasher <job-source> --retry {cover|prep}
-to try again.
+This document was not generated. Re-run /resumasher <job-source> to regenerate
+the full bundle, OR edit this file manually and ask Claude to re-render the
+PDF from it (see "Re-rendering PDFs after edits" near the end of SKILL.md).
 ```
 
 and continue. The student still gets the resume PDF.
@@ -904,7 +904,7 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
 
 Only AFTER all placeholders are addressed and SOFT comments stripped, proceed to Phase 8 (render PDFs).
 
-If the student interrupts mid-fill or expresses frustration with the process, offer an escape: "Would you like to stop here and edit the markdown files manually? They're at `$OUT_DIR/tailored-resume.md` and `$OUT_DIR/cover-letter.md`. Run `/resumasher <job> --retry render` when ready." Do not force them through if they clearly want out.
+If the student interrupts mid-fill or expresses frustration with the process, offer an escape: "Would you like to stop here and edit the markdown files manually? They're at `$OUT_DIR/tailored-resume.md` and `$OUT_DIR/cover-letter.md`. When you're done, ask me to re-render the PDFs (see 'Re-rendering PDFs after edits' in SKILL.md for the exact command)." Do not force them through if they clearly want out.
 
 ---
 
@@ -1000,7 +1000,8 @@ If `PH_RESUME > 0` OR `PH_COVER > 0`, print this ERROR block — it means Phase 
    - cover-letter.md:    {PH_COVER} placeholder(s)
 
    Open each file and search for "[INSERT". Either the Phase 7 fill-in
-   was skipped or had a bug. Edit the .md and rerun with --retry render.
+   was skipped or had a bug. Edit the .md manually, then ask Claude to
+   re-render the PDF (see "Re-rendering PDFs after edits" in SKILL.md).
 ```
 
 If `PH_PREP > 0`, print this NOTE block (this is expected — interview-prep placeholders are prep prompts, not substitution values):
@@ -1026,7 +1027,88 @@ Next steps:
 Applied through Workday or Greenhouse? Upload resume.pdf to jobscan.co
 (free preview) with this JD pasted in, and verify the sections parse cleanly
 before sending.
+
+💡 Edited a markdown file after this run? Ask me to "re-render the {resume|cover|prep} PDF"
+and I'll regenerate just that PDF without re-running the full pipeline.
 ```
+
+---
+
+## Re-rendering PDFs after manual edits
+
+Students often want to tweak the generated markdown (fix a bullet, add a missing detail, change a word) and get the PDF updated WITHOUT re-running the full pipeline. The full pipeline would re-dispatch all the sub-agents and overwrite their edits.
+
+When a student asks to "re-render the resume" or "update the PDF after I edited the markdown," follow this flow. Do NOT re-run `/resumasher <job>` from scratch.
+
+**Path prologue (required — shell state doesn't persist between Bash tool calls):**
+
+```bash
+for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
+  [ -f "$c/SKILL.md" ] || continue
+  [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break
+done
+RS="$SKILL_ROOT/bin/resumasher-exec"
+STUDENT_CWD="$PWD"
+```
+
+**Locate the target output directory.** Ask the student which application they edited, or infer from context (most recent `applications/<slug>-<date>/`). Then:
+
+```bash
+OUT_DIR="$STUDENT_CWD/applications/<slug>-<date>"   # substitute the real path
+```
+
+**Read config for style and photo:**
+
+```bash
+STYLE=$(jq -r '.default_style // "eu"' "$STUDENT_CWD/.resumasher/config.json")
+INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
+PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
+```
+
+**Re-render the one(s) the student edited:**
+
+For the **resume** — pass `--photo` only if style is EU and include_photo is true:
+
+```bash
+PHOTO_ARG=""
+if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
+  PHOTO_ARG="--photo $PHOTO_PATH"
+fi
+"$RS" render_pdf \
+  --input "$OUT_DIR/tailored-resume.md" \
+  --kind resume \
+  --style "$STYLE" \
+  --output "$OUT_DIR/resume.pdf" \
+  $PHOTO_ARG
+```
+
+For the **cover letter**:
+
+```bash
+"$RS" render_pdf \
+  --input "$OUT_DIR/cover-letter.md" \
+  --kind cover-letter \
+  --output "$OUT_DIR/cover-letter.pdf"
+```
+
+For the **interview prep**:
+
+```bash
+"$RS" render_pdf \
+  --input "$OUT_DIR/interview-prep.md" \
+  --kind interview-prep \
+  --output "$OUT_DIR/interview-prep.pdf"
+```
+
+**Important constraints:**
+
+- Only re-render the files the student actually edited. If they said "re-render the resume," don't also regenerate the cover letter — that's 20 extra seconds and tempts you to wonder if you should run the tailor sub-agent again (you shouldn't).
+- Do NOT re-run the tailor, cover-letter, or interview-coach sub-agents. The point of this flow is that the student's manual edits are authoritative.
+- After rendering, print the output path and file size:
+  ```
+  Re-rendered resume.pdf ({size} bytes). Your edits are in the PDF.
+  ```
+- If the `.md` file still contains `[INSERT ...]` placeholders, warn the student before rendering: "Your edited markdown still has N `[INSERT ...]` placeholders. Render anyway, or do you want to fill them first?"
 
 ---
 
