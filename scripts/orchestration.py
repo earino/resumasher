@@ -551,6 +551,17 @@ def _cli() -> int:
 
     p = sub.add_parser("mine-context")
     p.add_argument("cwd", nargs="?", default=".")
+    p.add_argument(
+        "--github-username",
+        default=None,
+        help="Also mine this GitHub profile and append its prose to the context",
+    )
+
+    p = sub.add_parser("github-mine")
+    p.add_argument("username")
+    p.add_argument("--cwd", default=".")
+    p.add_argument("--cap", type=int, default=15)
+    p.add_argument("--no-cache", action="store_true")
 
     p = sub.add_parser("read-resume")
     p.add_argument("path")
@@ -592,7 +603,58 @@ def _cli() -> int:
         return 0
 
     if args.command == "mine-context":
-        print(mine_folder_context(Path(args.cwd)))
+        cwd = Path(args.cwd)
+        folder_prose = mine_folder_context(cwd)
+        parts = [folder_prose]
+        if args.github_username:
+            # Import lazily so folder-only runs don't pay the import cost.
+            from scripts import github_mine as gm
+            try:
+                github_prose = gm.mine_github(args.github_username, cwd=cwd)
+                parts.append(github_prose)
+            except gm.RateLimitError as exc:
+                print(
+                    f"\n=== GITHUB_MINE_WARNING ===\n"
+                    f"GitHub rate limit hit; continuing without GitHub evidence.\n"
+                    f"Install `gh` and run `gh auth login` for a 5000/hr limit.\n"
+                    f"Details: {exc}\n",
+                    file=sys.stderr,
+                )
+            except gm.NotFoundError:
+                print(
+                    f"\n=== GITHUB_MINE_WARNING ===\n"
+                    f"GitHub user '{args.github_username}' not found or has "
+                    f"no public repos. Continuing without GitHub evidence.\n",
+                    file=sys.stderr,
+                )
+            except gm.APIError as exc:
+                print(
+                    f"\n=== GITHUB_MINE_WARNING ===\n"
+                    f"GitHub API error: {exc}. Continuing without GitHub evidence.\n",
+                    file=sys.stderr,
+                )
+        print("\n\n".join(parts))
+        return 0
+
+    if args.command == "github-mine":
+        from scripts import github_mine as gm
+        try:
+            prose = gm.mine_github(
+                args.username,
+                cwd=Path(args.cwd),
+                cap=args.cap,
+                use_cache=not args.no_cache,
+            )
+        except gm.RateLimitError as exc:
+            print(f"FAILURE: rate limit: {exc}", file=sys.stderr)
+            return 2
+        except gm.NotFoundError:
+            print(f"FAILURE: user '{args.username}' not found", file=sys.stderr)
+            return 3
+        except gm.APIError as exc:
+            print(f"FAILURE: {exc}", file=sys.stderr)
+            return 4
+        print(prose)
         return 0
 
     if args.command == "read-resume":

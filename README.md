@@ -122,6 +122,29 @@ my-job-search/
 
 See `GOLDEN_FIXTURES/` in this repo for a full example.
 
+### GitHub profile (optional, auto-used when configured)
+
+If your work lives on GitHub more than on your current laptop — or you're applying from a borrowed machine — resumasher can mine your public GitHub profile for evidence. Setup is one prompt at first-run: *"Do you have a GitHub? We can leverage it for this."* Paste your username (or a profile URL, we strip the prefix), and every subsequent run automatically mixes your repos into the evidence pool.
+
+What resumasher fetches per repo:
+
+- Name, description, topics, primary language
+- Last push date, stargazer count
+- README content (up to 50KB, base64-decoded from the GitHub API)
+
+What it deliberately skips: forks, archived repos, empty repos, source code (too noisy), issues, PRs, and contribution graphs. Default cap is 15 most-recently-pushed repos.
+
+**Auth & rate limits.** resumasher uses the GitHub CLI (`gh api`) if it's installed and authenticated — that gives you a 5000/hour rate limit and reuses your existing auth with zero PAT handling. If `gh` isn't installed, resumasher falls back to unauthenticated requests (60/hour); enough for small profiles, tight for anything bigger. If you hit the limit, resumasher prints a clear message and keeps going without GitHub evidence. To unlock the 5000/hour limit:
+
+```bash
+brew install gh   # or see https://cli.github.com
+gh auth login
+```
+
+**One-off override.** For a borrowed laptop or an alternate account, pass `--github <username>` on the command line — it beats whatever's in your config for that single run.
+
+**Caching.** GitHub responses are cached for 1 hour under `.resumasher/github-cache/<username>.json`. Iterate on the same JD multiple times without re-hitting the API. Delete the file to force a refresh.
+
 ### Accepted resume formats
 
 resumasher looks for these files in the working directory, in priority order:
