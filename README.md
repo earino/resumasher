@@ -4,11 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests: 141 passing](https://img.shields.io/badge/tests-141%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
-resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI, reading your actual work to back every claim with concrete evidence.
-
-Every other AI resume tool is a web app that only sees the summary you paste in. resumasher reads your public GitHub repos and any project files in your working directory, then cites specific evidence by file and metric. Generic bullets become source-backed claims.
-
-Runs on **Claude Code**, **OpenAI Codex CLI**, and **Google Gemini CLI**. Built for students, generalizes to anyone with real project evidence to draw from.
+resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, or **Google Gemini CLI**), reading your actual work to back every claim with concrete evidence.
 
 ![resumasher running: terminal walkthrough from `/resumasher job.md` through fit assessment, tailor, placeholder fill, and PDF render](assets/img/demo.gif)
 
