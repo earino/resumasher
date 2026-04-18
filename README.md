@@ -99,6 +99,25 @@ A few minutes later you should see three PDFs in `./applications/deloitte-consul
 
 (If you used the project-scope install, replace `~/.claude/skills/resumasher/` with `~/my-job-applications/.claude/skills/resumasher/`.)
 
+### Updating an existing install
+
+resumasher is early and improves weekly. If you installed a while ago, grab the latest fixes:
+
+```bash
+cd ~/.claude/skills/resumasher        # or your project-scope install path
+git pull
+bash install.sh                       # refreshes the venv if deps changed
+```
+
+Restart Claude Code after pulling so the updated SKILL.md takes effect. Recent fixes you probably want:
+
+- `resume.pdf` accepted directly (no manual markdown conversion needed)
+- `.claude/` folder ignored during mining (skills don't mine themselves on project-scope installs)
+- Photos downscaled before embedding (PDF sizes went from ~1MB to ~150KB)
+- `**bold**` markdown rendered as bold in PDFs instead of literal asterisks
+- GitHub profile mining during first-run setup
+- Resume length / recency / multi-role-tenure guidance in the tailor prompt
+
 ## Usage
 
 ### First-run setup (one time per folder)

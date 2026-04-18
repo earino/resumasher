@@ -169,7 +169,69 @@ def test_render_resume_eu_photo_missing_warns_but_completes(tmp_path: Path, caps
     render_resume_eu(SAMPLE_RESUME_MD, out, photo=str(tmp_path / "nonexistent.jpg"))
     assert out.exists()
     captured = capsys.readouterr()
-    assert "could not embed photo" in captured.err.lower()
+    # The message now comes from the downscale step ("could not downscale") or
+    # from the embed fallback ("could not embed"). Either is acceptable — both
+    # indicate the missing file was noticed.
+    err = captured.err.lower()
+    assert "could not downscale" in err or "could not embed" in err
+
+
+def test_render_resume_eu_downscales_large_photo(tmp_path: Path):
+    """
+    Regression: a real student used a 1MB+ headshot and the output PDF came
+    out at 1.0 MB total. Photos must be downscaled before embedding.
+    """
+    from PIL import Image as PILImage
+
+    # Create a realistic-ish photo fixture: 3000x4000 gradient JPEG with mild
+    # noise — compresses like a real headshot export (quality 95 JPEG from a
+    # phone camera typically lands at 1-3MB). Using JPEG because most student
+    # headshots are JPEG, not PNG.
+    big_photo = tmp_path / "headshot.jpg"
+    img = PILImage.new("RGB", (3000, 4000))
+    pixels = img.load()
+    for y in range(4000):
+        for x in range(0, 3000, 40):  # sparse gradient to keep test fast
+            for xi in range(x, min(x + 40, 3000)):
+                pixels[xi, y] = (
+                    (xi * 255) // 3000,
+                    (y * 255) // 4000,
+                    ((xi + y) * 255) // 7000,
+                )
+    img.save(big_photo, format="JPEG", quality=95)
+    photo_size = big_photo.stat().st_size
+    assert photo_size > 200_000, (
+        f"test fixture itself is too small ({photo_size} bytes) to exercise "
+        f"the downscale path meaningfully"
+    )
+
+    out = tmp_path / "eu.pdf"
+    render_resume_eu(SAMPLE_RESUME_MD, out, photo=str(big_photo))
+    pdf_size = out.stat().st_size
+
+    # Embedded at source: PDF would balloon to 500KB+ for a real photo,
+    # 1MB+ for the actual Keensight run that motivated this fix.
+    # Downscaled to 500px max, total PDF should be well under 150KB.
+    assert pdf_size < 200_000, (
+        f"PDF is {pdf_size} bytes; expected <200KB after photo downscale. "
+        f"Source photo was {photo_size} bytes."
+    )
+    # Content should still render — downscale shouldn't break layout.
+    assert_ats_roundtrip(out, ["Ana Müller", "Raiffeisen Bank"])
+
+
+def test_render_resume_eu_small_photo_not_upscaled(tmp_path: Path):
+    """Small photos (<=500px) should pass through without upscaling."""
+    from PIL import Image as PILImage
+    from pdfminer.high_level import extract_text
+
+    small_photo = tmp_path / "headshot.png"
+    PILImage.new("RGB", (300, 300), color=(100, 100, 200)).save(small_photo)
+
+    out = tmp_path / "eu.pdf"
+    render_resume_eu(SAMPLE_RESUME_MD, out, photo=str(small_photo))
+    assert out.exists()
+    assert "Ana Müller" in extract_text(str(out))
 
 
 def test_render_resume_eu_empty_sections_do_not_crash(tmp_path: Path):

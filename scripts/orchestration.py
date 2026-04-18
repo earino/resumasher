@@ -202,6 +202,12 @@ DEFAULT_IGNORE_DIRS = {
     ".ipynb_checkpoints",
     "applications",
     ".DS_Store",
+    # Critical: when resumasher is installed project-scope at
+    # <project>/.claude/skills/resumasher/, the folder miner would otherwise
+    # walk its own source tree + GOLDEN_FIXTURES and present them to the
+    # fit-analyst as the student's evidence. .claude holds Claude Code's
+    # skills/agents/settings directories — never resume evidence.
+    ".claude",
 }
 
 

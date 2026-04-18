@@ -75,6 +75,13 @@ from reportlab.platypus import (
     PageBreak,
 )
 
+# Pillow is a transitive dependency of reportlab 4.x, so importing it here
+# adds no new requirement. We use it to downscale oversized student photos
+# before embedding — a 3000x4000 headshot at source resolution inflates the
+# PDF by 1MB+ for no visible benefit at a 3cm print size.
+from io import BytesIO
+from PIL import Image as PILImage
+
 # ---------------------------------------------------------------------------
 # Font registration
 # ---------------------------------------------------------------------------
@@ -359,7 +366,11 @@ def _build_resume_flowables(
     if photo_path:
         try:
             # Small photo, ~3cm wide, inline above the name. EU conventional.
-            img = Image(photo_path, width=3 * cm, height=3 * cm)
+            # Downscale oversized images (typical phone/camera export) before
+            # embedding so the output PDF stays small enough to email + upload
+            # to ATS without hitting size caps.
+            photo_source = _downscale_photo_for_embed(photo_path)
+            img = Image(photo_source, width=3 * cm, height=3 * cm)
             flow.append(img)
             flow.append(Spacer(1, 4))
         except Exception as e:
@@ -392,6 +403,52 @@ def _build_resume_flowables(
 
 
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
+
+
+# Max dimension for embedded photos. The photo prints at 3cm × 3cm; at 300 DPI
+# that's ~354px. 500px is generous, keeps the embedded image sharp on zoom
+# without bloating the PDF. A typical 3000×4000 iPhone photo at source adds
+# ~1MB to the PDF; downscaled to 500×500 it adds ~50-80KB.
+_PHOTO_MAX_DIM = 500
+
+
+def _downscale_photo_for_embed(path: str) -> object:
+    """
+    Open `path` with Pillow, downscale to fit within _PHOTO_MAX_DIM, return
+    a BytesIO of JPEG bytes suitable for reportlab's Image flowable.
+
+    JPEG (not PNG) because:
+    - Student headshots are photographic content. JPEG at q=85 is visually
+      indistinguishable from lossless at 3cm print size.
+    - JPEG compresses photographic content 5-10x better than PNG. A 500x500
+      real-photo PNG is ~200KB; the same as JPEG is ~30-50KB.
+    - That ratio is what turned a 1MB bloated PDF into a sub-150KB one for
+      the Keensight run that motivated this fix.
+
+    If Pillow can't open the file (unsupported format, corrupted), fall back
+    to returning the original path — reportlab will either handle it or fail
+    with its own error message.
+    """
+    try:
+        img = PILImage.open(path)
+        # Convert to RGB. JPEG doesn't support alpha, and PIL's JPEG encoder
+        # rejects 'P' (palette) and 'RGBA' modes outright.
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        # Only downscale; never upscale a small image.
+        if max(img.size) > _PHOTO_MAX_DIM:
+            img.thumbnail((_PHOTO_MAX_DIM, _PHOTO_MAX_DIM), PILImage.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85, optimize=True)
+        buf.seek(0)
+        return buf
+    except Exception as exc:
+        print(
+            f"NOTE: could not downscale {path} ({exc}); embedding at source "
+            f"resolution. PDF may be larger than expected.",
+            file=sys.stderr,
+        )
+        return path
 
 
 def _escape(text: str) -> str:

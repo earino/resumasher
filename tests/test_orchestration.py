@@ -233,6 +233,48 @@ def test_folder_state_hash_ignores_resumasher_dir(tmp_path: Path):
     assert h_before == h_after
 
 
+def test_folder_state_hash_ignores_claude_skills_dir(tmp_path: Path):
+    """
+    Regression for the 'skill mines itself' bug: when resumasher is installed
+    project-scope at <project>/.claude/skills/resumasher/, the folder miner
+    must NOT walk into .claude/ and present the skill's own source/fixtures
+    as student evidence.
+    """
+    (tmp_path / "resume.md").write_text("# Me", encoding="utf-8")
+    (tmp_path / "real-project" / "README.md").parent.mkdir(parents=True)
+    (tmp_path / "real-project" / "README.md").write_text("real work", encoding="utf-8")
+    hash_before = folder_state_hash(tmp_path)
+
+    # Now drop a fake resumasher install into .claude/skills/ and verify the
+    # hash is unchanged (i.e., the .claude tree was ignored).
+    fake_skill = tmp_path / ".claude" / "skills" / "resumasher"
+    fake_skill.mkdir(parents=True)
+    (fake_skill / "SKILL.md").write_text("fake skill content", encoding="utf-8")
+    (fake_skill / "GOLDEN_FIXTURES" / "resume.md").parent.mkdir(parents=True)
+    (fake_skill / "GOLDEN_FIXTURES" / "resume.md").write_text("# Ana Müller fake", encoding="utf-8")
+    hash_after = folder_state_hash(tmp_path)
+
+    assert hash_before == hash_after, (
+        "folder_state_hash changed when .claude/ was added — .claude must "
+        "be in DEFAULT_IGNORE_DIRS so the skill doesn't mine itself."
+    )
+
+
+def test_mine_folder_context_excludes_claude_skills(tmp_path: Path):
+    """The miner should not emit FILE entries for anything under .claude/."""
+    (tmp_path / "resume.md").write_text("# Me\n\nreal content", encoding="utf-8")
+    fake_skill = tmp_path / ".claude" / "skills" / "resumasher"
+    fake_skill.mkdir(parents=True)
+    (fake_skill / "SKILL.md").write_text("fake skill contents 9999", encoding="utf-8")
+    (fake_skill / "README.md").write_text("fake readme DO_NOT_LEAK", encoding="utf-8")
+
+    ctx = mine_folder_context(tmp_path)
+    assert "resume.md" in ctx
+    assert ".claude/skills/resumasher/SKILL.md" not in ctx
+    assert "DO_NOT_LEAK" not in ctx
+    assert "9999" not in ctx
+
+
 def test_folder_state_hash_ignores_git_and_venv(tmp_path: Path):
     (tmp_path / "a.md").write_text("one", encoding="utf-8")
     for noise in [".git", ".venv", "node_modules", "__pycache__"]:
