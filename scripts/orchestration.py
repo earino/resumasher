@@ -36,14 +36,19 @@ from typing import Iterable, Optional
 
 import chardet
 
-# Ensure sibling modules (e.g., github_mine) import cleanly whether this file
-# is run as a script (`python scripts/orchestration.py`) or imported as a
-# module (`from scripts import orchestration`). When run as a script, Python
-# puts this file's directory on sys.path, so `import github_mine` works. When
-# imported as a module (in tests), both the package and the scripts dir are
-# on sys.path. The explicit insert below makes the script-invocation path
-# bulletproof regardless of caller context.
+# Ensure sibling modules (e.g., github_mine, prompts) import cleanly whether
+# this file is run as a script (`python scripts/orchestration.py`) or imported
+# as a module (`from scripts import orchestration`). When run as a script,
+# Python puts this file's directory on sys.path, so `import github_mine`
+# works. When imported as a module (in tests), both the package and the
+# scripts dir are on sys.path. The explicit insert below makes the
+# script-invocation path bulletproof regardless of caller context.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Import the prompt registry eagerly so the CLI's --kind choices can be
+# populated. The prompts module has no heavy deps (just stdlib + dataclasses),
+# so the import cost is negligible.
+from prompts import PROMPT_KINDS as _PROMPT_KINDS, build_prompt as _build_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +606,52 @@ def _cli() -> int:
     p = sub.add_parser("company-slug")
     p.add_argument("name")
 
+    p = sub.add_parser(
+        "build-prompt",
+        help=(
+            "Build a fully-substituted sub-agent prompt and emit to stdout. "
+            "Orchestrators should dispatch sub-agents with the output of this "
+            "command instead of substituting {vars} themselves — cross-host "
+            "testing showed LLM-side substitution is unreliable."
+        ),
+    )
+    p.add_argument(
+        "--kind",
+        required=True,
+        choices=sorted(_PROMPT_KINDS),
+        help="Which sub-agent prompt to build.",
+    )
+    p.add_argument(
+        "--run-dir",
+        default=None,
+        help=(
+            "Path to .resumasher/run/ (contains resume.txt, context.txt, "
+            "jd.txt). Defaults to <cwd>/.resumasher/run."
+        ),
+    )
+    p.add_argument(
+        "--cwd",
+        default=".",
+        help=(
+            "Student's working directory (contains .resumasher/cache.txt). "
+            "Defaults to current directory."
+        ),
+    )
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help=(
+            "Output directory for this application (contains "
+            "company-research.md, tailored-resume.md). Required for "
+            "cover-letter and interview-coach kinds."
+        ),
+    )
+    p.add_argument(
+        "--company",
+        default=None,
+        help="Company name. Required for company-researcher kind.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "parse-job-source":
@@ -747,7 +798,129 @@ def _cli() -> int:
         print(company_slug(args.name))
         return 0
 
+    if args.command == "build-prompt":
+        return _cmd_build_prompt(args)
+
     return 1
+
+
+# ---------------------------------------------------------------------------
+# build-prompt CLI handler
+# ---------------------------------------------------------------------------
+
+
+def _read_if_exists(path: Path) -> Optional[str]:
+    """Read a file's text if it exists; return None otherwise. Never raises."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, IsADirectoryError):
+        return None
+    except OSError:
+        return None
+
+
+def _cmd_build_prompt(args: argparse.Namespace) -> int:
+    """
+    Resolve the variables the requested kind needs by reading files in
+    $RUN_DIR / $CWD / $OUT_DIR, then call prompts.build_prompt. Emit the
+    fully-substituted prompt to stdout.
+
+    The file paths are conventional:
+      - $RUN_DIR/resume.txt   — read-resume output
+      - $RUN_DIR/context.txt  — mine-context output (raw folder+github)
+      - $RUN_DIR/jd.txt       — JD text extracted from parse-job-source
+      - $CWD/.resumasher/cache.txt — folder-miner sub-agent's prose summary
+      - $OUT_DIR/company-research.md — company-researcher sub-agent output
+      - $OUT_DIR/tailored-resume.md  — tailor sub-agent output
+
+    If a required file is missing, exits 2 with an actionable error message
+    naming the file and the phase that was supposed to have produced it.
+    """
+    cwd = Path(args.cwd).resolve()
+    run_dir = Path(args.run_dir).resolve() if args.run_dir else cwd / ".resumasher" / "run"
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else None
+
+    spec = _PROMPT_KINDS[args.kind]
+
+    # Assemble the kwargs build_prompt accepts. Only the keys in
+    # spec.required_vars will actually be substituted; others are ignored.
+    kwargs: dict[str, Optional[str]] = {
+        "resume_text": None,
+        "folder_context": None,
+        "folder_summary": None,
+        "jd_text": None,
+        "company": None,
+        "company_research": None,
+        "tailored_resume": None,
+    }
+
+    def _missing(var: str, expected_path: Path, produced_by: str) -> int:
+        print(
+            f"FAILURE: build-prompt --kind {args.kind} requires variable "
+            f"{var!r}, expected at {expected_path}. This file is produced "
+            f"by {produced_by}. Run that phase first, or pass an explicit "
+            f"--run-dir / --out-dir if the file is elsewhere.",
+            file=sys.stderr,
+        )
+        return 2
+
+    for var in spec.required_vars:
+        if var == "resume_text":
+            content = _read_if_exists(run_dir / "resume.txt")
+            if content is None:
+                return _missing(var, run_dir / "resume.txt", "orchestration read-resume in Phase 1")
+            kwargs[var] = content
+        elif var == "folder_context":
+            content = _read_if_exists(run_dir / "context.txt")
+            if content is None:
+                return _missing(var, run_dir / "context.txt", "orchestration mine-context in Phase 2")
+            kwargs[var] = content
+        elif var == "folder_summary":
+            content = _read_if_exists(cwd / ".resumasher" / "cache.txt")
+            if content is None:
+                return _missing(var, cwd / ".resumasher" / "cache.txt", "the folder-miner sub-agent in Phase 2")
+            kwargs[var] = content
+        elif var == "jd_text":
+            content = _read_if_exists(run_dir / "jd.txt")
+            if content is None:
+                return _missing(var, run_dir / "jd.txt", "orchestration parse-job-source in Phase 1")
+            kwargs[var] = content
+        elif var == "company":
+            if not args.company:
+                print(
+                    f"FAILURE: build-prompt --kind {args.kind} requires --company <name>.",
+                    file=sys.stderr,
+                )
+                return 2
+            kwargs[var] = args.company
+        elif var == "company_research":
+            if out_dir is None:
+                print(
+                    f"FAILURE: build-prompt --kind {args.kind} requires --out-dir <path>.",
+                    file=sys.stderr,
+                )
+                return 2
+            content = _read_if_exists(out_dir / "company-research.md")
+            if content is None:
+                return _missing(var, out_dir / "company-research.md", "the company-researcher sub-agent in Phase 4")
+            kwargs[var] = content
+        elif var == "tailored_resume":
+            if out_dir is None:
+                print(
+                    f"FAILURE: build-prompt --kind {args.kind} requires --out-dir <path>.",
+                    file=sys.stderr,
+                )
+                return 2
+            content = _read_if_exists(out_dir / "tailored-resume.md")
+            if content is None:
+                return _missing(var, out_dir / "tailored-resume.md", "the tailor sub-agent in Phase 5")
+            kwargs[var] = content
+
+    prompt = _build_prompt(args.kind, **kwargs)
+    sys.stdout.write(prompt)
+    # No trailing newline beyond whatever the template ends with; orchestrators
+    # pasting this into a sub-agent dispatch don't want spurious whitespace.
+    return 0
 
 
 if __name__ == "__main__":
