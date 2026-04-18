@@ -157,9 +157,24 @@ def _register_fonts() -> tuple[str, str]:
 
 
 @dataclass
+class ResumeSubBlock:
+    """
+    A sub-role inside a block, for multi-role tenures at one company.
+    Example: under "### Meta (July 2017 – August 2025)", the bold line
+    "**Senior Director, Data Science** (Aug 2022 – Aug 2025)" is a sub-block.
+    """
+    title: str  # e.g., "Senior Director, Data Science (Aug 2022 – Aug 2025)"
+    bullets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ResumeBlock:
     title: str  # e.g., "Senior Analyst — Deloitte (2023–2024)"
     bullets: list[str] = field(default_factory=list)
+    # Sub-roles for multi-title tenures at one company. When present, the
+    # renderer emits them in order, each with its own title + bullets.
+    # When empty, the block's `bullets` field is used directly.
+    sub_blocks: list[ResumeSubBlock] = field(default_factory=list)
 
 
 @dataclass
@@ -178,6 +193,9 @@ class ResumeDoc:
     sections: list[ResumeSection] = field(default_factory=list)
 
 
+_SUB_BLOCK_RE = re.compile(r"^\*\*(.+?)\*\*\s*(.*)$")
+
+
 def parse_resume_markdown(text: str) -> ResumeDoc:
     """
     Parse the resume markdown schema documented at module top.
@@ -185,18 +203,25 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
     The parser is intentionally lenient: it accepts whatever H1/H2/H3 shape
     the upstream tailor emits, and it tolerates missing sections, extra
     blank lines, and bullets-as-asterisks or bullets-as-dashes.
+
+    Multi-role tenures: inside a block, a line starting with `**Title**`
+    followed by optional metadata (e.g., `**Director** (2020–2022, Zurich)`)
+    opens a new sub-block. Subsequent bullets belong to that sub-block
+    until the next `**Title**` line or the next `### Block`. This
+    preserves the career-progression narrative when one company had
+    multiple role titles over a tenure.
     """
     doc = ResumeDoc()
     lines = text.splitlines()
 
     current_section: Optional[ResumeSection] = None
     current_block: Optional[ResumeBlock] = None
+    current_sub: Optional[ResumeSubBlock] = None
 
     for raw_line in lines:
         line = raw_line.rstrip()
 
         if not line.strip():
-            # Blank line: commit any in-flight paragraph in a section.
             continue
 
         if line.startswith("# ") and not doc.name:
@@ -207,6 +232,7 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
             current_section = ResumeSection(heading=line[3:].strip())
             doc.sections.append(current_section)
             current_block = None
+            current_sub = None
             continue
 
         if line.startswith("### "):
@@ -215,20 +241,37 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
                 doc.sections.append(current_section)
             current_block = ResumeBlock(title=line[4:].strip())
             current_section.blocks.append(current_block)
+            current_sub = None
             continue
+
+        # Sub-block title: **Title** followed by optional metadata (dates, location).
+        # Only matches when the FULL line is the bold phrase + optional trailing text,
+        # AND we're currently inside a block. Otherwise a bold phrase inside a bullet
+        # or paragraph would hijack the parser.
+        if current_block is not None:
+            sub_match = _SUB_BLOCK_RE.match(line)
+            if sub_match:
+                title_core = sub_match.group(1).strip()
+                trailing = sub_match.group(2).strip()
+                sub_title = f"{title_core} {trailing}".strip() if trailing else title_core
+                current_sub = ResumeSubBlock(title=sub_title)
+                current_block.sub_blocks.append(current_sub)
+                continue
 
         bullet_match = re.match(r"^\s*[-*]\s+(.*)$", line)
         if bullet_match:
             bullet_text = bullet_match.group(1).strip()
-            if current_block is not None:
+            # Bullets go to the most-specific container: sub-block if one is open,
+            # else the current block, else the section-level raw_bullets.
+            if current_sub is not None:
+                current_sub.bullets.append(bullet_text)
+            elif current_block is not None:
                 current_block.bullets.append(bullet_text)
             elif current_section is not None:
                 current_section.raw_bullets.append(bullet_text)
             continue
 
-        # Plain text line.
         if current_section is None and not doc.contact_line and doc.name:
-            # The first non-heading, non-bullet line after the name is contact info.
             doc.contact_line = line.strip()
             continue
 
@@ -280,6 +323,19 @@ def _build_styles() -> StyleSheet1:
         alignment=TA_LEFT,
         spaceBefore=4,
         spaceAfter=2,
+    ))
+    # Sub-block titles (multi-role tenures inside one company). Same face as
+    # BlockTitle but slightly smaller and indented so the visual hierarchy
+    # Company > Role is obvious.
+    ss.add(ParagraphStyle(
+        name="SubBlockTitle",
+        fontName=bold,
+        fontSize=10.5,
+        leading=13,
+        alignment=TA_LEFT,
+        leftIndent=8,
+        spaceBefore=3,
+        spaceAfter=1,
     ))
     ss.add(ParagraphStyle(
         name="Bullet",
@@ -394,9 +450,17 @@ def _build_resume_flowables(
             flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
         # Blocks (Experience, Education, Projects).
         for block in section.blocks:
-            group = [Paragraph(_escape(block.title), styles["BlockTitle"])]
+            group: list = [Paragraph(_escape(block.title), styles["BlockTitle"])]
+            # Direct bullets (single-role blocks).
             for bullet in block.bullets:
                 group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
+            # Sub-blocks for multi-role tenures. Each sub-block title stays
+            # glued to its own bullets via the group list, so KeepTogether
+            # prevents a page break from splitting role-title from its bullets.
+            for sub in block.sub_blocks:
+                group.append(Paragraph(_escape(sub.title), styles["SubBlockTitle"]))
+                for bullet in sub.bullets:
+                    group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
             flow.append(KeepTogether(group))
 
     return flow

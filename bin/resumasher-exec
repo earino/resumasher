@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# bin/resumasher-exec — self-locating wrapper around the venv Python.
+#
+# Usage:
+#   <path>/bin/resumasher-exec orchestration discover-resume .
+#   <path>/bin/resumasher-exec orchestration mine-context . --github-username USER
+#   <path>/bin/resumasher-exec render_pdf --input X.md --kind resume --output X.pdf
+#   <path>/bin/resumasher-exec github_mine USER
+#
+# This wrapper solves two problems at once:
+#
+# 1. It locates SKILL_ROOT by following its own path (no search, no env var
+#    needed). Callers only need to know the wrapper's path.
+#
+# 2. It execs the venv Python with the right script path, so callers don't
+#    have to worry about which Python is on PATH or how Python's module
+#    system resolves the `scripts` package.
+#
+# SKILL.md still needs to discover the wrapper's path once per Bash tool call
+# (shell state doesn't persist between calls — a separate problem), but that
+# discovery is a one-line prologue rather than a multi-variable setup block.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VENV_PY="$SKILL_ROOT/.venv/bin/python"
+
+if [ ! -x "$VENV_PY" ]; then
+  cat >&2 <<EOF
+ERROR: resumasher venv Python not found at:
+  $VENV_PY
+
+Run the installer to set up the venv:
+  bash $SKILL_ROOT/install.sh
+
+EOF
+  exit 1
+fi
+
+if [ $# -lt 1 ]; then
+  cat >&2 <<EOF
+Usage: $(basename "$0") <module> [args...]
+
+Modules:
+  orchestration   — deterministic helpers (parse-job-source, discover-resume,
+                    folder-state-hash, mine-context, extract-fit-score, etc.)
+  render_pdf      — markdown to ATS-safe PDF renderer
+  github_mine     — fetch GitHub profile as resume evidence
+
+Examples:
+  $(basename "$0") orchestration discover-resume .
+  $(basename "$0") render_pdf --input r.md --kind resume --output r.pdf
+EOF
+  exit 2
+fi
+
+MODULE="$1"; shift
+case "$MODULE" in
+  orchestration|render_pdf|github_mine)
+    exec "$VENV_PY" "$SKILL_ROOT/scripts/${MODULE}.py" "$@"
+    ;;
+  *)
+    echo "Unknown module: $MODULE" >&2
+    echo "Known modules: orchestration, render_pdf, github_mine" >&2
+    exit 2
+    ;;
+esac

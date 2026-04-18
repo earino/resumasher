@@ -36,6 +36,15 @@ from typing import Iterable, Optional
 
 import chardet
 
+# Ensure sibling modules (e.g., github_mine) import cleanly whether this file
+# is run as a script (`python scripts/orchestration.py`) or imported as a
+# module (`from scripts import orchestration`). When run as a script, Python
+# puts this file's directory on sys.path, so `import github_mine` works. When
+# imported as a module (in tests), both the package and the scripts dir are
+# on sys.path. The explicit insert below makes the script-invocation path
+# bulletproof regardless of caller context.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 
 # ---------------------------------------------------------------------------
 # 1. parse_job_source: file-path | URL | literal precedence
@@ -614,7 +623,7 @@ def _cli() -> int:
         parts = [folder_prose]
         if args.github_username:
             # Import lazily so folder-only runs don't pay the import cost.
-            from scripts import github_mine as gm
+            import github_mine as gm
             try:
                 github_prose = gm.mine_github(args.github_username, cwd=cwd)
                 parts.append(github_prose)
@@ -643,7 +652,7 @@ def _cli() -> int:
         return 0
 
     if args.command == "github-mine":
-        from scripts import github_mine as gm
+        import github_mine as gm
         try:
             prose = gm.mine_github(
                 args.username,

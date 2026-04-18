@@ -45,6 +45,13 @@ echo "Installing dependencies (this can take ~30s on a fast connection, longer o
 "$VENV/bin/pip" install $PIP_OPTS --quiet --upgrade pip
 "$VENV/bin/pip" install $PIP_OPTS --quiet -r "$SCRIPT_DIR/requirements.txt"
 
+
+# Ensure the wrapper scripts in bin/ are executable. Git preserves the exec
+# bit, but a zip download or a Windows-transit clone can drop it.
+if [ -d "$SCRIPT_DIR/bin" ]; then
+  chmod +x "$SCRIPT_DIR/bin/"* 2>/dev/null || true
+fi
+
 echo ""
 echo "resumasher installed at $SCRIPT_DIR"
 echo ""

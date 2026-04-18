@@ -28,60 +28,74 @@ The skill requires Python 3.10+ with these packages (see `requirements.txt`):
 
 Follow these phases in order. Every deterministic helper is available as a Python module under `scripts/`, and every LLM phase dispatches via the Task tool with `subagent_type="general-purpose"`.
 
-### Setup: resolve paths BEFORE any Python call
+### Setup: resolve paths in EVERY Bash tool call
 
-**This step is non-optional. Skipping it will cause `ModuleNotFoundError: No module named 'scripts'` and `ModuleNotFoundError: No module named 'reportlab'`.**
+⚠️ **CRITICAL: Claude Code's Bash tool runs every command in a fresh shell. Variables set in one Bash tool call do NOT persist to the next.** If you set `SKILL_ROOT` in one Bash call and reference `"$SKILL_ROOT/..."` in the next, `$SKILL_ROOT` will be empty and the command will fail with `permission denied` or `file not found`.
 
-Two paths need to exist as shell variables for the entire skill run:
+**Every single Bash tool call that touches resumasher's code MUST begin with the path prologue below.** It's short. Just paste it at the top of every command. Don't try to "remember" values from a prior call — they're gone.
 
-- `SKILL_ROOT` — absolute path to the installed skill directory (user-scope OR project-scope).
-- `PY` — absolute path to the venv Python inside that skill directory. This is critical: the system Python does NOT have the required dependencies (reportlab, pdfminer.six, chardet, nbconvert). Only the venv does.
-
-Resolve them with this block. The `[ -d ... ]` checks handle both user-scope and project-scope installs:
+The prologue (compact, one paste):
 
 ```bash
-# Locate the skill root. Check user-scope first, then project-scope
-# (CWD, then the git repo root if we're inside a git repo).
-SKILL_ROOT=""
-for candidate in \
-    "$HOME/.claude/skills/resumasher" \
-    "$PWD/.claude/skills/resumasher" \
-    "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do
-  if [ -n "$candidate" ] && [ -f "$candidate/SKILL.md" ] && [ -x "$candidate/.venv/bin/python" ]; then
-    SKILL_ROOT="$candidate"
-    break
-  fi
-done
-
-if [ -z "$SKILL_ROOT" ]; then
-  echo "ERROR: cannot locate the resumasher skill with a ready venv." >&2
-  echo "  Expected one of:" >&2
-  echo "    $HOME/.claude/skills/resumasher/.venv/bin/python" >&2
-  echo "    $PWD/.claude/skills/resumasher/.venv/bin/python" >&2
-  echo "  Run the installer: bash <skill-dir>/install.sh" >&2
-  exit 1
-fi
-
-PY="$SKILL_ROOT/.venv/bin/python"
-# The student's working directory is the current pwd. Keep it distinct from
-# SKILL_ROOT — they are different directories.
+for c in "$HOME/.claude/skills/resumasher" "$PWD/.claude/skills/resumasher" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/skills/resumasher"; do [ -f "$c/SKILL.md" ] && [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break; done
+RS="$SKILL_ROOT/bin/resumasher-exec"
 STUDENT_CWD="$PWD"
-
-echo "Using skill at: $SKILL_ROOT"
-echo "Working in: $STUDENT_CWD"
 ```
 
-Every later command in this workflow that invokes Python MUST use `"$PY"` (the venv Python) and pass the full script path `"$SKILL_ROOT/scripts/<name>.py"`. Do NOT use bare `python` and do NOT use `python -m scripts.orchestration`, because:
+This sets:
+- `SKILL_ROOT` — absolute path to the installed skill (user-scope OR project-scope).
+- `RS` — absolute path to the `bin/resumasher-exec` wrapper that auto-locates the venv Python and the right script.
+- `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
 
-- Bare `python` picks up whatever happens to be on PATH first (miniconda, homebrew, system), which will NOT have resumasher's dependencies installed and will crash with `ModuleNotFoundError: No module named 'reportlab'`.
-- `python -m scripts.orchestration` only works when CWD is the skill root, but we deliberately keep CWD at the student's folder so file paths resolve correctly. It will crash with `ModuleNotFoundError: No module named 'scripts'`.
-
-The helper invocation pattern throughout this document is:
+Every helper call in this document looks like:
 
 ```bash
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" <subcommand> [args...]
-"$PY" "$SKILL_ROOT/scripts/render_pdf.py" --input ... --output ...
+"$RS" orchestration <subcommand> [args...]     # e.g., discover-resume, mine-context, company-slug
+"$RS" render_pdf --input ... --output ...      # PDF rendering
+"$RS" github_mine <username>                   # GitHub profile mine
 ```
+
+The `$RS` wrapper handles three things for you: locating SKILL_ROOT by following its own path, execing the venv Python (not system Python — those dependencies aren't installed there), and picking the right script file. Do **not** run `python -m scripts.orchestration` or `python scripts/orchestration.py` directly; use `$RS` instead.
+
+**Run scratch files go in `$STUDENT_CWD/.resumasher/run/`** — NOT `/tmp/`. That directory is:
+- Already gitignored (the top-level `.resumasher/` entry).
+- Scoped to the student's working folder, not system-global.
+- Wiped at the start of each run so prior scratch can't leak.
+
+Create it once per run, near the top:
+
+```bash
+RUN_DIR="$STUDENT_CWD/.resumasher/run"
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+```
+
+Then every intermediate — resume text, folder context, sub-agent outputs — writes into `$RUN_DIR/`, not `/tmp/`.
+
+### AskUserQuestion pattern for free-text values
+
+Claude Code's `AskUserQuestion` tool requires 2–4 options per question. When you need to collect a free-text value (phone number, photo path, GitHub username, location), **do NOT** create a three-option question like `[Yes/No/I'll provide it]` that requires a second round of AskUserQuestion to actually collect the value. That doubles the prompts and the student will just paste into "Other" anyway.
+
+✅ **Correct pattern** — 2 options, student pastes real value in Other:
+
+```
+Question: "Phone number for your resume?"
+  A) Skip (save phone=null in config, you can add it later)
+  Other: paste your phone number (e.g., +43 664 1234567)
+```
+
+The student types in Other, the value arrives, done in one round.
+
+❌ **Wrong pattern** — three-option with middleman:
+
+```
+Question: "Phone number for your resume?"
+  A) Skip
+  B) I'll provide it   ← WRONG: forces a second question to actually collect
+  Other: ...
+```
+
+Apply this pattern for every free-text collection: phone, location, photo path, GitHub username. One round, not two.
 
 ---
 
@@ -91,7 +105,7 @@ Check whether this folder has been through first-run setup:
 
 ```bash
 cd "$STUDENT_CWD"
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" first-run-needed .
+"$RS" orchestration first-run-needed .
 ```
 
 If it prints `yes` and exits 1: run the setup flow.
@@ -102,23 +116,68 @@ Print the GDPR notice:
 > `.resumasher/` inside this folder. Nothing is uploaded. If this folder is a
 > git repo, we will add `.resumasher/` to your .gitignore automatically.
 
-Use AskUserQuestion to collect:
-1. Full name (as it should appear on the resume)
-2. Email
-3. Phone
-4. LinkedIn URL
-5. Location (city, country)
-6. Default style preference: EU or US
-7. Include photo in EU resumes by default? yes/no
-8. (If yes) path to photo file
-9. **GitHub profile** — ask: *"Do you have a GitHub? We can leverage it for this. Paste your username or profile URL, or leave blank to skip."* Store the bare username (strip `https://github.com/` prefix if the student pasted a URL). If blank, store `null` and set `github_prompted: true` so we don't re-ask.
+**Pre-fill from resume.pdf when possible.** If a `resume.pdf` is present, extract its text (`"$RS" orchestration read-resume resume.pdf`) and try to spot the candidate's name, email, LinkedIn, and location. Show those extracted values as the defaults in your questions so the student only has to CONFIRM, not retype them. Saves 3+ AskUserQuestion rounds on first-run setup.
 
-If the student already has a `config.json` from before this feature existed AND does not have `github_prompted: true`, ask the same question at the top of the current run and rewrite the config. One-time upgrade prompt.
+Use AskUserQuestion to collect the remaining values. Follow the "AskUserQuestion pattern for free-text values" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
+
+Concrete question shapes:
+
+1. **Name** (usually confirmed from PDF):
+   ```
+   Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
+     A) Yes, use this exact name
+     Other: paste the exact name you want (if the PDF extract has artifacts)
+   ```
+
+2. **Phone** — free text:
+   ```
+   Question: "Phone number for your resume?"
+     A) Skip (leave phone off the resume)
+     Other: paste your phone (e.g., +43 664 1234567)
+   ```
+
+3. **Location** — free text:
+   ```
+   Question: "City, country to show on the resume?"
+     A) Use Vienna, Austria  (if PDF extract suggested this)
+     Other: paste the location you want
+   ```
+
+4. **Style**:
+   ```
+   Question: "Default resume style?"
+     A) EU (recommended for DACH / EU applications)
+     B) US (recommended for US applications, no photo)
+   ```
+
+5. **Photo include**:
+   ```
+   Question: "Include a photo on EU-style resumes by default?"
+     A) Yes, include a photo
+     B) No photo (more common for anglophone markets)
+   ```
+
+6. **Photo path** (only if include-photo=yes) — free text:
+   ```
+   Question: "Where's the photo file? Paste the absolute path in Other."
+     A) Skip photo for this run (I'll add a path later by editing .resumasher/config.json)
+     Other: absolute path (e.g., /Users/you/Desktop/headshot.png)
+   ```
+   After the student answers, verify the file exists with `ls -la <path>`. If missing, re-ask; don't silently fall through.
+
+7. **GitHub profile** — free text:
+   ```
+   Question: "Do you have a GitHub? We can leverage it for this. Paste your username, or pick Skip to leave blank."
+     A) Skip (I'll add it later; set github_prompted=true so we don't re-ask)
+     Other: username (e.g., earino) or profile URL (we'll strip the prefix)
+   ```
+
+If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
 
 Write `.resumasher/config.json` with those values, then:
 
 ```bash
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" ensure-gitignore .
+"$RS" orchestration ensure-gitignore .
 ```
 
 (Idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
@@ -130,7 +189,7 @@ Write `.resumasher/config.json` with those values, then:
 Parse the job source:
 
 ```bash
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" parse-job-source "$JOB_SOURCE_ARG"
+"$RS" orchestration parse-job-source "$JOB_SOURCE_ARG"
 ```
 
 This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."}`.
@@ -155,7 +214,7 @@ If `$GITHUB_USER` is set (either from config or the flag), the mine phase mixes 
 Locate the resume:
 
 ```bash
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" discover-resume "$STUDENT_CWD"
+"$RS" orchestration discover-resume "$STUDENT_CWD"
 ```
 
 `discover-resume` looks for (in priority order): `resume.md`, `resume.markdown`, `cv.md`, `CV.md`, `resume.pdf`, `Resume.pdf`, `cv.pdf`, `CV.pdf`. Markdown is preferred because it's source-of-truth and diff-friendly; PDF works when the student only has a PDF export. If both a `.md` and a `.pdf` exist, the `.md` wins.
@@ -167,14 +226,14 @@ If this exits with `FAILURE: no resume.md / cv.md found`, halt the skill with:
 Otherwise: read the resume.
 
 ```bash
-RESUME_PATH=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" discover-resume "$STUDENT_CWD")
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" read-resume "$RESUME_PATH" > /tmp/resumasher-resume.txt
+RESUME_PATH=$("$RS" orchestration discover-resume "$STUDENT_CWD")
+"$RS" orchestration read-resume "$RESUME_PATH" > $RUN_DIR/resume.txt
 ```
 
 Compute the folder state hash and check the cache. When GitHub is configured, append its prose to the context before handing it to the folder-miner sub-agent. GitHub mining has its own internal cache (1-hour TTL under `.resumasher/github-cache/<username>.json`), so repeated runs are cheap.
 
 ```bash
-FOLDER_HASH=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" folder-state-hash "$STUDENT_CWD")
+FOLDER_HASH=$("$RS" orchestration folder-state-hash "$STUDENT_CWD")
 CACHE_PATH="$STUDENT_CWD/.resumasher/cache.txt"
 CACHE_HASH_PATH="$STUDENT_CWD/.resumasher/cache.hash"
 
@@ -190,13 +249,13 @@ else
   # mine-context to append a GITHUB_PROFILE / GITHUB_REPO block after the
   # file listing.
   if [ -n "$GITHUB_USER" ]; then
-    "$PY" "$SKILL_ROOT/scripts/orchestration.py" mine-context "$STUDENT_CWD" \
-      --github-username "$GITHUB_USER" > /tmp/resumasher-context.txt
+    "$RS" orchestration mine-context "$STUDENT_CWD" \
+      --github-username "$GITHUB_USER" > $RUN_DIR/context.txt
   else
-    "$PY" "$SKILL_ROOT/scripts/orchestration.py" mine-context "$STUDENT_CWD" \
-      > /tmp/resumasher-context.txt
+    "$RS" orchestration mine-context "$STUDENT_CWD" \
+      > $RUN_DIR/context.txt
   fi
-  # Dispatch sub-agent (see FOLDER_MINER_PROMPT below) with /tmp/resumasher-context.txt as input.
+  # Dispatch sub-agent (see FOLDER_MINER_PROMPT below) with $RUN_DIR/context.txt as input.
   # Save the sub-agent's prose summary to $CACHE_PATH and the hash to $CACHE_HASH_PATH.
 fi
 ```
@@ -319,8 +378,8 @@ on its own line and nothing else.
 Parse the output:
 
 ```bash
-FIT_SCORE=$(echo "$FIT_OUTPUT" | "$PY" "$SKILL_ROOT/scripts/orchestration.py" extract-fit-score)
-COMPANY=$(echo "$FIT_OUTPUT" | "$PY" "$SKILL_ROOT/scripts/orchestration.py" extract-company)
+FIT_SCORE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-score)
+COMPANY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-company)
 ```
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via AskUserQuestion: "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
@@ -328,7 +387,7 @@ If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the st
 Compute the output directory:
 
 ```bash
-SLUG=$("$PY" "$SKILL_ROOT/scripts/orchestration.py" company-slug "$COMPANY")
+SLUG=$("$RS" orchestration company-slug "$COMPANY")
 DATE=$(date +%Y%m%d)
 OUT_DIR="$STUDENT_CWD/applications/$SLUG-$DATE"
 mkdir -p "$OUT_DIR"
@@ -453,6 +512,24 @@ MUST fill before using the resume:
 
     - Led a team of [INSERT TEAM SIZE] data scientists building
       [INSERT PRODUCT/AREA], delivering [INSERT METRIC OR OUTCOME].
+
+**Every placeholder-bearing bullet MUST also include a `SOFT:` alternate**
+in an HTML comment on the same line, giving a no-metric-claim version the
+orchestrator can swap in if the student picks "soften this bullet" at
+fill-in time. Format:
+
+    - Led a team of [INSERT TEAM SIZE] data scientists building [INSERT PRODUCT/AREA], delivering [INSERT METRIC OR OUTCOME]. <!--SOFT: Led a senior data science organization across multiple product verticals, setting delivery standards and engagement model with product and engineering leadership.-->
+
+The SOFT version must be a complete, shippable bullet that stands on its
+own without requiring any metric substitution — it's what the student gets
+when they don't have the number. Keep it truthful to the evidence block
+(don't invent new claims in the SOFT version either) and roughly the same
+length as the placeholder version.
+
+This gives the fill-in flow three options per bullet without needing an
+LLM call at fill time: (1) student provides the specifics → mechanically
+substitute into the placeholder version; (2) student picks Soften → use
+the SOFT alternate; (3) student picks Drop → remove the whole line.
 
 This is preferable to either (a) inventing a number, which damages trust,
 or (b) writing a generic metric-free bullet, which wastes the space.
@@ -635,13 +712,78 @@ and continue. The student still gets the resume PDF.
 
 ---
 
-### Phase 7 — Render PDFs
+### Phase 7 — Interactive placeholder fill (resume + cover letter ONLY)
+
+The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't supply a specific metric (team size, revenue, scale). Those placeholders CANNOT ship in the PDF — a resume with `[INSERT TEAM SIZE]` is embarrassing. Before rendering, walk the student through filling each one.
+
+**Scope:** this phase runs on `tailored-resume.md` and `cover-letter.md`. It does NOT run on `interview-prep.md` — those placeholders are prep prompts for the student to think about before the interview (e.g., `[INSERT SPECIFIC FIRST-HIRE EXAMPLE FROM YOUR RECORD]`), not values to substitute. Interview-prep keeps its placeholders as-is; the summary phase will surface the count so the student reads them.
+
+**Flow per file:**
+
+1. Grep for placeholder lines:
+   ```bash
+   grep -nE '\[INSERT [^]]+\]' "$OUT_DIR/tailored-resume.md"
+   ```
+   Each matching line is one bullet to address.
+
+2. For each bullet, Read the full line (including any `<!--SOFT: ... -->` comment), parse out the placeholder tokens (`[INSERT TEAM SIZE]`, etc.) and the SOFT alternate content.
+
+3. Batch questions — up to 4 bullets per AskUserQuestion call. For each bullet:
+
+   ```
+   Question: "This bullet in tailored-resume.md has placeholders:
+
+     'Led [INSERT TEAM SIZE] data scientists across [INSERT PRODUCT/ORG AREA],
+      setting delivery standards, hiring bar, and roadmap prioritization.'
+
+   Placeholders needed: TEAM SIZE, PRODUCT/ORG AREA. What do you want to do?"
+
+     A) Soften — replace with the no-metric version:
+        'Led a senior data science organization across multiple product
+         verticals, setting delivery standards, hiring bar, and roadmap
+         prioritization.'
+     B) Drop this bullet entirely
+     Other: paste the specifics (e.g., "TEAM SIZE: 8 senior DS engineers;
+            PRODUCT/ORG AREA: Measurement Infra")
+   ```
+
+   Always show the FULL bullet text, not just the placeholders. The student needs context to decide.
+
+4. Apply each answer with the Edit tool on the markdown file:
+   - **Soften**: replace the whole line with the content of the `<!--SOFT: ... -->` comment, stripped of the comment markers.
+   - **Drop**: delete the entire bullet line.
+   - **Other (student provided specifics)**: mechanically substitute each placeholder token with the value the student provided. If the student pasted free-form prose like "team of 8 in Measurement Infra" rather than field=value pairs, use your own judgment to substitute grammatically — but do NOT invent any values not in the student's response.
+
+5. After processing all placeholders, re-grep to verify none remain:
+   ```bash
+   if grep -qE '\[INSERT [^]]+\]' "$OUT_DIR/tailored-resume.md"; then
+     echo "ERROR: placeholders still present in tailored-resume.md"
+     exit 1
+   fi
+   ```
+
+6. Repeat the whole flow for `cover-letter.md`. Cover letters rarely have many placeholders (the tailor doesn't usually reach for metrics in the narrative paragraphs), but the mechanism is the same.
+
+7. Also strip any lingering `<!--SOFT: ... -->` HTML comments from the file (whether filled, softened, or dropped, the SOFT annotation shouldn't appear in the PDF):
+   ```bash
+   sed -i '' 's| *<!--SOFT:[^>]*-->||g' "$OUT_DIR/tailored-resume.md"
+   sed -i '' 's| *<!--SOFT:[^>]*-->||g' "$OUT_DIR/cover-letter.md"
+   ```
+   (macOS sed uses `-i ''`; Linux uses `-i`. Use whichever matches the student's platform.)
+
+Only AFTER all placeholders are addressed and SOFT comments stripped, proceed to Phase 8 (render PDFs).
+
+If the student interrupts mid-fill or expresses frustration with the process, offer an escape: "Would you like to stop here and edit the markdown files manually? They're at `$OUT_DIR/tailored-resume.md` and `$OUT_DIR/cover-letter.md`. Run `/resumasher <job> --retry render` when ready." Do not force them through if they clearly want out.
+
+---
+
+### Phase 8 — Render PDFs
 
 Use `render-pdf.py` to produce three PDFs. Pass `--photo` only for EU resumes where the config says photo=true and the photo file exists. US resumes suppress the photo regardless (enforced inside `render-pdf.py`).
 
 ```bash
 # Resume
-"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
+"$RS" render_pdf \
   --input "$OUT_DIR/tailored-resume.md" \
   --kind resume \
   --style "$STYLE" \
@@ -649,13 +791,13 @@ Use `render-pdf.py` to produce three PDFs. Pass `--photo` only for EU resumes wh
   ${PHOTO_ARG}
 
 # Cover letter
-"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
+"$RS" render_pdf \
   --input "$OUT_DIR/cover-letter.md" \
   --kind cover-letter \
   --output "$OUT_DIR/cover-letter.pdf"
 
 # Interview prep
-"$PY" "$SKILL_ROOT/scripts/render_pdf.py" \
+"$RS" render_pdf \
   --input "$OUT_DIR/interview-prep.md" \
   --kind interview-prep \
   --output "$OUT_DIR/interview-prep.pdf"
@@ -665,12 +807,12 @@ If a markdown input was a stub (cover letter or interview prep generation failed
 
 ---
 
-### Phase 8 — Log + Summary
+### Phase 9 — Log + Summary
 
 Append the history record:
 
 ```bash
-"$PY" "$SKILL_ROOT/scripts/orchestration.py" append-history "$STUDENT_CWD" "$(cat <<EOF
+"$RS" orchestration append-history "$STUDENT_CWD" "$(cat <<EOF
 {
   "ts": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "company": "$COMPANY",
@@ -683,10 +825,9 @@ EOF
 )"
 ```
 
-**Before printing the summary, scan each markdown output for unfilled placeholders.** The tailor and interview-coach are instructed to emit `[INSERT: ...]` when the student's record doesn't supply a specific metric or story — this is correct behavior (no hallucination), but the student needs to SEE those placeholders or they'll ship the resume with `[INSERT TEAM SIZE]` still in it.
+**Scan each markdown output for placeholders.** After Phase 6.5, tailored-resume.md and cover-letter.md should be at zero (any `[INSERT]` there is a bug — the interactive fill phase should have resolved them all). interview-prep.md will have placeholders on purpose — those are practice prompts, not values to substitute, and the student is expected to see them.
 
 ```bash
-# Count placeholders in each generated markdown file and store for the summary.
 count_placeholders() {
   if [ -f "$1" ]; then
     grep -c '\[INSERT' "$1" 2>/dev/null || echo 0
@@ -697,7 +838,6 @@ count_placeholders() {
 PH_RESUME=$(count_placeholders "$OUT_DIR/tailored-resume.md")
 PH_COVER=$(count_placeholders "$OUT_DIR/cover-letter.md")
 PH_PREP=$(count_placeholders "$OUT_DIR/interview-prep.md")
-PH_TOTAL=$((PH_RESUME + PH_COVER + PH_PREP))
 ```
 
 Print a 1-screen summary:
@@ -721,18 +861,25 @@ Files generated:
   ✓ company-research.md (cited facts)
 ```
 
-If `PH_TOTAL > 0`, include this WARNING block in the summary BEFORE the "Next steps" section:
+If `PH_RESUME > 0` OR `PH_COVER > 0`, print this ERROR block — it means Phase 7 didn't fully resolve the placeholders, which is a bug:
 
 ```
-⚠  PLACEHOLDERS TO FILL BEFORE USING:
-   - tailored-resume.md:   {PH_RESUME} placeholder(s)
-   - cover-letter.md:      {PH_COVER} placeholder(s)
-   - interview-prep.md:    {PH_PREP} placeholder(s)
+⚠  UNEXPECTED PLACEHOLDERS REMAIN (these should have been filled in Phase 6.5):
+   - tailored-resume.md: {PH_RESUME} placeholder(s)
+   - cover-letter.md:    {PH_COVER} placeholder(s)
 
-   Search for "[INSERT" in each file. resumasher uses [INSERT ...]
-   when your record didn't supply a specific metric or story —
-   instead of inventing one. Fill these with real numbers and
-   real examples before sending anything out.
+   Open each file and search for "[INSERT". Either the Phase 7 fill-in
+   was skipped or had a bug. Edit the .md and rerun with --retry render.
+```
+
+If `PH_PREP > 0`, print this NOTE block (this is expected — interview-prep placeholders are prep prompts, not substitution values):
+
+```
+📝 interview-prep.md has {PH_PREP} practice prompts (things like
+   "[INSERT SPECIFIC FIRST-HIRE EXAMPLE FROM YOUR RECORD]"). These are
+   not filled automatically — they're things to think through BEFORE
+   the interview so you walk in with concrete stories ready. Read the
+   doc, prepare the stories, walk in dangerous.
 ```
 
 Then the Next steps block:

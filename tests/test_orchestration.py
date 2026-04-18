@@ -515,3 +515,50 @@ def test_cli_discover_resume_missing_returns_failure(tmp_path: Path):
     )
     assert result.returncode == 1
     assert "FAILURE" in result.stdout
+
+
+def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
+    """
+    Regression for real-trace bug: invoking `python scripts/orchestration.py
+    mine-context . --github-username X` ended with:
+        ModuleNotFoundError: No module named 'scripts'
+
+    Root cause: `from scripts import github_mine` required the parent of
+    scripts/ to be on sys.path, but running the .py file directly only puts
+    scripts/ itself on sys.path. Fixed by a sys.path.insert() at the top of
+    orchestration.py and changing to a sibling import.
+
+    This test runs the CLI exactly the way SKILL.md drives it (not via
+    `python -m scripts.orchestration`) and verifies no import error. Uses a
+    username guaranteed to NotFound so no network fetch succeeds, but the
+    orchestrator must get far enough to emit the warning — which means the
+    github_mine module imported cleanly.
+    """
+    import subprocess
+    repo_root = Path(__file__).resolve().parent.parent
+    script = repo_root / "scripts" / "orchestration.py"
+    (tmp_path / "resume.md").write_text("# Me\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "python", str(script),
+            "mine-context", str(tmp_path),
+            "--github-username", "this-username-does-not-exist-xyz-99999",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),  # NOT the repo root — simulates student's CWD
+        timeout=30,
+    )
+    combined = result.stdout + "\n" + result.stderr
+    assert "ModuleNotFoundError" not in combined, (
+        f"orchestration.py failed with ModuleNotFoundError when running "
+        f"mine-context --github-username. This means the sibling-import fix "
+        f"for github_mine regressed. stdout+stderr:\n{combined}"
+    )
+    # The mine-context call should succeed with a warning about the github
+    # fetch failing (not found or network), not a Python error.
+    assert result.returncode == 0, (
+        f"mine-context should exit 0 even when github fetch fails "
+        f"(non-fatal). Got {result.returncode}. Output:\n{combined}"
+    )

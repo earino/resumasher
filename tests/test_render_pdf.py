@@ -337,6 +337,118 @@ def test_render_interview_prep_roundtrip(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+MULTI_ROLE_RESUME_MD = """# Eduardo Test
+test@example.com | +43 000 | linkedin.com/in/test | Vienna, Austria
+
+## Summary
+Senior analytics leader.
+
+## Experience
+### Central European University (December 2017 – Present, 8 years)
+**Professor of Practice** (August 2025 – Present)
+- Designed ECBS5200 "Practical Deep Learning Engineering" course.
+- Authored ECBS5256 "Managing Data Science Teams" curriculum.
+
+**Visiting Professor** (December 2017 – July 2025)
+- Taught applied analytics to the MS Business Analytics cohort.
+
+### Meta (July 2017 – August 2025)
+**Senior Director, Data Science** (August 2022 – August 2025, Zurich)
+- Led a senior data science organization.
+- Set delivery standards and hiring bar.
+
+**Director, Data Science** (January 2021 – September 2022)
+- Scaled the team through hypergrowth.
+
+**Data Science Manager** (July 2017 – February 2021, Menlo Park)
+- Built the team from the ground up.
+
+### Chief Data Scientist — Domino Data Lab (December 2015 – July 2017)
+- Senior technical face of the data science platform.
+- Advised Fortune 500 CDOs.
+"""
+
+
+def test_parse_multi_role_sub_blocks():
+    """Regression: the old parser dumped **Title** lines into raw_paragraphs,
+    which the renderer emitted at the TOP of the section, disconnected from
+    their bullets. Verify the new parser attaches them to the block."""
+    from scripts.render_pdf import parse_resume_markdown
+    doc = parse_resume_markdown(MULTI_ROLE_RESUME_MD)
+    exp = next(s for s in doc.sections if s.heading == "Experience")
+    # No sub-block titles should have leaked into raw_paragraphs.
+    for p in exp.raw_paragraphs:
+        assert "Professor of Practice" not in p
+        assert "Senior Director" not in p
+
+    # Three blocks: CEU, Meta, Domino
+    assert len(exp.blocks) == 3
+    ceu, meta, domino = exp.blocks
+    assert ceu.title.startswith("Central European University")
+    assert len(ceu.sub_blocks) == 2
+    assert ceu.sub_blocks[0].title.startswith("Professor of Practice")
+    assert any("ECBS5200" in b for b in ceu.sub_blocks[0].bullets)
+    assert ceu.sub_blocks[1].title.startswith("Visiting Professor")
+    assert any("MS Business Analytics" in b for b in ceu.sub_blocks[1].bullets)
+
+    assert meta.title.startswith("Meta")
+    assert len(meta.sub_blocks) == 3
+    assert meta.sub_blocks[0].title.startswith("Senior Director")
+    assert any("hiring bar" in b for b in meta.sub_blocks[0].bullets)
+    assert meta.sub_blocks[2].title.startswith("Data Science Manager")
+
+    # Single-role blocks still work: Domino has no sub-blocks, bullets directly.
+    assert domino.title.startswith("Chief Data Scientist")
+    assert len(domino.sub_blocks) == 0
+    assert len(domino.bullets) == 2
+    assert any("Fortune 500" in b for b in domino.bullets)
+
+
+def test_render_multi_role_sub_blocks_appear_in_order(tmp_path: Path):
+    """Regression: the PDF must list sub-role titles INTERLEAVED with their
+    bullets, not bunched all together at the top of the section."""
+    from pdfminer.high_level import extract_text
+    out = tmp_path / "multi.pdf"
+    render_resume_eu(MULTI_ROLE_RESUME_MD, out)
+    extracted = extract_text(str(out))
+    # Normalize: pdfminer inserts hard line breaks; we just care about order.
+    # Find the position of each marker string. Sub-titles must come AFTER
+    # their parent company title AND before the next company title.
+    def pos(needle: str) -> int:
+        idx = extracted.find(needle)
+        assert idx != -1, f"'{needle}' missing from extracted text"
+        return idx
+
+    ceu = pos("Central European University")
+    professor = pos("Professor of Practice")
+    visiting = pos("Visiting Professor")
+    ecbs5200 = pos("ECBS5200")
+    meta = pos("Meta (July 2017")
+    senior_director = pos("Senior Director")
+    # Unique anchors that only appear in the specific sub-block's bullets,
+    # so we can verify sub-title → bullet → next-sub-title ordering.
+    hiring_bar = pos("hiring bar")              # only in Senior Director bullets
+    hypergrowth = pos("hypergrowth")            # only in second Director bullet
+    menlo = pos("Menlo Park")                   # only in Data Science Manager title
+    ground_up = pos("ground up")                # only in Data Science Manager bullet
+    domino = pos("Chief Data Scientist")
+    fortune_500 = pos("Fortune 500")
+
+    # CEU sub-blocks in order: Company → SubTitle → Bullets → next SubTitle
+    assert ceu < professor < ecbs5200 < visiting, (
+        "CEU sub-blocks out of order"
+    )
+    # Meta sub-blocks in chronological order (as written in source).
+    # Senior Director → its bullets (hiring bar) → Director → its bullets
+    # (hypergrowth) → Manager → its bullets (ground up).
+    assert meta < senior_director < hiring_bar < hypergrowth < menlo < ground_up, (
+        f"Meta sub-blocks out of order: meta={meta} senior_director={senior_director} "
+        f"hiring_bar={hiring_bar} hypergrowth={hypergrowth} menlo={menlo} ground_up={ground_up}"
+    )
+    # Domino (single-role block) appears after all CEU + Meta content.
+    assert ground_up < domino < fortune_500
+
+
 def test_render_interprets_markdown_bold_as_bold_not_asterisks(tmp_path: Path):
     """
     Regression: interview-prep output used `**Problem framing.**` syntax and
