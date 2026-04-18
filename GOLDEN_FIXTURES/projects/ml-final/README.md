@@ -1,6 +1,6 @@
 # ML Final Project: Anomaly Detection on Manufacturing Sensors
 
-Course: Machine Learning (CEU Vienna, Fall 2024).
+Course: Machine Learning (Central Graduate School, Fall 2024).
 Team: solo.
 
 ## Goal

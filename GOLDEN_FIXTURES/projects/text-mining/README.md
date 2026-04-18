@@ -1,6 +1,6 @@
 # German Customer Email Sentiment Analysis
 
-Course: Text Mining (CEU Vienna, Spring 2025).
+Course: Text Mining (Central Graduate School, Spring 2025).
 Team: 2 students.
 
 ## Goal

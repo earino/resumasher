@@ -4,7 +4,7 @@ ana.muller@example.com | +43 664 1234567 | linkedin.com/in/anamuller | Vienna, A
 
 ## Summary
 
-MSc Business Analytics candidate at CEU Vienna with hands-on experience building and deploying machine learning models for financial services. Fluent in Python, R, and SQL. Drawn to problems that sit at the boundary of data engineering and business decision-making.
+MSc Business Analytics candidate at Central Graduate School with hands-on experience building and deploying machine learning models for financial services. Fluent in Python, R, and SQL. Drawn to problems that sit at the boundary of data engineering and business decision-making.
 
 ## Experience
 
@@ -13,7 +13,7 @@ MSc Business Analytics candidate at CEU Vienna with hands-on experience building
 - Delivered a Tableau dashboard tracking monthly churn cohorts that is now used by 12 relationship managers.
 - Wrote SQL views in Snowflake that consolidated segment-level KPIs from 4 legacy reporting pipelines.
 
-### Teaching Assistant — CEU Vienna Department of Economics (September 2024 – May 2025)
+### Teaching Assistant — Central Graduate School Department of Economics (September 2024 – May 2025)
 - Coached 40 students through the Python for Data Analysis coursework, including weekly pandas and matplotlib office hours.
 - Wrote grading rubrics for 3 assignments and reduced grading variance by aligning 4 TAs on a shared scoring guide.
 
@@ -23,7 +23,7 @@ MSc Business Analytics candidate at CEU Vienna with hands-on experience building
 
 ## Education
 
-### MSc Business Analytics — Central European University, Vienna (2024 – 2026, expected)
+### MSc Business Analytics — Central Graduate School, Vienna (2024 – 2026, expected)
 - Capstone project: inventory optimization for FirmX, a Central European retailer. Delivered a Streamlit dashboard and a technical report; reduced forecast error by 12% vs. the client baseline.
 - Core coursework: machine learning, data engineering, text mining, agile project management, big data and cloud computing.
 

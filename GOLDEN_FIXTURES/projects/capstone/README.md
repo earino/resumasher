@@ -1,7 +1,7 @@
 # Capstone: Inventory Optimization for FirmX
 
 Client: FirmX, a Central European multi-category retailer (~200 stores).
-Duration: 6 weeks, team of 3 CEU students.
+Duration: 6 weeks, team of 3 graduate students.
 Advisor: Prof. Harder.
 
 ## Goal

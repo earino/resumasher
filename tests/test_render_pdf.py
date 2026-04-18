@@ -41,11 +41,11 @@ Business analytics MSc graduate with focus on ML deployment and SQL-driven decis
 - Built a churn prediction model on 2.3M rows; F1=0.82.
 - Delivered a Tableau dashboard used by 12 relationship managers.
 
-### Teaching Assistant — CEU Vienna (2024-2025)
+### Teaching Assistant — Central Graduate School (2024-2025)
 - Coached 40 students through the Python for Data Analysis course.
 
 ## Education
-### MSc Business Analytics — CEU Vienna (2024-2026)
+### MSc Business Analytics — Central Graduate School (2024-2026)
 - Capstone: Inventory optimization for FirmX (R, Python, consulting).
 
 ## Skills

@@ -403,7 +403,7 @@ Save to `$OUT_DIR/cover-letter.md`.
 
 ```
 Build an interview preparation bundle for the candidate applying to the role
-below. The candidate is a CEU Vienna MS Business Analytics student; tailor
+below. The candidate is an MS Business Analytics student; tailor
 the question types and example answers to analytics-shaped interviews.
 
 Candidate's tailored resume:

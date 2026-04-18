@@ -6,7 +6,7 @@
 
 A Claude Code skill that tailors your resume + writes a cover letter + builds an interview prep bundle for a specific job, by mining the evidence already in your working directory.
 
-Built for CEU Vienna's MS in Business Analytics cohort, but the shape generalizes to any student with a portfolio of code, notebooks, and PDF reports.
+Built for an MS Business Analytics cohort, but the shape generalizes to any student with a portfolio of code, notebooks, and PDF reports.
 
 **TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher runs locally, so it reads your actual project files — code, notebooks, READMEs, PDFs — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
 
@@ -189,6 +189,10 @@ Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-
 
 ## Contributing
 
-PRs welcome. If you're a student in the CEU cohort and you hit a bug or have an idea, please open an issue — the design doc in `~/.gstack/projects/resumasher/` (not in the repo) captures the full rationale for why the skill is shaped the way it is, and v0.2 is explicitly waiting on cohort feedback.
+PRs welcome. Before opening a large one, please read [`docs/DESIGN.md`](docs/DESIGN.md) — it captures why the skill is shaped the way it is (prose between LLM phases, pure-Python PDF, scope-reduced file tree, etc.) so you can propose changes that work with the design rather than against it.
 
-Before submitting a PR: `pytest tests/ -v` should pass, and if you change any rendering logic, please regenerate the GOLDEN_FIXTURES output and eyeball it through jobscan.co to make sure ATS parsing still works.
+If you hit a bug or have an idea, open an issue. v0.2 is explicitly shaped by feedback from early users.
+
+Before submitting a PR:
+- `pytest tests/ -v` should pass (65 tests, ~1 second).
+- If you change any rendering logic, regenerate the GOLDEN_FIXTURES output and eyeball it through [jobscan.co](https://www.jobscan.co/) to confirm ATS parsing still works.
