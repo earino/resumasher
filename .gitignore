@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 .resumasher/
 applications/
+examples/
 *.egg-info/
 .DS_Store
