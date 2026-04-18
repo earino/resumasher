@@ -275,6 +275,41 @@ def test_mine_folder_context_excludes_claude_skills(tmp_path: Path):
     assert "9999" not in ctx
 
 
+@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".agents"])
+def test_folder_state_hash_ignores_other_ai_cli_dirs(tmp_path: Path, ai_dir: str):
+    """
+    Regression for the Codex/Gemini port: project-scope installs live at
+    .codex/skills/resumasher/ and .gemini/skills/resumasher/ (plus .agents/
+    as Gemini's documented alias). These must be ignored by the folder
+    miner the same way .claude/ is — same self-mining risk.
+    """
+    (tmp_path / "resume.md").write_text("# Me", encoding="utf-8")
+    hash_before = folder_state_hash(tmp_path)
+
+    fake_skill = tmp_path / ai_dir / "skills" / "resumasher"
+    fake_skill.mkdir(parents=True)
+    (fake_skill / "SKILL.md").write_text("fake skill contents", encoding="utf-8")
+    hash_after = folder_state_hash(tmp_path)
+
+    assert hash_before == hash_after, (
+        f"folder_state_hash changed when {ai_dir}/ was added — "
+        f"{ai_dir} must be in DEFAULT_IGNORE_DIRS."
+    )
+
+
+@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".agents"])
+def test_mine_folder_context_excludes_other_ai_cli_dirs(tmp_path: Path, ai_dir: str):
+    (tmp_path / "resume.md").write_text("# Me\n\nreal content", encoding="utf-8")
+    fake_skill = tmp_path / ai_dir / "skills" / "resumasher"
+    fake_skill.mkdir(parents=True)
+    (fake_skill / "SKILL.md").write_text("fake contents SHOULD_NOT_LEAK", encoding="utf-8")
+
+    ctx = mine_folder_context(tmp_path)
+    assert "resume.md" in ctx
+    assert f"{ai_dir}/skills/resumasher/SKILL.md" not in ctx
+    assert "SHOULD_NOT_LEAK" not in ctx
+
+
 def test_folder_state_hash_ignores_git_and_venv(tmp_path: Path):
     (tmp_path / "a.md").write_text("one", encoding="utf-8")
     for noise in [".git", ".venv", "node_modules", "__pycache__"]:
