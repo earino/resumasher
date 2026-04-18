@@ -40,10 +40,42 @@ fi
 
 # Install dependencies. Use a generous timeout and retry count so students
 # on coffee-shop / hotel / airport wifi still see a successful install.
-PIP_OPTS="--default-timeout=120 --retries=5"
+# PIP_OPTS is overridable from the environment so students on especially
+# slow connections can bump timeout/retries without editing this file.
+: "${PIP_OPTS:=--default-timeout=120 --retries=5}"
 echo "Installing dependencies (this can take ~30s on a fast connection, longer on slow wifi)..."
-"$VENV/bin/pip" install $PIP_OPTS --quiet --upgrade pip
-"$VENV/bin/pip" install $PIP_OPTS --quiet -r "$SCRIPT_DIR/requirements.txt"
+
+# Friendly error wrapper around pip. set -e would turn a pip failure into
+# a raw Python traceback. Catch it instead and print an actionable message.
+_pip_install() {
+  local label="$1"; shift
+  if ! "$VENV/bin/pip" install $PIP_OPTS --quiet "$@"; then
+    cat >&2 <<EOF
+
+ERROR: pip install for ${label} failed (exit code $?).
+
+This is almost always a network issue, not a bug in resumasher. Try:
+
+  1. Re-run the installer — transient PyPI slowness is common:
+       bash $SCRIPT_DIR/install.sh
+
+  2. If you're on slow wifi (coffee shop, hotel, conference), bump
+     pip's tolerance and retry:
+       PIP_OPTS="--default-timeout=300 --retries=10" bash $SCRIPT_DIR/install.sh
+
+  3. If you're behind a corporate proxy, set HTTPS_PROXY before running:
+       export HTTPS_PROXY=http://your.proxy:port
+       bash $SCRIPT_DIR/install.sh
+
+  4. Still failing? Open an issue with the full pip output:
+       https://github.com/earino/resumasher/issues
+EOF
+    exit 2
+  fi
+}
+
+_pip_install "pip itself" --upgrade pip
+_pip_install "resumasher dependencies" -r "$SCRIPT_DIR/requirements.txt"
 
 
 # Ensure the wrapper scripts in bin/ are executable. Git preserves the exec

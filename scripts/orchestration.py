@@ -608,7 +608,12 @@ def _cli() -> int:
     if args.command == "discover-resume":
         path = discover_resume(Path(args.cwd))
         if path is None:
-            print("FAILURE: no resume.md / cv.md found")
+            print(
+                "FAILURE: no resume found. Looked for these filenames in "
+                + str(Path(args.cwd).resolve())
+                + ": "
+                + ", ".join(RESUME_CANDIDATES)
+            )
             return 1
         print(str(path))
         return 0

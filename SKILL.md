@@ -301,7 +301,7 @@ Locate the resume:
 
 `discover-resume` looks for (in priority order): `resume.md`, `resume.markdown`, `cv.md`, `CV.md`, `resume.pdf`, `Resume.pdf`, `cv.pdf`, `CV.pdf`. Markdown is preferred because it's source-of-truth and diff-friendly; PDF works when the student only has a PDF export. If both a `.md` and a `.pdf` exist, the `.md` wins.
 
-If this exits with `FAILURE: no resume.md / cv.md found`, halt the skill with:
+If this exits with a `FAILURE: no resume found` message, halt the skill with:
 
 > resumasher needs a resume to work with. Please add a `resume.md`, `cv.md`, or `resume.pdf` to this folder and try again. You can use the skill's GOLDEN_FIXTURES/resume.md as a template.
 
