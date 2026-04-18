@@ -77,7 +77,13 @@ def parse_job_source(arg: str, cwd: Optional[Path] = None) -> JobSource:
 # 2. discover_resume: canonical filenames in priority order
 # ---------------------------------------------------------------------------
 
-RESUME_CANDIDATES = ["resume.md", "resume.markdown", "cv.md", "CV.md"]
+# Markdown is preferred (source-of-truth, easier to diff), then PDF.
+# If a student has both resume.md and resume.pdf, the .md wins — most
+# students keep the .md as their working copy and export the PDF from it.
+RESUME_CANDIDATES = [
+    "resume.md", "resume.markdown", "cv.md", "CV.md",
+    "resume.pdf", "Resume.pdf", "cv.pdf", "CV.pdf",
+]
 
 
 def discover_resume(cwd: Path) -> Optional[Path]:
@@ -129,7 +135,56 @@ def _read_text_with_encoding_detection(path: Path) -> str:
 
 
 def read_resume(path: Path) -> str:
+    """
+    Read a resume file as text. Handles markdown (with encoding detection)
+    and PDF (via pdfminer.six text extraction).
+
+    Raises a clear error if the PDF appears to be image-only (scanned resume
+    with no extractable text). In that case the student needs to either OCR
+    it themselves or retype the content into a resume.md.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return _read_resume_pdf(path)
     return _read_text_with_encoding_detection(path)
+
+
+def _read_resume_pdf(path: Path) -> str:
+    """
+    Extract selectable text from a PDF resume. pdfminer returns text in
+    approximate reading order which is usually good enough for the tailor
+    sub-agent to restructure into the markdown schema.
+    """
+    try:
+        from pdfminer.high_level import extract_text
+    except ImportError as exc:
+        raise RuntimeError(
+            "pdfminer.six is required to read PDF resumes but is not installed. "
+            "Run install.sh inside the skill directory to set up the venv."
+        ) from exc
+
+    try:
+        text = extract_text(str(path)) or ""
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to extract text from {path}: {exc}. "
+            f"The PDF may be corrupted or encrypted."
+        ) from exc
+
+    # Heuristic: fewer than 50 non-whitespace characters means the PDF is
+    # almost certainly image-based (a scanned resume). pdfminer cannot do OCR.
+    stripped = "".join(text.split())
+    if len(stripped) < 50:
+        raise RuntimeError(
+            f"{path} appears to be an image-based (scanned) PDF — only "
+            f"{len(stripped)} characters of selectable text were extracted. "
+            f"resumasher cannot OCR scanned PDFs. Options: "
+            f"(1) export a text-based PDF from your source document, "
+            f"(2) run OCR yourself (e.g., `ocrmypdf`) and retry, or "
+            f"(3) create a resume.md in the same folder and resumasher will use that instead."
+        )
+
+    return text
 
 
 # ---------------------------------------------------------------------------

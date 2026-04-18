@@ -111,7 +111,7 @@ Everything is stored locally in `.resumasher/config.json`. Nothing is uploaded.
 
 ```
 my-job-search/
-├── resume.md            # Your base resume (required)
+├── resume.md            # Your base resume (see below for accepted formats)
 ├── photo.jpg            # Optional, for EU-style resumes
 ├── applications/        # resumasher writes PDFs here
 └── projects/            # Your work — code, notebooks, READMEs, PDFs
@@ -121,6 +121,23 @@ my-job-search/
 ```
 
 See `GOLDEN_FIXTURES/` in this repo for a full example.
+
+### Accepted resume formats
+
+resumasher looks for these files in the working directory, in priority order:
+
+1. `resume.md` / `resume.markdown`
+2. `cv.md` / `CV.md`
+3. `resume.pdf` / `Resume.pdf`
+4. `cv.pdf` / `CV.pdf`
+
+**Markdown is preferred** because it's the source-of-truth you should be editing anyway (diff-friendly, easy to update, no rendering stack needed). If both a `.md` and a `.pdf` exist, the `.md` wins.
+
+**PDF works if that's all you have** — resumasher will extract the selectable text via `pdfminer.six` and hand it to the tailor sub-agent. Caveats:
+
+- Scanned / image-only PDFs will fail with a clear error. resumasher does not OCR.
+- PDF text extraction loses some structure (columns, tables). The tailor sub-agent will restructure it into the expected markdown schema, but results are cleaner if you start from a `resume.md`.
+- If you want to keep iterating, export your tailored `tailored-resume.md` from the first run as your new base — future runs will be markdown-driven.
 
 ### Flags
 

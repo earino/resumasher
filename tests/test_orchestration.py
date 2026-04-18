@@ -91,6 +91,27 @@ def test_discover_resume_returns_none_when_missing(tmp_path: Path):
     assert discover_resume(tmp_path) is None
 
 
+def test_discover_resume_accepts_pdf(tmp_path: Path):
+    """A student with only resume.pdf (no markdown source) still works."""
+    (tmp_path / "resume.pdf").write_bytes(b"%PDF-1.4\n...")  # stub header
+    result = discover_resume(tmp_path)
+    assert result is not None and result.name == "resume.pdf"
+
+
+def test_discover_resume_prefers_markdown_over_pdf(tmp_path: Path):
+    """If both .md and .pdf exist, .md wins because it's the source-of-truth."""
+    (tmp_path / "resume.md").write_text("# Me", encoding="utf-8")
+    (tmp_path / "resume.pdf").write_bytes(b"%PDF-1.4\n...")
+    result = discover_resume(tmp_path)
+    assert result is not None and result.name == "resume.md"
+
+
+def test_discover_resume_accepts_cv_pdf_variants(tmp_path: Path):
+    (tmp_path / "CV.pdf").write_bytes(b"%PDF-1.4\n...")
+    result = discover_resume(tmp_path)
+    assert result is not None and result.name == "CV.pdf"
+
+
 # ---------------------------------------------------------------------------
 # read_resume: encoding detection
 # ---------------------------------------------------------------------------
@@ -126,6 +147,57 @@ def test_read_resume_latin1_fallback(tmp_path: Path):
         assert "caf" in content
     except UnicodeDecodeError as exc:
         assert "resave" in str(exc).lower() or "encoding" in str(exc).lower()
+
+
+def test_read_resume_pdf_extracts_selectable_text(tmp_path: Path):
+    """Use the render_pdf module to produce a real PDF, then read it back."""
+    from scripts.render_pdf import render_resume_eu
+
+    resume_md = """# Björn Analyst
+bjorn@example.com | linkedin.com/in/bjorn | Berlin
+
+## Summary
+Data scientist with a focus on forecasting and anomaly detection.
+
+## Experience
+### Senior Analyst — Example Corp (2022-2024)
+- Built a churn model on 1.5M records, F1=0.78.
+"""
+    pdf_path = tmp_path / "resume.pdf"
+    render_resume_eu(resume_md, pdf_path)
+    extracted = read_resume(pdf_path)
+    assert "Björn" in extracted
+    assert "bjorn@example.com" in extracted
+    assert "churn model" in extracted
+    assert "F1=0.78" in extracted
+
+
+def test_read_resume_pdf_raises_clearly_on_scanned_image_only_pdf(tmp_path: Path):
+    """Image-only PDFs (scanned documents) should fail fast with a helpful message."""
+    import pytest
+    # Make a real PDF with no selectable text by rendering an empty doc.
+    from scripts.render_pdf import render_cover_letter
+    pdf_path = tmp_path / "scanned.pdf"
+    render_cover_letter("", pdf_path)  # empty body = no text
+    with pytest.raises(RuntimeError) as exc:
+        read_resume(pdf_path)
+    msg = str(exc.value).lower()
+    assert "image-based" in msg or "scanned" in msg
+    # Should mention the workaround options.
+    assert "ocr" in msg or "resume.md" in msg
+
+
+def test_read_resume_pdf_raises_clearly_on_corrupted_pdf(tmp_path: Path):
+    """A file with a .pdf extension but garbage content should fail clearly."""
+    import pytest
+    pdf_path = tmp_path / "resume.pdf"
+    pdf_path.write_bytes(b"this is not a real pdf, just some bytes")
+    with pytest.raises(RuntimeError) as exc:
+        read_resume(pdf_path)
+    msg = str(exc.value).lower()
+    # Could fail either as extraction error OR as image-based (empty text).
+    # Both paths produce a RuntimeError with a helpful message.
+    assert "pdf" in msg
 
 
 # ---------------------------------------------------------------------------
