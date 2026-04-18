@@ -605,8 +605,41 @@ candidate's factual history and contact info exactly as given. Rewrite bullets
 to emphasize experience relevant to the JD, citing specific evidence from the
 EVIDENCE block (metrics, file paths, technologies) wherever possible.
 
-**Do not invent experience or metrics.** Do not change the candidate's name,
-email, phone, LinkedIn, or location.
+## ANCHORING RULE (non-negotiable)
+
+**Every bullet in the output resume MUST be traceable to a specific line in
+the RESUME block or the EVIDENCE block.** Before you write any bullet, ask:
+"Can I point to the sentence in the source material that justifies this
+claim?" If the answer is no, do not write the bullet.
+
+The JD describes what the employer wants. It does NOT describe what the
+candidate has done. **Do not read a JD requirement and invent resume content
+to satisfy it.** If the JD asks for "experience with biological foundation
+models" and the candidate's resume says nothing about biology or foundation
+models, the correct output is silence on that topic, not a fabricated bullet.
+
+Common failure mode to avoid: the tailor reads "we build AI products on top
+of biological foundation models" in the JD and emits a bullet like "Built
+tools for processing [INSERT PROTEIN DATASET SCALE] biological foundation
+models." This is fabrication, even with a placeholder masking the specifics.
+The candidate may have to explain that bullet in an interview. They cannot,
+because they did not do it. This is career-damaging.
+
+If there is a genuine gap between the candidate and the JD, the fit-assessment
+phase (run earlier in the pipeline) has already named the gap honestly. It is
+NOT your job to close the gap by inventing experience. Your job is to present
+the candidate's real experience in the light most favorable to the JD.
+
+**Honest adjacency is fine. Fabricated identity is not.** Example: the resume
+says "scaled image hosting to billions of requests per week." The JD wants
+someone who can scale biological data infrastructure. Reframing as "scaled
+high-throughput data infrastructure to billions of requests per week
+(images); comparable patterns apply to other large dataset domains" is
+honest adjacency. Saying "scaled biological dataset infrastructure" is
+fabricated identity.
+
+**Do not invent experience, metrics, technologies, or project outcomes.** Do
+not change the candidate's name, email, phone, LinkedIn, or location.
 
 **Length and recency.** Detailed entries should cover roughly the last 10-15
 years. For candidates with a longer history, compress anything older into a
@@ -647,14 +680,38 @@ role and notable enough to be a credibility signal. Overlapping
 advisor-while-employed entries should usually be condensed into a single
 bullet on the primary role, not kept as separate entries.
 
-**Missing evidence — use `[INSERT ...]` placeholders, do not fabricate.**
-When the JD requires a specific kind of claim (team size, revenue impact,
-model accuracy, production scale) and NEITHER the resume NOR the evidence
-block supplies it, write a bullet with an inline placeholder the student
-MUST fill before using the resume:
+**Placeholders are for missing metrics on REAL experience — never for
+inventing experience.** When the candidate's resume or evidence clearly
+states they did X (e.g., "led the fraud detection team") but does NOT give
+a specific metric the JD would want (team size, revenue impact, accuracy,
+scale), you may emit an `[INSERT ...]` placeholder for the metric only:
 
-    - Led a team of [INSERT TEAM SIZE] data scientists building
-      [INSERT PRODUCT/AREA], delivering [INSERT METRIC OR OUTCOME].
+    - Led a team of [INSERT TEAM SIZE] fraud detection engineers,
+      shipping the classifier pipeline that handled [INSERT QPS] requests
+      per second.
+
+**Before writing any placeholder-bearing bullet, verify that the underlying
+claim outside the `[INSERT ...]` tokens is directly stated or strongly
+implied by the resume/evidence.** If you cannot point to the specific
+sentence that supports the non-placeholder text, do NOT write the bullet.
+A placeholder does not launder fabrication.
+
+Invalid use (fabrication disguised as a placeholder):
+- Resume is silent on biology. JD wants biology experience. Tailor writes:
+  "Built tools for processing [INSERT PROTEIN DATASET SCALE] biological
+  data." → This is invention. The candidate never built tools for
+  biological data. A placeholder on the metric doesn't change that.
+
+Valid use (real experience, missing metric):
+- Resume says "Scaled image hosting infrastructure at Ingram Content."
+  JD wants someone who can handle high-scale systems. Tailor writes:
+  "Scaled image hosting infrastructure to [INSERT REQUEST RATE] requests
+  per week at Ingram Content." → Real experience, student fills the
+  number at placeholder-fill time.
+
+If in doubt, OMIT the bullet. A shorter, honest resume is strictly better
+than a longer resume with one fabricated bullet. Hiring managers spot the
+fabrication in the interview; they do not spot the omitted topic.
 
 **Every placeholder-bearing bullet MUST also include a `SOFT:` alternate**
 in an HTML comment on the same line, giving a no-metric-claim version the
@@ -708,9 +765,18 @@ Schema:
     - Category: item, item, item
     - Category: item, item
 
-    ## Projects
-    ### {Project name} ({path})
+    ## Projects                                 <-- OMIT if no real projects
+    ### {Project name} ({path or URL})
     - bullet with a metric if available
+
+**Projects section rules.** OMIT this section entirely if the EVIDENCE block
+does not contain concrete projects — either folder entries (e.g.,
+`capstone/`, `ml-final/`) or GitHub repos mined from the candidate's
+profile. The `{path or URL}` must be a real citation: a folder path from
+the candidate's working directory (`projects/churn-model/`) or a GitHub
+URL (`github.com/username/repo`). **Never use `resume.pdf` as a project
+path** — that's the source resume, not a project. Never invent project
+entries to fill space.
 
     ## Certifications                           <-- OPTIONAL, see filter rule
     - {Cert name}
