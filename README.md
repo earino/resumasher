@@ -2,49 +2,99 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 95 passing](https://img.shields.io/badge/tests-95%20passing-brightgreen.svg)](tests/)
+[![Tests: 101 passing](https://img.shields.io/badge/tests-101%20passing-brightgreen.svg)](tests/)
 
-A Claude Code skill that tailors your resume + writes a cover letter + builds an interview prep bundle for a specific job, by mining the evidence already in your working directory.
+A cross-host AI-CLI skill that tailors your resume + writes a cover letter + builds an interview prep bundle for a specific job, by mining the evidence already in your working directory.
 
 Built for an MS Business Analytics cohort, but the shape generalizes to any student with a portfolio of code, notebooks, and PDF reports.
 
 **TL;DR:** Every other AI resume tool is a web app that only sees the summary you paste in. resumasher reads your actual work — your public GitHub repos and any project files in the working directory — and cites concrete evidence in your resume. Generic bullets become source-backed claims.
 
-## For Claude Code — how to install this skill
+## This is a skill, not a plugin
 
-**If a user asks you (Claude) to install this skill, here is the exact flow. Do not guess. Read this section and follow it.**
+resumasher is an [Agent Skills](https://github.com/anthropics/skills) package. The SKILL.md-based spec is cross-ecosystem — the same skill runs on **Claude Code**, **OpenAI Codex CLI**, and **Google Gemini CLI** with no per-host customization. If your AI CLI asks "is this a plugin," the answer is no — it's a skill. Install commands below.
 
-### User-scope install (skill available in every folder)
+## Install
 
-```bash
-git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
-bash ~/.claude/skills/resumasher/install.sh
-```
+Pick the block that matches your AI CLI. Each host has its own skill directory convention but the install is otherwise the same: clone, then run the mandatory `install.sh` to set up the Python venv.
 
-### Project-scope install (skill available only in the current folder)
+**⚠️ `install.sh` is mandatory on every host.** `git clone` alone only copies files — it does NOT create the Python virtual environment or install the required packages (reportlab, pdfminer.six, chardet, nbconvert, Pillow). If you skip `install.sh`, the next invocation of `/resumasher` will crash with `ModuleNotFoundError: No module named 'reportlab'` and you'll think the skill is broken.
+
+### Claude Code
+
+**Project-scope (skill available only in the current folder):**
 
 ```bash
 git clone https://github.com/earino/resumasher.git .claude/skills/resumasher
 bash .claude/skills/resumasher/install.sh
 ```
 
-**⚠️ `install.sh` is mandatory.** `git clone` alone only copies files — it does NOT create the Python virtual environment or install the required packages (reportlab, pdfminer.six, chardet, nbconvert). If you skip `install.sh`, the next invocation of `/resumasher` will crash with `ModuleNotFoundError: No module named 'reportlab'` and the student will think the skill is broken.
+**User-scope (skill available in every folder):**
 
-After both commands succeed, tell the user:
+```bash
+git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
+bash ~/.claude/skills/resumasher/install.sh
+```
 
-> Restart Claude Code (quit and reopen) so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
+Restart Claude Code so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
+
+### OpenAI Codex CLI
+
+**Project-scope:**
+
+```bash
+git clone https://github.com/earino/resumasher.git .codex/skills/resumasher
+bash .codex/skills/resumasher/install.sh
+```
+
+**User-scope:**
+
+```bash
+git clone https://github.com/earino/resumasher.git ~/.codex/skills/resumasher
+bash ~/.codex/skills/resumasher/install.sh
+```
+
+Restart Codex so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
+
+### Google Gemini CLI
+
+Gemini CLI has a first-class `skills install` subcommand that handles the clone for you:
+
+```bash
+gemini skills install https://github.com/earino/resumasher   # project-scope (workspace)
+# or:
+gemini skills install --user https://github.com/earino/resumasher
+```
+
+Gemini will prompt you to confirm before installing. After it finishes, you still need to run the Python installer once:
+
+```bash
+bash .gemini/skills/resumasher/install.sh          # project-scope
+# or:
+bash ~/.gemini/skills/resumasher/install.sh        # user-scope
+```
+
+Restart Gemini so the skill is discovered. Then run `/resumasher <job>` from inside the folder with your `resume.md` or `resume.pdf`.
 
 ### Updating an existing install
 
-If the skill is already installed and you need to pull the latest fixes:
+Same pattern on all three hosts — `cd` into wherever the skill was cloned, pull, re-run `install.sh` in case dependencies changed:
 
 ```bash
-cd ~/.claude/skills/resumasher          # or your project-scope install path
+# Pick whichever path matches your install:
+cd ~/.claude/skills/resumasher      # or .claude/skills/resumasher
+cd ~/.codex/skills/resumasher       # or .codex/skills/resumasher
+cd ~/.gemini/skills/resumasher      # or .gemini/skills/resumasher
+
 git pull
-bash install.sh                         # refreshes venv if requirements changed
+bash install.sh
 ```
 
-Then ask the user to restart Claude Code.
+Then restart your AI CLI.
+
+## For your AI CLI — authoritative install instructions
+
+**If a user asks their AI CLI (Claude Code, Codex, or Gemini) to install this skill, the CLI should follow the matching block above.** Pick the block for your host, run both commands, done. Do not attempt to install this as a Claude Code plugin — there is no `.claude-plugin/` manifest and the repo is not a plugin marketplace. It's a skill. The skill directory conventions differ per host (`.claude/skills/`, `.codex/skills/`, `.gemini/skills/`) but the skill source is identical.
 
 ## What it does
 
@@ -69,7 +119,7 @@ A few minutes later you get `./applications/<company>-<date>/` containing:
 
 ## The unfair advantage: it sees your actual work
 
-Every other resume-tailoring tool is a web app that only sees the summary you paste in. resumasher runs inside Claude Code, so it pulls from two evidence sources the web tools cannot reach:
+Every other resume-tailoring tool is a web app that only sees the summary you paste in. resumasher runs inside your AI CLI (Claude Code, Codex, or Gemini), so it pulls from two evidence sources the web tools cannot reach:
 
 **Your public GitHub.** One-time setup, then every run mines your non-fork repos — names, descriptions, topics, README content, last-push date. For most students this is where the evidence lives, especially on a borrowed or clean laptop.
 
@@ -77,79 +127,22 @@ Every other resume-tailoring tool is a web app that only sees the summary you pa
 
 Your bullet becomes: "Built an XGBoost churn classifier on 2.3M rows, F1=0.82, deployed to Flask — see `github.com/you/churn-model`" instead of "built a machine learning model."
 
-Competitors cannot do this. resumasher can because it's a Claude Code skill, not a web form.
+Competitors cannot do this. resumasher can because it's an AI-CLI skill, not a web form.
 
-## Install
+## Verify the install
 
-### Quick install (one-liner)
-
-```bash
-git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher \
-  && bash ~/.claude/skills/resumasher/install.sh
-```
-
-Then restart Claude Code.
-
-### Manual install
-
-**1. Clone into your Claude Code skills directory:**
+From a fresh session of whichever AI CLI you installed into:
 
 ```bash
-git clone https://github.com/earino/resumasher.git ~/.claude/skills/resumasher
-cd ~/.claude/skills/resumasher
-```
-
-**2. Install Python dependencies in a venv:**
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Works on macOS, Linux, and Windows (WSL or native Python). No native dependencies — reportlab and pdfminer.six are pure Python.
-
-**3. Restart Claude Code.**
-
-The skill should now be available as `/resumasher`.
-
-### Install for a single project only
-
-The default install above is **user-scope** — `/resumasher` is available in every folder you open in Claude Code. If you'd rather have it **project-scope** (available only inside one specific folder, like `~/my-job-applications/`), clone into that project's `.claude/skills/` instead:
-
-```bash
-cd ~/my-job-applications
-git clone https://github.com/earino/resumasher.git .claude/skills/resumasher \
-  && bash .claude/skills/resumasher/install.sh
-```
-
-Now `/resumasher` only appears when Claude Code is running inside `~/my-job-applications/`. It won't pollute any other project. Use this if you want all your job-application work (resumes, JDs, the skill itself) checked into one folder, or if you just prefer clean scoping.
-
-You probably want to add `.claude/skills/resumasher/.venv/` to that project's `.gitignore` so the Python venv doesn't get checked in.
-
-### Verify the install
-
-```bash
-cd ~/.claude/skills/resumasher/GOLDEN_FIXTURES
-# From a fresh Claude Code session:
+cd ~/.claude/skills/resumasher/GOLDEN_FIXTURES     # or the equivalent .codex / .gemini path
 /resumasher sample-jd.md
 ```
 
-A few minutes later you should see three PDFs in `./applications/deloitte-consulting-<today>/`. Wall-clock time depends on the LLM model in use, GitHub fetch latency (if configured), and your network.
+A few minutes later you should see three PDFs in `./applications/deloitte-consulting-<today>/`. Wall-clock time depends on the LLM in use, GitHub fetch latency (if configured), and your network.
 
-(If you used the project-scope install, replace `~/.claude/skills/resumasher/` with `~/my-job-applications/.claude/skills/resumasher/`.)
+## What's in v0.1 (and improving)
 
-### Updating an existing install
-
-resumasher is early and improves weekly. If you installed a while ago, grab the latest fixes:
-
-```bash
-cd ~/.claude/skills/resumasher        # or your project-scope install path
-git pull
-bash install.sh                       # refreshes the venv if deps changed
-```
-
-Restart Claude Code after pulling so the updated SKILL.md takes effect. Recent fixes you probably want:
+Recent fixes you probably want (pull to pick them up):
 
 - **Interactive placeholder fill** before PDFs are rendered — no more `[INSERT TEAM SIZE]` shipping in your resume by accident
 - **Multi-role tenures render correctly** (Meta → Senior Director → Director → Manager as sub-bullets under one company entry, not three separate entries)
@@ -255,7 +248,7 @@ Every generated PDF passes `pdfminer.six` round-trip extraction. We've also manu
 - `assets/DejaVuSans.ttf` — fallback font with broad Unicode coverage. Renders Björn, François, Jiří, 🐍 correctly.
 - `docs/DESIGN.md` — the design rationale. Read before a large PR.
 
-The LLM pipeline runs prose between phases (no JSON), with small sentinel lines (`FIT_SCORE: 7`, `COMPANY: Deloitte`, `FAILURE: ...`) where structure actually matters. Sub-agents dispatch via Claude Code's Task tool with `subagent_type="general-purpose"`. Job descriptions and company-research output are wrapped in `<<<UNTRUSTED_*>>>` markers before reaching sub-agents that have file/web access — basic prompt-injection containment.
+The LLM pipeline runs prose between phases (no JSON), with small sentinel lines (`FIT_SCORE: 7`, `COMPANY: Deloitte`, `FAILURE: ...`) where structure actually matters. Sub-agents dispatch via each host's equivalent subagent mechanism (Claude Code's Task tool with `subagent_type="general-purpose"`, Gemini's `@generalist`, or Codex's inline execution). Interactive prompts similarly use each host's tool (`AskUserQuestion` / `request_user_input` / `ask_user`) with a hard-fail fallback for non-interactive contexts. Job descriptions and company-research output are wrapped in `<<<UNTRUSTED_*>>>` markers before reaching sub-agents that have file/web access — basic prompt-injection containment.
 
 ## Development
 
@@ -322,7 +315,7 @@ MIT — see [LICENSE](LICENSE). Fork it, extend it, ship it to your students.
 
 Built by [Eduardo Ariño de la Rubia](https://github.com/earino) for his wonderful students, and anyone else who may find it useful.
 
-Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-eng-review skills) and built with [Claude Code](https://claude.com/claude-code).
+Designed with [gstack](https://github.com/garrytan/gstack) (office-hours + plan-eng-review skills) and built with [Claude Code](https://claude.com/claude-code). Runs on Claude Code, OpenAI Codex CLI, and Google Gemini CLI.
 
 ## Contributing
 
