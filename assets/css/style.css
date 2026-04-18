@@ -284,6 +284,88 @@ p > a > img[src*="shields.io"] {
   }
 }
 
+/* --- Source link: top-right GitHub corner link --- */
+/* Small, always-visible affordance to get back to the repo. The landing
+ * page otherwise has no chrome (by design) so students could previously
+ * only find the source by typing the URL. */
+.source-link {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 0.85rem;
+  text-decoration: none;
+  border-radius: 4px;
+  border: 1px solid #d8d5cc;
+  transition: background 150ms ease, border-color 150ms ease;
+  z-index: 10;
+}
+
+.source-link:hover {
+  background: #e7e4dc;
+  border-color: var(--muted);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.source-link svg {
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .source-link {
+    top: 0.6rem;
+    right: 0.6rem;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+  }
+  .source-link span {
+    /* Icon-only on narrow screens to save space. */
+    display: none;
+  }
+}
+
+/* --- Colophon (footer) --- */
+/* Small byline at the bottom with source link + author. Matches resume
+ * document feel: the 'small print' you'd find at the end of a proposal. */
+.colophon {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 2rem 3rem;
+  border-top: 1px solid #d8d5cc;
+  padding-top: 1.5rem;
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.colophon p {
+  margin: 0;
+}
+
+.colophon a {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+.colophon a:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .colophon {
+    padding: 1.25rem 1.25rem 2.5rem;
+  }
+}
+
 /* --- Print: output the document the way it renders on screen,
  * because the screen already looks like a printed resume. --- */
 @media print {
@@ -294,6 +376,15 @@ p > a > img[src*="shields.io"] {
   .document {
     max-width: none;
     padding: 0.5in;
+  }
+
+  .source-link {
+    display: none;
+  }
+
+  .colophon {
+    border-top: 1px solid #ccc;
+    color: #666;
   }
 
   details {
