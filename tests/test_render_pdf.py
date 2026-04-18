@@ -257,6 +257,47 @@ def test_render_resume_us_happy_path_roundtrip(tmp_path: Path):
     ])
 
 
+@pytest.mark.parametrize(
+    "renderer,kwargs",
+    [
+        (render_resume_us, {}),
+        (render_resume_eu, {"photo": None}),
+    ],
+    ids=["us", "eu"],
+)
+def test_contact_info_header_survives_both_styles(tmp_path: Path, renderer, kwargs):
+    """
+    The contact_info header that build_prompt inserts (a 2-line block of
+    ``# Name`` + ``email | phone | linkedin | location``) must render
+    identically through US and EU styles. This locks in the claim that the
+    tailor's markdown is style-agnostic — the only US/EU differences are
+    downstream (section ordering, photo handling, center vs left header).
+    Regression guard for a future renderer change that breaks one style.
+    """
+    md = (
+        "# Eduardo Ariño de la Rubia\n"
+        "earino@gmail.com | +1 650 200 7168 | linkedin.com/in/earino | Vienna\n"
+        "\n"
+        "## Summary\n"
+        "Test summary for style-agnostic header check.\n"
+        "\n"
+        "## Experience\n"
+        "\n"
+        "### Senior Director — Meta (2017 - Present)\n"
+        "- Did stuff.\n"
+    )
+    out = tmp_path / "resume.pdf"
+    renderer(md, out, **kwargs)
+
+    assert_ats_roundtrip(out, [
+        "Eduardo Ariño de la Rubia",
+        "earino@gmail.com",
+        "+1 650 200 7168",
+        "linkedin.com/in/earino",
+        "Vienna",
+    ])
+
+
 def test_render_resume_us_suppresses_photo_even_when_provided(tmp_path: Path, capsys):
     # Use the bundled font file as a stand-in for "some image path the caller passed"
     # US should never embed it.
