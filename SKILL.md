@@ -323,24 +323,34 @@ Concrete question shapes. Every free-text question has EXACTLY 2 or more explici
      Other: username (e.g., earino) or profile URL (we'll strip the prefix)
    ```
 
-10. **Usage analytics consent** — this is the LAST question of first-run setup, before config.json is written:
+10. **Usage analytics consent** — this is the LAST question of first-run setup, before config.json is written.
+
+    **GDPR compliance requires Off to be the pass-through default.** Under GDPR
+    Article 7, "consent" means an active, affirmative action. A pre-selected
+    "yes" option that the student accepts by pressing Enter is NOT valid
+    consent. Therefore: Off is listed FIRST (so it's the highlighted default
+    choice in the host's question UI) and NO option carries a "(Recommended)"
+    label. The student has to actively move the cursor to Anonymous or
+    Community to opt in.
     ```
     Question: "Help us improve resumasher?
 
-    resumasher is a research tool. With your permission we log anonymous usage
-    events so the maintainer can see what's breaking and what students actually
-    use. See PRIVACY.md for the full list of what's logged. Default is Off if
-    you don't choose."
-      A) Community (recommended). Helps most. Logs events + a random installation
-         ID so the maintainer can see 'this user is hitting the same bug repeatedly'.
-         No names, no resume content, no JD text.
-      B) Anonymous. Same events but no installation ID, runs cannot be correlated.
-      C) Off. Nothing is logged or sent. Tier can be changed later with
-         'resumasher telemetry set-tier <off|anonymous|community>'.
+    resumasher is a research tool. If you opt in, we log anonymous usage events
+    so the maintainer can see what's breaking and what students actually use.
+    See PRIVACY.md for the full list of what's logged and what isn't. You can
+    change this anytime with 'resumasher telemetry set-tier <tier>'."
+      A) Off. Nothing is logged or sent. This is the default.
+      B) Anonymous. Logs events to the backend without an installation identifier.
+         Runs cannot be correlated.
+      C) Community. Logs events plus a random installation ID so the maintainer
+         can see 'this user is hitting the same bug repeatedly'. No names, no
+         resume content, no JD text.
     ```
     Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or
-    `"community"`. **If the student presses Enter without actively choosing, treat
-    as `"off"` — under GDPR, ignored-prompt is not consent. Active opt-in only.**
+    `"community"`. **If the student presses Enter on the highlighted default,
+    that selects Off — which is GDPR's required "no consent given" state.** Do
+    NOT re-order, do NOT add "(Recommended)" to Anonymous or Community, do NOT
+    pre-select a non-Off option in any way. Active opt-in only.
 
 If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
 
