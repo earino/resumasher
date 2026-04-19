@@ -331,6 +331,79 @@ def test_cli_export_emits_jsonl(sandbox):
     assert parsed["event_type"] == "run_started"
 
 
+# ---------------------------------------------------------------------------
+# State-dir scope detection
+# ---------------------------------------------------------------------------
+
+
+def test_state_dir_defaults_to_home_for_user_scope_install(tmp_path: Path):
+    """A skill installed at $HOME/.claude/skills/resumasher/ writes state to
+    $HOME/.resumasher/ — 'user-scope install means machine-wide state'."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    skill_root = fake_home / ".claude" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    # Copy the real scripts into the fake skill tree so they execute with
+    # the right $RESUMASHER_DIR.
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    shutil.copy(SYNC_BIN, skill_root / "bin" / "resumasher-telemetry-sync")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    student = tmp_path / "some-project"
+    (student / ".resumasher").mkdir(parents=True)
+    _write_config(student, "community")
+
+    # Invoke WITHOUT RESUMASHER_STATE_DIR override; HOME points at fake_home.
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           # Point RESUMASHER_SUPABASE_URL at an unreachable host so the
+           # inline sync fails fast without a real network call.
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "run_started",
+        "--cwd", str(student),
+    ], env=env)
+
+    # State should land in $HOME/.resumasher/, NOT inside the project.
+    assert (fake_home / ".resumasher" / "analytics" / "skill-usage.jsonl").exists()
+    assert (fake_home / ".resumasher" / "installation-id").exists()
+    # And definitely should NOT be in the project folder.
+    assert not (student / ".resumasher" / "analytics").exists()
+    assert not (student / ".resumasher" / "installation-id").exists()
+
+
+def test_state_dir_defaults_to_project_for_project_scope_install(tmp_path: Path):
+    """A skill installed at <project>/.claude/skills/resumasher/ writes
+    state to <project>/.resumasher/ — scope matches scope, no leakage
+    into the student's home directory."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    project = tmp_path / "some-project"
+    skill_root = project / ".claude" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    shutil.copy(SYNC_BIN, skill_root / "bin" / "resumasher-telemetry-sync")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    (project / ".resumasher").mkdir(parents=True)
+    _write_config(project, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "run_started",
+        "--cwd", str(project),
+    ], env=env)
+
+    # State should land in <project>/.resumasher/, NOT in fake $HOME.
+    assert (project / ".resumasher" / "analytics" / "skill-usage.jsonl").exists()
+    assert (project / ".resumasher" / "installation-id").exists()
+    assert not (fake_home / ".resumasher").exists()
+
+
 def test_cli_delete_wipes_local_state(sandbox):
     """delete removes JSONL, cursor, install-id, sync time files."""
     _write_config(sandbox["student"], "community")

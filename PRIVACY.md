@@ -21,12 +21,19 @@ GDPR, ignoring a consent prompt is not consent. Active opt-in only.
   stripped of any installation identifier before transmission. Individual
   runs cannot be linked to each other or to a specific installation.
 - **Community**. Events are logged locally and sent with a random
-  installation ID (UUID v4 generated at first opt-in, stored in
-  `~/.resumasher/installation-id`). The UUID is NOT derived from your
-  hostname, username, MAC address, or any other identifier. It is
-  randomly generated once and lets the maintainer correlate your runs
-  (e.g., "this user is hitting the same bug repeatedly") without knowing
-  who you are.
+  installation ID (UUID v4 generated at first opt-in). The UUID is NOT
+  derived from your hostname, username, MAC address, or any other
+  identifier. It lets the maintainer correlate your runs (e.g., "this
+  user is hitting the same bug repeatedly") without knowing who you are.
+
+  **Where state lives — scope matches scope:**
+  - If you installed resumasher at user scope (`~/.claude/skills/resumasher/`),
+    the installation ID and local event log live at `~/.resumasher/` and are
+    shared across every project you use resumasher in. One Mac, one ID.
+  - If you installed resumasher at project scope (`<project>/.claude/skills/resumasher/`),
+    the installation ID and local event log live at `<project>/.resumasher/`.
+    Deleting the project deletes the telemetry state; nothing leaks outside
+    the project boundary. Each project-scope install gets its own ID.
 
 ## What gets sent (under anonymous or community tier)
 

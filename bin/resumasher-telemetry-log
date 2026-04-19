@@ -31,7 +31,26 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESUMASHER_DIR="${RESUMASHER_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-STATE_DIR="${RESUMASHER_STATE_DIR:-$HOME/.resumasher}"
+
+# State-dir policy: SCOPE MATCHES SCOPE.
+#   - User-scope install (skill at $HOME/.claude/skills/resumasher):
+#     state lives in $HOME/.resumasher — one student, one installation_id
+#     across all their projects.
+#   - Project-scope install (skill at <project>/.claude/skills/resumasher):
+#     state lives in <project>/.resumasher — deleting the project deletes
+#     the telemetry state; no data leaks outside the project boundary.
+#   - Override with RESUMASHER_STATE_DIR for tests.
+if [ -n "${RESUMASHER_STATE_DIR:-}" ]; then
+  STATE_DIR="$RESUMASHER_STATE_DIR"
+else
+  _GRANDPARENT="$(cd "$RESUMASHER_DIR/../.." 2>/dev/null && pwd -P || echo "")"
+  if [ "$_GRANDPARENT" = "$(cd "$HOME/.claude" 2>/dev/null && pwd -P || echo "")" ]; then
+    STATE_DIR="$HOME/.resumasher"
+  else
+    # Project-scope: project root is three directories above the skill.
+    STATE_DIR="$(cd "$RESUMASHER_DIR/../../.." 2>/dev/null && pwd)/.resumasher"
+  fi
+fi
 ANALYTICS_DIR="$STATE_DIR/analytics"
 JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
 INSTALL_ID_FILE="$STATE_DIR/installation-id"

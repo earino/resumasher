@@ -16,7 +16,20 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESUMASHER_DIR="${RESUMASHER_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-STATE_DIR="${RESUMASHER_STATE_DIR:-$HOME/.resumasher}"
+
+# State-dir policy matches resumasher-telemetry-log: user-scope skill →
+# $HOME/.resumasher, project-scope skill → <project>/.resumasher. See
+# that script's comment block for the rationale.
+if [ -n "${RESUMASHER_STATE_DIR:-}" ]; then
+  STATE_DIR="$RESUMASHER_STATE_DIR"
+else
+  _GRANDPARENT="$(cd "$RESUMASHER_DIR/../.." 2>/dev/null && pwd -P || echo "")"
+  if [ "$_GRANDPARENT" = "$(cd "$HOME/.claude" 2>/dev/null && pwd -P || echo "")" ]; then
+    STATE_DIR="$HOME/.resumasher"
+  else
+    STATE_DIR="$(cd "$RESUMASHER_DIR/../../.." 2>/dev/null && pwd)/.resumasher"
+  fi
+fi
 ANALYTICS_DIR="$STATE_DIR/analytics"
 JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
 CURSOR_FILE="$ANALYTICS_DIR/.last-sync-line"
