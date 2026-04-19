@@ -785,7 +785,12 @@ EOF
 ```bash
 count_placeholders() {
   if [ -f "$1" ]; then
-    grep -c '\[INSERT' "$1" 2>/dev/null || echo 0
+    # grep -c already prints "0" when there are no matches (exit 1) or
+    # "N" when there are matches (exit 0). `|| true` swallows the exit
+    # code without appending a second "0" to stdout. Using `|| echo 0`
+    # instead would produce "0\n0" for the zero-match case, which then
+    # corrupts anything that feeds this value into a JSON serializer.
+    grep -c '\[INSERT' "$1" 2>/dev/null || true
   else
     echo 0
   fi

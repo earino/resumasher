@@ -228,10 +228,24 @@ json_str() {
 
 # Emit a JSON field (key:value) or empty string if value is blank.
 # kind=s for string (quotes+escape), n for number, b for boolean.
+# Numeric values get defensive whitespace/newline stripping — catches the
+# classic "grep -c ... || echo 0" caller bug that produces "0\n0" and
+# would otherwise embed a literal newline into the JSONL.
 f_str() { [ -n "$2" ] && printf ',"%s":"%s"' "$1" "$(json_str "$2")"; }
-f_num() { [ -n "$2" ] && printf ',"%s":%s' "$1" "$2"; }
+f_num() {
+  local v
+  # Take the FIRST whitespace-delimited token. Handles the classic caller
+  # bug where `grep -c X || echo 0` emits "0\n0" on zero matches (grep -c
+  # prints "0" even on exit 1, then || echo appends another). Blindly
+  # stripping whitespace would turn "0\n0" into "00" which fails JSON
+  # strict number parsing. Taking only the first token gives "0", correct.
+  v="$(printf '%s' "$2" | awk 'NF {print $1; exit}' 2>/dev/null | head -c 32)"
+  [ -n "$v" ] && printf ',"%s":%s' "$1" "$v"
+}
 f_bool() {
-  case "$2" in
+  local v
+  v="$(printf '%s' "$2" | tr -d ' \n\r\t')"
+  case "$v" in
     true|TRUE|True|1)  printf ',"%s":true'  "$1" ;;
     false|FALSE|False|0) printf ',"%s":false' "$1" ;;
   esac

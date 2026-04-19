@@ -164,6 +164,44 @@ def test_log_computes_time_of_day_when_omitted(sandbox):
     assert found, f"no expected bucket in: {jsonl}"
 
 
+def test_log_strips_embedded_newlines_from_numeric_values(sandbox):
+    """Defensive: callers that pass '0\\n0' (e.g. from `grep -c ... || echo 0`
+    returning doubled output on zero-match) must not corrupt the JSONL.
+
+    The malformed input comes from the Gemini test on 2026-04-19: SKILL.md's
+    count_placeholders function returned '0\\n0' and that newline survived
+    into `--num-placeholders`, splitting run_completed into two JSONL lines
+    and breaking the whole batch sync."""
+    _write_config(sandbox["student"], "anonymous")
+    _run(LOG_BIN, [
+        "--event-type", "run_completed",
+        "--cwd", str(sandbox["student"]),
+        "--num-placeholders", "0\n0",
+        "--fit-score", "7\n\n",
+    ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text()
+    # One logical line, one newline at the end — no embedded breaks.
+    assert jsonl.count("\n") == 1, f"JSONL has {jsonl.count(chr(10))} newlines, expected 1"
+    parsed = json.loads(jsonl.strip())
+    assert parsed["num_placeholders_emitted"] == 0
+    assert parsed["fit_score"] == 7
+
+
+def test_log_strips_embedded_newlines_from_boolean_values(sandbox):
+    """Same defense applied to boolean flags — a caller that passes
+    'true\\n' shouldn't corrupt the output."""
+    _write_config(sandbox["student"], "anonymous")
+    _run(LOG_BIN, [
+        "--event-type", "tailor_completed",
+        "--cwd", str(sandbox["student"]),
+        "--used-multirole-format", "true\n",
+    ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text()
+    assert jsonl.count("\n") == 1
+    parsed = json.loads(jsonl.strip())
+    assert parsed["used_multirole_format"] is True
+
+
 def test_log_strips_dangerous_chars_from_strings(sandbox):
     """Quotes, backslashes, newlines must be stripped from string fields."""
     _write_config(sandbox["student"], "anonymous")
