@@ -58,6 +58,18 @@ else
     STATE_DIR="$(cd "$RESUMASHER_DIR/../../.." 2>/dev/null && pwd)/.resumasher"
   fi
 fi
+
+# Install-scope detection: "user_home" if the skill lives under any of the
+# three host-CLI user-convention directories ($HOME/.claude, .codex, .gemini),
+# else "project_local". Orchestrator can override via --install-scope-path.
+INSTALL_SCOPE_DETECTED="project_local"
+for _prefix in "$HOME/.claude/skills/" "$HOME/.codex/skills/" "$HOME/.gemini/skills/"; do
+  case "$RESUMASHER_DIR/" in
+    "$_prefix"*)
+      INSTALL_SCOPE_DETECTED="user_home"
+      break ;;
+  esac
+done
 ANALYTICS_DIR="$STATE_DIR/analytics"
 JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
 INSTALL_ID_FILE="$STATE_DIR/installation-id"
@@ -350,7 +362,8 @@ LINE+="$(f_num github_repos_count "$GITHUB_REPOS_COUNT")"
 LINE+="$(f_num folder_files_count "$FOLDER_FILES_COUNT")"
 LINE+="$(f_str jd_source_mode "$JD_SOURCE_MODE")"
 LINE+="$(f_str resume_format_detected "$RESUME_FORMAT")"
-LINE+="$(f_str install_scope_path "$INSTALL_SCOPE")"
+# Use --install-scope-path override if provided, else the auto-detected value.
+LINE+="$(f_str install_scope_path "${INSTALL_SCOPE:-$INSTALL_SCOPE_DETECTED}")"
 LINE+="$(f_bool all_pdfs_rendered "$ALL_PDFS_RENDERED")"
 
 # Phase 7 / re-render / setup

@@ -386,11 +386,12 @@ Write `.resumasher/config.json` with those values, then:
   --setup-outcome completed \
   --style "$STYLE" \
   --photo-included "$PHOTO_INCLUDED" \
-  --github-configured "$GITHUB_CONFIGURED" \
-  --install-scope-path user_home
+  --github-configured "$GITHUB_CONFIGURED"
 ```
 
-Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with "true" or "false", `$GITHUB_CONFIGURED` with "true" or "false" depending on whether `github_username` is set. For `$MODEL` substitute your own model identifier literally (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`). The script never exits non-zero; its failures are silent so the student never sees telemetry errors.
+The `install_scope_path` field is auto-detected by the log script from the skill's own path ($HOME/.claude/skills/... → `user_home`; other locations → `project_local`). You don't need to pass it explicitly.
+
+Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with "true" or "false", `$GITHUB_CONFIGURED` with "true" or "false" depending on whether `github_username` is set. For `$MODEL` substitute your own model identifier literally (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`). For `$HOST` substitute the host CLI literally (`claude_code`, `codex_cli`, or `gemini_cli`). The script never exits non-zero; its failures are silent so the student never sees telemetry errors.
 
 ---
 
@@ -1134,13 +1135,14 @@ is written:
   --setup-outcome completed \
   --style "$STYLE" \
   --photo-included "$PHOTO_INCLUDED" \
-  --github-configured "$GITHUB_CONFIGURED" \
-  --install-scope-path "$INSTALL_SCOPE"
+  --github-configured "$GITHUB_CONFIGURED"
 ```
 
-`$INSTALL_SCOPE` is one of `user_home`, `project_local`, or `unknown` based on
-where the skill lives (inside `~/.claude/skills/` vs `<project>/.claude/skills/`).
-`$SETUP_DURATION_SECONDS` is time elapsed since the consent prompt started.
+`install_scope_path` is auto-detected by the log script from the skill's own
+installation path — user-scope (`$HOME/.claude/skills/`, `.codex/skills/`, or
+`.gemini/skills/`) → `user_home`; anywhere else → `project_local`. No orchestrator
+substitution needed. `$SETUP_DURATION_SECONDS` is time elapsed since the consent
+prompt started.
 
 **Phase 1 (start) — run_started.** Fired right after `parse-job-source` and
 `discover-resume` succeed:

@@ -507,6 +507,119 @@ def test_cli_export_emits_jsonl(sandbox):
 # ---------------------------------------------------------------------------
 
 
+def test_install_scope_auto_detected_as_user_home_for_claude_path(tmp_path: Path):
+    """Skill at $HOME/.claude/skills/resumasher → install_scope_path=user_home
+    auto-populated without --install-scope-path being passed."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    skill_root = fake_home / ".claude" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    student = tmp_path / "proj"
+    (student / ".resumasher").mkdir(parents=True)
+    _write_config(student, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "first_run_setup_completed",
+        "--cwd", str(student),
+    ], env=env)
+
+    jsonl = (fake_home / ".resumasher" / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["install_scope_path"] == "user_home"
+
+
+def test_install_scope_auto_detected_as_user_home_for_gemini_path(tmp_path: Path):
+    """Same auto-detection for Gemini user-scope install ($HOME/.gemini/skills/...)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    skill_root = fake_home / ".gemini" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    student = tmp_path / "proj"
+    (student / ".resumasher").mkdir(parents=True)
+    _write_config(student, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "gemini_cli",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "first_run_setup_completed",
+        "--cwd", str(student),
+    ], env=env)
+
+    jsonl_path = fake_home / ".resumasher" / "analytics" / "skill-usage.jsonl"
+    # Gemini path falls through to the "project-scope" branch of the state dir
+    # logic, which happens to resolve to $HOME for user-scope gemini installs.
+    jsonl = jsonl_path.read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["install_scope_path"] == "user_home"
+
+
+def test_install_scope_auto_detected_as_project_local_for_project_install(tmp_path: Path):
+    """Skill at <project>/.claude/skills/resumasher → install_scope_path=project_local."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    project = tmp_path / "some-project"
+    skill_root = project / ".claude" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    (project / ".resumasher").mkdir(parents=True)
+    _write_config(project, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "first_run_setup_completed",
+        "--cwd", str(project),
+    ], env=env)
+
+    jsonl = (project / ".resumasher" / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["install_scope_path"] == "project_local"
+
+
+def test_install_scope_explicit_flag_wins_over_detection(tmp_path: Path):
+    """--install-scope-path override still works for tests/edge cases."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    skill_root = fake_home / ".claude" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    student = tmp_path / "proj"
+    (student / ".resumasher").mkdir(parents=True)
+    _write_config(student, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "first_run_setup_completed",
+        "--cwd", str(student),
+        "--install-scope-path", "custom_override",
+    ], env=env)
+
+    jsonl = (fake_home / ".resumasher" / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["install_scope_path"] == "custom_override"
+
+
 def test_state_dir_defaults_to_home_for_user_scope_install(tmp_path: Path):
     """A skill installed at $HOME/.claude/skills/resumasher/ writes state to
     $HOME/.resumasher/ — 'user-scope install means machine-wide state'."""
