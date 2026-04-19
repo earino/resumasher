@@ -444,6 +444,113 @@ def test_is_failure_sentinel_false_for_prose_mentioning_failure():
 
 
 # ---------------------------------------------------------------------------
+# extract_role / extract_seniority / extract_*_count / extract_recommendation
+# (added in v0.2 for fit-analyst structured-data emission used by telemetry)
+# ---------------------------------------------------------------------------
+
+
+from scripts.orchestration import (  # noqa: E402
+    extract_gaps_count,
+    extract_recommendation,
+    extract_role,
+    extract_seniority,
+    extract_strengths_count,
+)
+
+
+@pytest.mark.parametrize(
+    "prose,expected",
+    [
+        ("ROLE: Senior Data Scientist", "Senior Data Scientist"),
+        # Case-insensitive match on the ROLE: marker itself.
+        ("role: Software Engineer II", "Software Engineer II"),
+        ("Some prose.\nROLE: ML Engineer\nMore.", "ML Engineer"),
+        ("ROLE: UNKNOWN", None),
+        ("ROLE:   ", None),
+        ("no role line here", None),
+    ],
+)
+def test_extract_role(prose, expected):
+    assert extract_role(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose,expected",
+    [
+        ("SENIORITY: senior", "senior"),
+        # Value is also case-folded so SENIORITY:STAFF/staff/Staff all match.
+        ("seniority: STAFF", "staff"),
+        ("Some prose.\nSENIORITY: cxo\nMore.", "cxo"),
+        # "unknown" is intentionally treated as None so callers can detect
+        # failed classification (vs the LLM saying "I don't know").
+        ("SENIORITY: unknown", None),
+        # Anything outside the enum is rejected (defense against LLM drift).
+        ("SENIORITY: god-king", None),
+        ("SENIORITY: lead", None),  # 'lead' is NOT in the enum
+        ("no seniority line", None),
+    ],
+)
+def test_extract_seniority(prose, expected):
+    assert extract_seniority(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose,expected",
+    [
+        ("STRENGTHS_COUNT: 5", 5),
+        ("STRENGTHS_COUNT: 0", 0),
+        ("strengths_count: 12 (case-insensitive)", 12),
+        ("STRENGTHS_COUNT: many", None),
+        ("missing", None),
+    ],
+)
+def test_extract_strengths_count(prose, expected):
+    assert extract_strengths_count(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose,expected",
+    [
+        ("GAPS_COUNT: 3", 3),
+        ("gaps_count: 0", 0),
+        ("missing", None),
+    ],
+)
+def test_extract_gaps_count(prose, expected):
+    assert extract_gaps_count(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose,expected",
+    [
+        ("RECOMMENDATION: yes", "yes"),
+        ("RECOMMENDATION: no", "no"),
+        ("RECOMMENDATION: yes_with_caveats", "yes_with_caveats"),
+        # Normalize spaces and hyphens to underscores
+        ("RECOMMENDATION: yes with caveats", "yes_with_caveats"),
+        ("RECOMMENDATION: yes-with-caveats", "yes_with_caveats"),
+        # Case-insensitive on both marker and value
+        ("recommendation: YES", "yes"),
+        # Anything outside the enum is rejected
+        ("RECOMMENDATION: maybe", None),
+        ("missing", None),
+    ],
+)
+def test_extract_recommendation(prose, expected):
+    assert extract_recommendation(prose) == expected
+
+
+def test_seniority_classification_works_in_any_language_via_llm():
+    """The fit-analyst classifies seniority in any language; the extractor
+    just validates the emitted enum. These represent what the LLM would emit
+    after seeing 'Leitender Entwickler' (German), 'シニア' (Japanese), or
+    'Jefe de Datos' (Spanish) job titles."""
+    assert extract_seniority("SENIORITY: senior") == "senior"  # German Leitender
+    assert extract_seniority("SENIORITY: senior") == "senior"  # Japanese シニア
+    assert extract_seniority("SENIORITY: manager") == "manager"  # Spanish Jefe
+
+
+# ---------------------------------------------------------------------------
 # company_slug
 # ---------------------------------------------------------------------------
 
