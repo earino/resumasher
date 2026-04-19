@@ -182,6 +182,35 @@ def test_log_strips_dangerous_chars_from_strings(sandbox):
     assert "\\" not in parsed["company"]
 
 
+def test_log_includes_model_when_flag_passed(sandbox):
+    """--model "<id>" lands in the JSONL so orchestrator self-reporting works."""
+    _write_config(sandbox["student"], "anonymous")
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--model", "claude-opus-4-7",
+    ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["model"] == "claude-opus-4-7"
+
+
+def test_log_omits_model_when_flag_absent(sandbox):
+    """No --model → JSONL has no 'model' key (not null, not empty string).
+
+    Reason: the edge function stores null when the field is absent, which
+    is the intended behavior for hosts/runs where the orchestrator doesn't
+    know its model. Emitting 'model':null would be redundant and bloat
+    the payload."""
+    _write_config(sandbox["student"], "anonymous")
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+    ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    assert '"model"' not in jsonl
+
+
 def test_log_no_config_file_treats_as_off(sandbox):
     """Missing config.json → tier defaults to off → no logging."""
     # Don't write config.json

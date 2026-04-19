@@ -8,13 +8,19 @@
 #
 # Usage:
 #   resumasher-telemetry-log --event-type run_started --run-id <uuid> \
-#     --cwd <student-cwd> [--flag value ...]
+#     --cwd <student-cwd> [--model <model-id>] [--flag value ...]
 #
 # Required:
 #   --event-type <type> — one of first_run_setup_completed, run_started,
 #                          fit_computed, tailor_completed, placeholder_fill_choice,
 #                          run_completed, run_failed, rerender_used
 #   --cwd <path>        — student's working directory (source of config.json)
+#
+# Recommended:
+#   --model <id>        — the model the AI orchestrator is running as
+#                          (e.g. claude-opus-4-7, gpt-5-codex, gemini-2.5-pro).
+#                          Self-reported by the LLM — the orchestrator knows
+#                          what it is. Null if not passed.
 #
 # Env overrides (for tests):
 #   RESUMASHER_STATE_DIR — override ~/.resumasher
@@ -72,6 +78,7 @@ SETUP_OUTCOME=""
 
 # Ambient
 TIME_OF_DAY=""
+MODEL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -108,6 +115,7 @@ while [ $# -gt 0 ]; do
     --setup-duration)         SETUP_DURATION="$2"; shift 2 ;;
     --setup-outcome)          SETUP_OUTCOME="$2"; shift 2 ;;
     --time-of-day)            TIME_OF_DAY="$2"; shift 2 ;;
+    --model)                  MODEL="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -222,6 +230,9 @@ LINE+=',"host":"'"$(json_str "$HOST" 20)"'"'
 LINE+=',"os":"'"$(json_str "$OS" 20)"'"'
 LINE+=',"arch":"'"$(json_str "$ARCH" 20)"'"'
 LINE+=',"time_of_day_bucket":"'"$(json_str "$TIME_OF_DAY" 20)"'"'
+
+# Optional model identifier (self-reported by the AI orchestrator).
+LINE+="$(f_str model "$MODEL")"
 
 # Optional correlation
 LINE+="$(f_str run_id "$RUN_ID")"

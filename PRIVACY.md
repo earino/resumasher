@@ -34,6 +34,10 @@ For each event:
 
 - Event type, timestamp, resumasher version, host (Claude Code / Codex /
   Gemini), OS, CPU arch
+- Model identifier (e.g. `claude-opus-4-7`, `gpt-5-codex`,
+  `gemini-2.5-pro`) — self-reported by the AI orchestrator so the
+  maintainer can see which models produce which fit scores or hit
+  which bugs
 - Duration, outcome, error class (from a pre-declared enum — never a raw
   error message)
 - Company name applied to (lowercased), job title, seniority (from a

@@ -100,6 +100,7 @@ Deno.serve(async (req: Request) => {
         setup_duration_s: typeof e.setup_duration_s === "number" ? e.setup_duration_s : null,
         setup_outcome: e.setup_outcome ? String(e.setup_outcome).slice(0, 30) : null,
         time_of_day_bucket: e.time_of_day_bucket ? String(e.time_of_day_bucket).slice(0, 20) : null,
+        model: e.model ? String(e.model).slice(0, 40) : null,
       };
 
       // Company: lowercase + length cap. No suffix stripping (GmbH/K.K./有限公司 etc.).

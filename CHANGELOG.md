@@ -15,7 +15,9 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 - **Fit-analyst emits structured sentinels.** In addition to the existing `FIT_SCORE:` and `COMPANY:`, the fit-analyst prompt now emits `ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, and `RECOMMENDATION:` on their own lines. Seniority is classified LLM-side in any language (German "Leitender Entwickler" → senior, Japanese シニア → senior, Spanish "Jefe de Datos" → manager). Edge function only validates the emitted value against an enum whitelist — no English-only regex.
 - **`scripts/orchestration.py` extractor subcommands.** `extract-role`, `extract-seniority`, `extract-strengths-count`, `extract-gaps-count`, `extract-recommendation` each mirror the existing extract-fit-score pattern.
 - **`pg_cron` retention job.** Events older than 90 days and installations with no activity for 180 days are deleted daily at 03:00 UTC. Runs inside Supabase — no external scheduler needed. Aggregate dashboard views survive retention.
-- **`supabase/` source of truth.** Seven applied migrations + both edge functions + public config committed to the repo so the backend state is auditable.
+- **`supabase/` source of truth.** Applied migrations + both edge functions + public config committed to the repo so the backend state is auditable.
+- **Model tracking.** Events now carry a `model` field (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`) so the maintainer can answer questions like "which model produces the highest fit scores" or "which model hits this bug most". Self-reported by the orchestrator LLM on every event. Migration 008 adds the column; edge function propagates it with a 40-char cap; `--model` flag added to `bin/resumasher-telemetry-log`. PRIVACY.md updated to disclose.
+- **Phase 9 underfill fixed.** `run_completed` now carries `used_multirole_format` alongside the existing tailor_completed event, so dashboards don't have to join events by `run_id` to see whether the multi-role rendering path was exercised.
 
 ### Security
 

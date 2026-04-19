@@ -939,11 +939,24 @@ Resolve `$TEL` once per Bash tool call, just like `$RS`:
 TEL="$RS_DIR/bin/resumasher-telemetry-log"
 ```
 
+**Every call-site below should include `--model "$MODEL"`**, where `$MODEL`
+is your (the orchestrator LLM's) own model identifier. You know what you
+are; substitute it as a literal string. Examples by host:
+
+- Claude Code: `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`
+- Codex CLI: `gpt-5-codex`, `gpt-5`, `gpt-5-mini`
+- Gemini CLI: `gemini-2.5-pro`, `gemini-2.5-flash`
+
+If you genuinely don't know your model ID, omit the flag — null is better
+than fabricated. The edge function caps model strings at 40 chars; no
+enum validation (the model ID space moves too fast to whitelist).
+
 **Phase 0 (end) — first_run_setup_completed.** Fired right after config.json
 is written:
 
 ```bash
 "$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --setup-duration "$SETUP_DURATION_SECONDS" \
   --setup-outcome completed \
   --style "$STYLE" \
@@ -961,6 +974,7 @@ where the skill lives (inside `~/.claude/skills/` vs `<project>/.claude/skills/`
 
 ```bash
 "$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --jd-source-mode "$JD_MODE" \
   --resume-format "$RESUME_FORMAT"
@@ -983,6 +997,7 @@ GAPS_COUNT=$("$RS" orchestration extract-gaps-count < "$OUT_DIR/fit-assessment.m
 RECOMMENDATION=$("$RS" orchestration extract-recommendation < "$OUT_DIR/fit-assessment.md")
 
 "$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --fit-score "$FIT_SCORE" \
   --fit-strengths-count "$STRENGTHS_COUNT" \
@@ -998,6 +1013,7 @@ NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null 
 USED_MULTIROLE=$(grep -q 'sub-role\|- \*\*.*\*\* ·' "$OUT_DIR/tailored-resume.md" && echo true || echo false)
 
 "$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --num-placeholders "$NUM_PLACEHOLDERS" \
   --used-multirole-format "$USED_MULTIROLE"
@@ -1008,6 +1024,7 @@ placeholder is resolved (once per student answer):
 
 ```bash
 "$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --choice-type "$CHOICE"
 ```
@@ -1021,6 +1038,7 @@ is appended. Include all the fields from the fit event plus configuration:
 DURATION=$(( $(date +%s) - $START_TS ))
 
 "$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
   --outcome success \
@@ -1032,6 +1050,7 @@ DURATION=$(( $(date +%s) - $START_TS ))
   --fit-gaps-count "$GAPS_COUNT" \
   --fit-recommendation "$RECOMMENDATION" \
   --num-placeholders "$NUM_PLACEHOLDERS" \
+  --used-multirole-format "$USED_MULTIROLE" \
   --style "$STYLE" \
   --photo-included "$PHOTO_INCLUDED" \
   --github-configured "$GITHUB_CONFIGURED" \
@@ -1047,6 +1066,7 @@ phase. Include whatever fields are already known at that point:
 
 ```bash
 "$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
   --failed-phase "$PHASE_NUMBER" \
@@ -1066,6 +1086,7 @@ section:
 
 ```bash
 "$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
   --rerender-kind "$KIND"
 ```
 
