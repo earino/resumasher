@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# resumasher-telemetry-log — append a telemetry event to local JSONL
+#
+# Reads the tier from $STUDENT_CWD/.resumasher/config.json, picks up or
+# generates the installation_id (community tier only), builds a JSON event
+# from --flag arguments, and appends to ~/.resumasher/analytics/skill-usage.jsonl.
+# Fires a backgrounded sync after logging.
+#
+# Usage:
+#   resumasher-telemetry-log --event-type run_started --run-id <uuid> \
+#     --cwd <student-cwd> [--flag value ...]
+#
+# Required:
+#   --event-type <type> — one of first_run_setup_completed, run_started,
+#                          fit_computed, tailor_completed, placeholder_fill_choice,
+#                          run_completed, run_failed, rerender_used
+#   --cwd <path>        — student's working directory (source of config.json)
+#
+# Env overrides (for tests):
+#   RESUMASHER_STATE_DIR — override ~/.resumasher
+#   RESUMASHER_DIR       — override auto-detected skill root
+#
+# NOTE: set -uo pipefail (no -e). Telemetry must never exit non-zero.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESUMASHER_DIR="${RESUMASHER_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STATE_DIR="${RESUMASHER_STATE_DIR:-$HOME/.resumasher}"
+ANALYTICS_DIR="$STATE_DIR/analytics"
+JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
+INSTALL_ID_FILE="$STATE_DIR/installation-id"
+
+# ─── Parse flags ─────────────────────────────────────────────
+EVENT_TYPE=""
+STUDENT_CWD=""
+RUN_ID=""
+SESSION_ID=""
+DURATION=""
+OUTCOME=""
+ERROR_CLASS=""
+FAILED_PHASE=""
+
+# Tailor / application
+COMPANY=""
+JOB_TITLE=""
+SENIORITY=""
+FIT_SCORE=""
+FIT_STRENGTHS_COUNT=""
+FIT_GAPS_COUNT=""
+FIT_RECOMMENDATION=""
+NUM_PLACEHOLDERS=""
+USED_MULTIROLE=""
+
+# Configuration
+STYLE=""
+PHOTO_INCLUDED=""
+GITHUB_CONFIGURED=""
+USED_GITHUB=""
+USED_FOLDER=""
+GITHUB_REPOS_COUNT=""
+FOLDER_FILES_COUNT=""
+JD_SOURCE_MODE=""
+RESUME_FORMAT=""
+INSTALL_SCOPE=""
+ALL_PDFS_RENDERED=""
+
+# Phase 7 / re-render / setup
+CHOICE_TYPE=""
+RERENDER_KIND=""
+SETUP_DURATION=""
+SETUP_OUTCOME=""
+
+# Ambient
+TIME_OF_DAY=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --event-type)             EVENT_TYPE="$2"; shift 2 ;;
+    --cwd)                    STUDENT_CWD="$2"; shift 2 ;;
+    --run-id)                 RUN_ID="$2"; shift 2 ;;
+    --session-id)             SESSION_ID="$2"; shift 2 ;;
+    --duration)               DURATION="$2"; shift 2 ;;
+    --outcome)                OUTCOME="$2"; shift 2 ;;
+    --error-class)            ERROR_CLASS="$2"; shift 2 ;;
+    --failed-phase)           FAILED_PHASE="$2"; shift 2 ;;
+    --company)                COMPANY="$2"; shift 2 ;;
+    --job-title)              JOB_TITLE="$2"; shift 2 ;;
+    --seniority)              SENIORITY="$2"; shift 2 ;;
+    --fit-score)              FIT_SCORE="$2"; shift 2 ;;
+    --fit-strengths-count)    FIT_STRENGTHS_COUNT="$2"; shift 2 ;;
+    --fit-gaps-count)         FIT_GAPS_COUNT="$2"; shift 2 ;;
+    --fit-recommendation)     FIT_RECOMMENDATION="$2"; shift 2 ;;
+    --num-placeholders)       NUM_PLACEHOLDERS="$2"; shift 2 ;;
+    --used-multirole-format)  USED_MULTIROLE="$2"; shift 2 ;;
+    --style)                  STYLE="$2"; shift 2 ;;
+    --photo-included)         PHOTO_INCLUDED="$2"; shift 2 ;;
+    --github-configured)      GITHUB_CONFIGURED="$2"; shift 2 ;;
+    --used-github-evidence)   USED_GITHUB="$2"; shift 2 ;;
+    --used-folder-evidence)   USED_FOLDER="$2"; shift 2 ;;
+    --github-repos-count)     GITHUB_REPOS_COUNT="$2"; shift 2 ;;
+    --folder-files-count)     FOLDER_FILES_COUNT="$2"; shift 2 ;;
+    --jd-source-mode)         JD_SOURCE_MODE="$2"; shift 2 ;;
+    --resume-format)          RESUME_FORMAT="$2"; shift 2 ;;
+    --install-scope-path)     INSTALL_SCOPE="$2"; shift 2 ;;
+    --all-pdfs-rendered)      ALL_PDFS_RENDERED="$2"; shift 2 ;;
+    --choice-type)            CHOICE_TYPE="$2"; shift 2 ;;
+    --rerender-kind)          RERENDER_KIND="$2"; shift 2 ;;
+    --setup-duration)         SETUP_DURATION="$2"; shift 2 ;;
+    --setup-outcome)          SETUP_OUTCOME="$2"; shift 2 ;;
+    --time-of-day)            TIME_OF_DAY="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# ─── Required ───────────────────────────────────────────────
+[ -z "$EVENT_TYPE" ] && exit 0
+[ -z "$STUDENT_CWD" ] && exit 0
+
+# ─── Read tier ──────────────────────────────────────────────
+CONFIG="$STUDENT_CWD/.resumasher/config.json"
+TIER="off"
+if [ -f "$CONFIG" ]; then
+  # Extract "telemetry" field via grep/awk to avoid a jq dependency.
+  TIER_RAW="$(grep -o '"telemetry"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG" 2>/dev/null \
+    | head -1 | awk -F'"' '{print $4}')"
+  case "$TIER_RAW" in
+    off|anonymous|community) TIER="$TIER_RAW" ;;
+    *) TIER="off" ;;
+  esac
+fi
+
+# If tier is off, do nothing.
+[ "$TIER" = "off" ] && exit 0
+
+# ─── Compute time_of_day_bucket if not passed ────────────────
+# LOCAL timezone via `date +%H` — NOT UTC.
+if [ -z "$TIME_OF_DAY" ]; then
+  HOUR="$(date +%H 2>/dev/null || echo "")"
+  case "$HOUR" in
+    0[0-5]) TIME_OF_DAY="late_night" ;;
+    0[6-9]|1[0-1]) TIME_OF_DAY="morning" ;;
+    1[2-7]) TIME_OF_DAY="afternoon" ;;
+    1[8-9]|2[0-3]) TIME_OF_DAY="evening" ;;
+    *) TIME_OF_DAY="unknown" ;;
+  esac
+fi
+
+# ─── Environment ────────────────────────────────────────────
+TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")"
+RESUMASHER_VERSION="$(cat "$RESUMASHER_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")"
+# Fallback: derive from CHANGELOG if no VERSION file
+if [ "$RESUMASHER_VERSION" = "unknown" ] && [ -f "$RESUMASHER_DIR/CHANGELOG.md" ]; then
+  RESUMASHER_VERSION="$(grep -oE '^## \[?v?[0-9]+\.[0-9]+\.[0-9]+' "$RESUMASHER_DIR/CHANGELOG.md" 2>/dev/null \
+    | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")"
+fi
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+
+# Host: detect which AI CLI we're running under.
+# Defaults to "unknown" if no signal is available.
+HOST="${RESUMASHER_HOST:-}"
+if [ -z "$HOST" ]; then
+  if [ -n "${CLAUDE_CODE_VERSION:-}${CLAUDECODE:-}" ]; then
+    HOST="claude_code"
+  elif [ -n "${CODEX_VERSION:-}${CODEX:-}" ]; then
+    HOST="codex_cli"
+  elif [ -n "${GEMINI_VERSION:-}${GEMINI_CLI:-}" ]; then
+    HOST="gemini_cli"
+  else
+    HOST="unknown"
+  fi
+fi
+
+# ─── Installation ID (community tier only) ───────────────────
+INSTALL_ID=""
+if [ "$TIER" = "community" ]; then
+  if [ -f "$INSTALL_ID_FILE" ]; then
+    INSTALL_ID="$(cat "$INSTALL_ID_FILE" 2>/dev/null | tr -d '[:space:]')"
+  fi
+  if [ -z "$INSTALL_ID" ]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+      INSTALL_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    elif [ -r /proc/sys/kernel/random/uuid ]; then
+      INSTALL_ID="$(cat /proc/sys/kernel/random/uuid)"
+    else
+      INSTALL_ID="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    fi
+    if [ -n "$INSTALL_ID" ]; then
+      mkdir -p "$STATE_DIR" 2>/dev/null
+      printf '%s' "$INSTALL_ID" > "$INSTALL_ID_FILE" 2>/dev/null
+    fi
+  fi
+fi
+
+# ─── JSON helpers ────────────────────────────────────────────
+# Sanitize string for JSON: strip quotes, backslashes, control chars; cap length.
+json_str() {
+  local raw="$1" maxlen="${2:-200}"
+  printf '%s' "$raw" | tr -d '"\\' | tr '\n\r\t' '   ' | head -c "$maxlen"
+}
+
+# Emit a JSON field (key:value) or empty string if value is blank.
+# kind=s for string (quotes+escape), n for number, b for boolean.
+f_str() { [ -n "$2" ] && printf ',"%s":"%s"' "$1" "$(json_str "$2")"; }
+f_num() { [ -n "$2" ] && printf ',"%s":%s' "$1" "$2"; }
+f_bool() {
+  case "$2" in
+    true|TRUE|True|1)  printf ',"%s":true'  "$1" ;;
+    false|FALSE|False|0) printf ',"%s":false' "$1" ;;
+  esac
+}
+
+# ─── Build event JSON ────────────────────────────────────────
+mkdir -p "$ANALYTICS_DIR" 2>/dev/null
+
+# Core fields (always present).
+LINE='{"v":1'
+LINE+=',"event_type":"'"$(json_str "$EVENT_TYPE" 50)"'"'
+LINE+=',"ts":"'"$TS"'"'
+LINE+=',"resumasher_version":"'"$(json_str "$RESUMASHER_VERSION" 20)"'"'
+LINE+=',"host":"'"$(json_str "$HOST" 20)"'"'
+LINE+=',"os":"'"$(json_str "$OS" 20)"'"'
+LINE+=',"arch":"'"$(json_str "$ARCH" 20)"'"'
+LINE+=',"time_of_day_bucket":"'"$(json_str "$TIME_OF_DAY" 20)"'"'
+
+# Optional correlation
+LINE+="$(f_str run_id "$RUN_ID")"
+LINE+="$(f_str session_id "$SESSION_ID")"
+
+# Installation ID (only under community tier; JSONL itself omits it otherwise,
+# so a later tier downgrade doesn't leak past events' IDs).
+[ -n "$INSTALL_ID" ] && LINE+=',"installation_id":"'"$INSTALL_ID"'"'
+
+# Event-specific
+LINE+="$(f_num duration_s "$DURATION")"
+LINE+="$(f_str outcome "$OUTCOME")"
+LINE+="$(f_str error_class "$ERROR_CLASS")"
+LINE+="$(f_num failed_phase "$FAILED_PHASE")"
+
+# Tailor/application
+LINE+="$(f_str company "$COMPANY")"
+LINE+="$(f_str job_title "$JOB_TITLE")"
+LINE+="$(f_str seniority "$SENIORITY")"
+LINE+="$(f_num fit_score "$FIT_SCORE")"
+LINE+="$(f_num fit_strengths_count "$FIT_STRENGTHS_COUNT")"
+LINE+="$(f_num fit_gaps_count "$FIT_GAPS_COUNT")"
+LINE+="$(f_str fit_recommendation "$FIT_RECOMMENDATION")"
+LINE+="$(f_num num_placeholders_emitted "$NUM_PLACEHOLDERS")"
+LINE+="$(f_bool used_multirole_format "$USED_MULTIROLE")"
+
+# Configuration
+LINE+="$(f_str style_chosen "$STYLE")"
+LINE+="$(f_bool photo_included "$PHOTO_INCLUDED")"
+LINE+="$(f_bool github_configured "$GITHUB_CONFIGURED")"
+LINE+="$(f_bool used_github_evidence "$USED_GITHUB")"
+LINE+="$(f_bool used_folder_evidence "$USED_FOLDER")"
+LINE+="$(f_num github_repos_count "$GITHUB_REPOS_COUNT")"
+LINE+="$(f_num folder_files_count "$FOLDER_FILES_COUNT")"
+LINE+="$(f_str jd_source_mode "$JD_SOURCE_MODE")"
+LINE+="$(f_str resume_format_detected "$RESUME_FORMAT")"
+LINE+="$(f_str install_scope_path "$INSTALL_SCOPE")"
+LINE+="$(f_bool all_pdfs_rendered "$ALL_PDFS_RENDERED")"
+
+# Phase 7 / re-render / setup
+LINE+="$(f_str choice_type "$CHOICE_TYPE")"
+LINE+="$(f_str rerender_kind "$RERENDER_KIND")"
+LINE+="$(f_num setup_duration_s "$SETUP_DURATION")"
+LINE+="$(f_str setup_outcome "$SETUP_OUTCOME")"
+
+LINE+='}'
+
+echo "$LINE" >> "$JSONL_FILE" 2>/dev/null || true
+
+# ─── Fire background sync ────────────────────────────────────
+SYNC="$RESUMASHER_DIR/bin/resumasher-telemetry-sync"
+if [ -x "$SYNC" ]; then
+  "$SYNC" 2>/dev/null &
+fi
+
+exit 0

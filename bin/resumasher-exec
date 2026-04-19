@@ -48,10 +48,12 @@ Modules:
                     folder-state-hash, mine-context, extract-fit-score, etc.)
   render_pdf      — markdown to ATS-safe PDF renderer
   github_mine     — fetch GitHub profile as resume evidence
+  telemetry       — user-facing analytics controls (status, export, delete, set-tier)
 
 Examples:
   $(basename "$0") orchestration discover-resume .
   $(basename "$0") render_pdf --input r.md --kind resume --output r.pdf
+  $(basename "$0") telemetry status
 EOF
   exit 2
 fi
@@ -61,9 +63,12 @@ case "$MODULE" in
   orchestration|render_pdf|github_mine)
     exec "$VENV_PY" "$SKILL_ROOT/scripts/${MODULE}.py" "$@"
     ;;
+  telemetry)
+    exec "$SKILL_ROOT/bin/resumasher-telemetry-cli" "$@"
+    ;;
   *)
     echo "Unknown module: $MODULE" >&2
-    echo "Known modules: orchestration, render_pdf, github_mine" >&2
+    echo "Known modules: orchestration, render_pdf, github_mine, telemetry" >&2
     exit 2
     ;;
 esac

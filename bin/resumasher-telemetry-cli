@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# resumasher-telemetry-cli — user-facing telemetry controls.
+#
+# Subcommands:
+#   status                             — show tier, installation_id, log size
+#   export                             — emit local JSONL to stdout
+#   delete                             — POST delete request + wipe local state
+#   set-tier <off|anonymous|community> — change tier (writes to config.json in --cwd)
+#
+# Flags:
+#   --cwd <path>  — student's working directory (for tier read/write). Default: cwd.
+#
+# Invoked from bin/resumasher-exec via `resumasher-exec telemetry <subcommand>`
+# (see that wrapper for the routing).
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESUMASHER_DIR="${RESUMASHER_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STATE_DIR="${RESUMASHER_STATE_DIR:-$HOME/.resumasher}"
+ANALYTICS_DIR="$STATE_DIR/analytics"
+JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
+CURSOR_FILE="$ANALYTICS_DIR/.last-sync-line"
+RATE_FILE="$ANALYTICS_DIR/.last-sync-time"
+INSTALL_ID_FILE="$STATE_DIR/installation-id"
+
+# Source Supabase config unless env overrides are set
+if [ -z "${RESUMASHER_SUPABASE_URL:-}" ] && [ -f "$RESUMASHER_DIR/supabase/config.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$RESUMASHER_DIR/supabase/config.sh"
+fi
+URL="${RESUMASHER_SUPABASE_URL:-}"
+KEY="${RESUMASHER_SUPABASE_ANON_KEY:-}"
+
+usage() {
+  cat >&2 <<EOF
+Usage: resumasher telemetry <subcommand>
+
+Subcommands:
+  status                              Show current tier, installation_id, log size
+  export                              Dump local JSONL to stdout
+  delete                              Wipe local data + POST delete request
+  set-tier <off|anonymous|community>  Change tier
+
+Options:
+  --cwd <path>                        Student working dir (default: current dir)
+EOF
+  exit 2
+}
+
+# ─── Parse ──────────────────────────────────────────────────
+SUB="${1:-}"
+shift 2>/dev/null || true
+
+STUDENT_CWD="$PWD"
+NEW_TIER=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cwd) STUDENT_CWD="$2"; shift 2 ;;
+    off|anonymous|community) NEW_TIER="$1"; shift ;;
+    -h|--help) usage ;;
+    *) shift ;;
+  esac
+done
+
+CONFIG="$STUDENT_CWD/.resumasher/config.json"
+
+read_tier() {
+  local t="off"
+  if [ -f "$CONFIG" ]; then
+    local raw
+    raw="$(grep -o '"telemetry"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG" 2>/dev/null \
+      | head -1 | awk -F'"' '{print $4}')"
+    case "$raw" in
+      off|anonymous|community) t="$raw" ;;
+    esac
+  fi
+  echo "$t"
+}
+
+# ─── Subcommands ────────────────────────────────────────────
+case "$SUB" in
+  status)
+    TIER="$(read_tier)"
+    INSTALL_ID=""
+    [ -f "$INSTALL_ID_FILE" ] && INSTALL_ID="$(cat "$INSTALL_ID_FILE" 2>/dev/null | tr -d '[:space:]')"
+    LOG_LINES=0
+    LOG_BYTES=0
+    if [ -f "$JSONL_FILE" ]; then
+      LOG_LINES="$(wc -l < "$JSONL_FILE" 2>/dev/null | tr -d ' ')"
+      LOG_BYTES="$(wc -c < "$JSONL_FILE" 2>/dev/null | tr -d ' ')"
+    fi
+    CURSOR=0
+    [ -f "$CURSOR_FILE" ] && CURSOR="$(cat "$CURSOR_FILE" 2>/dev/null | tr -d ' \n\r\t')"
+    echo "Tier:              ${TIER}"
+    echo "Installation ID:   ${INSTALL_ID:-(none — only written under community tier)}"
+    echo "Project config:    ${CONFIG}"
+    echo "Local log file:    ${JSONL_FILE}"
+    echo "Log lines:         ${LOG_LINES}"
+    echo "Log bytes:         ${LOG_BYTES}"
+    echo "Sync cursor:       ${CURSOR} (lines already sent)"
+    echo "Backend:           ${URL:-(not configured)}"
+    exit 0
+    ;;
+
+  export)
+    if [ ! -f "$JSONL_FILE" ]; then
+      echo "No local telemetry log at $JSONL_FILE" >&2
+      exit 0
+    fi
+    cat "$JSONL_FILE"
+    exit 0
+    ;;
+
+  delete)
+    INSTALL_ID=""
+    [ -f "$INSTALL_ID_FILE" ] && INSTALL_ID="$(cat "$INSTALL_ID_FILE" 2>/dev/null | tr -d '[:space:]')"
+
+    # POST delete if we have backend + installation_id
+    if [ -n "$URL" ] && [ -n "$KEY" ] && [ -n "$INSTALL_ID" ]; then
+      RESP="$(mktemp /tmp/resumasher-del-XXXXXX 2>/dev/null || echo "/tmp/resumasher-del-$$")"
+      HTTP="$(curl -s -o "$RESP" -w '%{http_code}' --max-time 10 \
+        -X POST "${URL}/functions/v1/telemetry-delete" \
+        -H "Authorization: Bearer ${KEY}" \
+        -H "Content-Type: application/json" \
+        -d "{\"installation_id\":\"${INSTALL_ID}\"}" 2>/dev/null || echo "000")"
+      if [ "${HTTP:0:1}" = "2" ]; then
+        echo "Backend delete response: $(cat "$RESP" 2>/dev/null)"
+      else
+        echo "Backend delete HTTP $HTTP (local wipe will still proceed)" >&2
+      fi
+      rm -f "$RESP" 2>/dev/null || true
+    elif [ -z "$INSTALL_ID" ]; then
+      echo "No installation_id on file — nothing to delete on backend (likely never used community tier)."
+    fi
+
+    # Wipe local state
+    rm -f "$JSONL_FILE" "$CURSOR_FILE" "$RATE_FILE" "$INSTALL_ID_FILE" 2>/dev/null || true
+    echo "Local telemetry state wiped."
+    exit 0
+    ;;
+
+  set-tier)
+    case "$NEW_TIER" in
+      off|anonymous|community) ;;
+      *) echo "ERROR: tier must be one of: off, anonymous, community" >&2; exit 2 ;;
+    esac
+    mkdir -p "$STUDENT_CWD/.resumasher" 2>/dev/null
+    # Ensure config.json exists with at least an empty object.
+    if [ ! -f "$CONFIG" ]; then
+      echo '{}' > "$CONFIG"
+    fi
+    # Rewrite the telemetry field. Use python for safe JSON mutation —
+    # resumasher already requires python3 (via install.sh), so this is free.
+    python3 - "$CONFIG" "$NEW_TIER" <<'PY' || { echo "ERROR: could not update $CONFIG" >&2; exit 2; }
+import json, sys
+path, tier = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+data["telemetry"] = tier
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PY
+    echo "Tier set to '${NEW_TIER}' in ${CONFIG}"
+    # If switching to off, proactively remove the installation_id file — no
+    # more events will reference it, and the user's intent is "stop".
+    if [ "$NEW_TIER" = "off" ]; then
+      rm -f "$INSTALL_ID_FILE" 2>/dev/null || true
+    fi
+    exit 0
+    ;;
+
+  ""|-h|--help)
+    usage
+    ;;
+
+  *)
+    echo "Unknown subcommand: $SUB" >&2
+    usage
+    ;;
+esac
