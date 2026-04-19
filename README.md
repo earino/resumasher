@@ -131,7 +131,7 @@ Three input forms, all work:
 
 ### First-run setup (one time per folder)
 
-The first time you run `/resumasher` in a folder, it asks for your contact info, default resume style (EU or US), and whether to include a photo by default. Short one-time setup. Everything is stored locally in `.resumasher/config.json`. Nothing is uploaded.
+The first time you run `/resumasher` in a folder, it asks for your contact info, default resume style (EU or US), whether to include a photo by default, and (last question) whether to opt into anonymous usage analytics. Short one-time setup. Your contact info and application history are stored locally in `.resumasher/` — never uploaded. The analytics tier defaults to off; if you opt in, see [PRIVACY.md](PRIVACY.md) for exactly what gets sent and what doesn't.
 
 ### Accepted resume formats
 

@@ -593,8 +593,14 @@ def append_history(cwd: Path, record: dict) -> Path:
 
 GDPR_NOTE = (
     "resumasher stores your contact info and application history LOCALLY in\n"
-    ".resumasher/ inside this folder. Nothing is uploaded. If this folder is a\n"
-    "git repo, we will add .resumasher/ to your .gitignore automatically."
+    ".resumasher/ inside this folder. If this folder is a git repo, we will\n"
+    "add .resumasher/ to your .gitignore automatically.\n"
+    "\n"
+    "Your resume content, job descriptions, and application outputs are never\n"
+    "uploaded. At the end of setup you can OPTIONALLY opt into anonymous usage\n"
+    "analytics (event types, fit scores, company names, no resume or JD text)\n"
+    "to help the maintainer see what's breaking. Default is off. Full detail:\n"
+    "PRIVACY.md in the skill directory."
 )
 
 

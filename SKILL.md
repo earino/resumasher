@@ -241,8 +241,14 @@ If it prints `yes` and exits 1: run the setup flow.
 Print the GDPR notice:
 
 > resumasher stores your contact info and application history LOCALLY in
-> `.resumasher/` inside this folder. Nothing is uploaded. If this folder is a
-> git repo, we will add `.resumasher/` to your .gitignore automatically.
+> `.resumasher/` inside this folder. If this folder is a git repo, we will
+> add `.resumasher/` to your .gitignore automatically.
+>
+> Your resume content, job descriptions, and application outputs are never
+> uploaded. At the end of setup you can OPTIONALLY opt into anonymous usage
+> analytics (event types, fit scores, company names, no resume or JD text)
+> to help the maintainer see what's breaking. Default is off. Full detail:
+> `PRIVACY.md` in the skill directory.
 
 **Pre-fill from resume.pdf when possible.** If a `resume.pdf` is present, extract its text (`"$RS" orchestration read-resume resume.pdf`) and try to spot the candidate's name, email, LinkedIn, and location. Show those extracted values as the defaults in your questions so the student only has to CONFIRM, not retype them. Saves 3+ prompt rounds on first-run setup.
 
