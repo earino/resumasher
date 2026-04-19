@@ -5,6 +5,8 @@ description: Aggregate metrics from resumasher installs that opted into communit
 permalink: /stats/
 ---
 
+<a href="/resumasher/" style="font-size:0.85rem;color:var(--muted);text-decoration:none;">&larr; Back to resumasher</a>
+
 # Community stats
 
 <p>Aggregate data from resumasher installs that opted into the community
