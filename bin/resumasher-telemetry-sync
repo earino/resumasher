@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# resumasher-telemetry-sync — POST unsent JSONL events to the edge function
+# resumasher-telemetry-sync — POST unsent JSONL events to the edge function.
 #
-# Fire-and-forget, backgrounded by resumasher-telemetry-log. Rate-limited
-# to once per 5 minutes via marker file. Maintains a cursor (last synced
-# line number) so re-runs don't duplicate. Posts batches of up to 100.
+# Called synchronously by resumasher-telemetry-log after each event write.
+# No rate limit, no backgrounding: a resumasher run takes minutes, so the
+# ~100-500ms round-trip per event is negligible and we trade latency for
+# guaranteed delivery. Cursor tracks the last synced line so re-runs don't
+# duplicate. Batches up to 100 events per POST (useful when a previous run
+# was offline and left queued events behind).
 #
 # Env overrides (for tests):
-#   RESUMASHER_STATE_DIR       — override ~/.resumasher
-#   RESUMASHER_DIR             — override auto-detected skill root
-#   RESUMASHER_SUPABASE_URL    — override URL (takes precedence over config.sh)
+#   RESUMASHER_STATE_DIR         — override ~/.resumasher
+#   RESUMASHER_DIR               — override auto-detected skill root
+#   RESUMASHER_SUPABASE_URL      — override URL (takes precedence over config.sh)
 #   RESUMASHER_SUPABASE_ANON_KEY — override anon key
 set -uo pipefail
 
@@ -18,7 +21,6 @@ STATE_DIR="${RESUMASHER_STATE_DIR:-$HOME/.resumasher}"
 ANALYTICS_DIR="$STATE_DIR/analytics"
 JSONL_FILE="$ANALYTICS_DIR/skill-usage.jsonl"
 CURSOR_FILE="$ANALYTICS_DIR/.last-sync-line"
-RATE_FILE="$ANALYTICS_DIR/.last-sync-time"
 
 # Source Supabase config unless env overrides are set
 if [ -z "${RESUMASHER_SUPABASE_URL:-}" ] && [ -f "$RESUMASHER_DIR/supabase/config.sh" ]; then
@@ -32,18 +34,6 @@ KEY="${RESUMASHER_SUPABASE_ANON_KEY:-}"
 [ -z "$URL" ] && exit 0
 [ -z "$KEY" ] && exit 0
 [ -f "$JSONL_FILE" ] || exit 0
-
-# Rate limit + concurrency guard: once per 5 minutes.
-# Touch the rate file BEFORE the work so concurrent invocations (e.g.,
-# multiple events fired in quick succession by the same orchestrator,
-# each backgrounding its own sync) hit the rate gate immediately and
-# exit instead of all duplicating the same POST.
-if [ -f "$RATE_FILE" ]; then
-  FRESH="$(find "$RATE_FILE" -mmin +5 2>/dev/null || true)"
-  [ -z "$FRESH" ] && exit 0
-fi
-mkdir -p "$ANALYTICS_DIR" 2>/dev/null
-touch "$RATE_FILE" 2>/dev/null || true
 
 # ─── Cursor ─────────────────────────────────────────────────
 CURSOR=0

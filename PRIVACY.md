@@ -56,9 +56,6 @@ For each event:
 - Your GitHub username
 - Your resume content
 - The job description text
-- Company names that appear with fewer than 3 total applications
-  across all users (low-count aggregation protects uniquely-identifying
-  applications, e.g. an internship at a one-person startup)
 - File paths, folder structure, OS username
 - IP address (Supabase may log request IPs for infrastructure reasons
   but these are not stored in the telemetry database itself)

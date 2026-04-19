@@ -271,10 +271,16 @@ LINE+='}'
 
 echo "$LINE" >> "$JSONL_FILE" 2>/dev/null || true
 
-# ─── Fire background sync ────────────────────────────────────
+# ─── Fire sync synchronously ─────────────────────────────────
+# Synchronous because a resumasher run takes minutes; the ~100-500ms per
+# event × 8-9 events of network latency is rounding error inside that. The
+# alternative (background the sync) meant events queued for 5 minutes
+# behind a rate gate could be lost if the student didn't run again, and
+# introduced a concurrency-duplicate bug that a lock file would only
+# partially fix. "Fire, wait, move on" is simpler and actually delivers.
 SYNC="$RESUMASHER_DIR/bin/resumasher-telemetry-sync"
 if [ -x "$SYNC" ]; then
-  "$SYNC" 2>/dev/null &
+  "$SYNC" 2>/dev/null || true
 fi
 
 exit 0
