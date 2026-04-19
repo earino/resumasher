@@ -9,6 +9,14 @@ resumasher tailors your resume, writes a cover letter, and builds an interview p
 
 ![resumasher running: terminal walkthrough from `/resumasher job.md` through fit assessment, tailor, placeholder fill, and PDF render](assets/img/demo.gif)
 
+## Quick install
+
+Paste this into Claude Code, Codex CLI, or Gemini CLI:
+
+> Install the resumasher skill available at https://github.com/earino/resumasher
+
+The AI CLI reads the README, picks the right path for your CLI, clones, and runs the installer. For exact per-CLI commands or project-scope install, see [Install](#install) below.
+
 ## What you get
 
 From your resume folder, run:
