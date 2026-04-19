@@ -147,8 +147,9 @@ case "$SUB" in
       echo "No installation_id on file — nothing to delete on backend (likely never used community tier)."
     fi
 
-    # Wipe local state
+    # Wipe local state, including per-run idempotency markers.
     rm -f "$JSONL_FILE" "$CURSOR_FILE" "$RATE_FILE" "$INSTALL_ID_FILE" 2>/dev/null || true
+    rm -rf "$STATE_DIR/run/fired" 2>/dev/null || true
     echo "Local telemetry state wiped."
     exit 0
     ;;

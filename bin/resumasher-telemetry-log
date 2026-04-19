@@ -143,6 +143,40 @@ done
 [ -z "$EVENT_TYPE" ] && exit 0
 [ -z "$STUDENT_CWD" ] && exit 0
 
+# ─── Idempotency guard for bookend events ──────────────────
+# run_started / run_completed / run_failed should fire exactly once per run_id.
+# If the orchestrator retries a phase (e.g., after a transient error), it can
+# accidentally re-enter Phase 1 or Phase 9 and fire these a second time for
+# the same run_id. Detect via marker file and skip the dup silently.
+#
+# placeholder_fill_choice is intentionally exempt (fires N times per run).
+# fit_computed / tailor_completed are not deduped either — a legitimate
+# retry of those phases produces a new fit/tailor result worth recording.
+# rerender_used has no run_id and fires per user action.
+case "$EVENT_TYPE" in
+  run_started|run_completed|run_failed)
+    if [ -n "$RUN_ID" ]; then
+      # STATE_DIR isn't known here yet (the block that sets it runs later).
+      # Compute the scope-aware path inline.
+      _SCOPE_GRANDPARENT="$(cd "$RESUMASHER_DIR/../.." 2>/dev/null && pwd -P || echo "")"
+      if [ -n "${RESUMASHER_STATE_DIR:-}" ]; then
+        _SD="$RESUMASHER_STATE_DIR"
+      elif [ "$_SCOPE_GRANDPARENT" = "$(cd "$HOME/.claude" 2>/dev/null && pwd -P || echo "")" ]; then
+        _SD="$HOME/.resumasher"
+      else
+        _SD="$(cd "$RESUMASHER_DIR/../../.." 2>/dev/null && pwd)/.resumasher"
+      fi
+      _FIRED_DIR="$_SD/run/fired"
+      _FIRED_MARKER="$_FIRED_DIR/${RUN_ID}-${EVENT_TYPE}"
+      if [ -f "$_FIRED_MARKER" ]; then
+        exit 0
+      fi
+      mkdir -p "$_FIRED_DIR" 2>/dev/null
+      touch "$_FIRED_MARKER" 2>/dev/null || true
+    fi
+    ;;
+esac
+
 # ─── Read tier ──────────────────────────────────────────────
 CONFIG="$STUDENT_CWD/.resumasher/config.json"
 TIER="off"

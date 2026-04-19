@@ -825,8 +825,15 @@ RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persis
 RUN_ID=$(cat "$RUN_DIR/run-id.txt")
 END_TS=$(date +%s)
 # Read $START_TS from disk (captured at Phase 1 start). Shell state doesn't
-# persist across Bash tool calls, so we re-read from the saved file.
-START_TS=$(cat "$RUN_DIR/start-ts.txt" 2>/dev/null || echo "$END_TS")
+# persist across Bash tool calls, so we re-read from the saved file. Defensive:
+# empty content or non-numeric content (which arithmetic would silently treat
+# as 0, producing a ~56-year epoch-sized "duration") fall back to END_TS so
+# DURATION ends up as 0, not a garbage number. This is the observed failure
+# mode from the 2026-04-19 Gemini run.
+START_TS=$(cat "$RUN_DIR/start-ts.txt" 2>/dev/null | tr -d ' \n\r\t')
+case "$START_TS" in
+  ''|*[!0-9]*) START_TS="$END_TS" ;;
+esac
 DURATION=$(( END_TS - START_TS ))
 STYLE_CHOSEN=$(jq -r '.default_style // "us"' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
 PHOTO_INCLUDED=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)

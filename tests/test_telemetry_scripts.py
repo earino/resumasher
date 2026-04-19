@@ -164,6 +164,80 @@ def test_log_computes_time_of_day_when_omitted(sandbox):
     assert found, f"no expected bucket in: {jsonl}"
 
 
+def test_log_dedupes_run_started_for_same_run_id(sandbox):
+    """Orchestrator retries that re-enter Phase 1 should not produce
+    duplicate run_started events for the same run_id. Regression from
+    the 2026-04-19 Gemini run which had 2× run_started + 2× run_completed."""
+    _write_config(sandbox["student"], "community")
+    # First fire
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--run-id", "dedupe-test-1",
+    ], env=_env(sandbox["state"]))
+    # Retry: same run_id, same event_type
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--run-id", "dedupe-test-1",
+    ], env=_env(sandbox["state"]))
+    # Only ONE event should be in the JSONL.
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    lines = [l for l in jsonl.split("\n") if l]
+    assert len(lines) == 1, f"expected 1 run_started event, got {len(lines)}"
+
+
+def test_log_dedupes_run_completed_for_same_run_id(sandbox):
+    """Same dedup guarantee on the Phase 9 terminal event."""
+    _write_config(sandbox["student"], "community")
+    for _ in range(2):
+        _run(LOG_BIN, [
+            "--event-type", "run_completed",
+            "--cwd", str(sandbox["student"]),
+            "--run-id", "dedupe-test-2",
+            "--duration", "120",
+            "--outcome", "success",
+        ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    lines = [l for l in jsonl.split("\n") if l]
+    assert len(lines) == 1
+
+
+def test_log_does_not_dedupe_placeholder_fill_choice(sandbox):
+    """placeholder_fill_choice is INTENTIONALLY exempt from dedup —
+    it fires once per placeholder resolved, typically multiple per run."""
+    _write_config(sandbox["student"], "community")
+    for choice in ["specifics", "soften", "drop"]:
+        _run(LOG_BIN, [
+            "--event-type", "placeholder_fill_choice",
+            "--cwd", str(sandbox["student"]),
+            "--run-id", "exempt-test",
+            "--choice-type", choice,
+        ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    lines = [l for l in jsonl.split("\n") if l]
+    assert len(lines) == 3
+
+
+def test_log_different_run_ids_bypass_dedup(sandbox):
+    """Second legitimate /resumasher invocation (new run_id) should fire
+    its own run_started event — the dedup is per (run_id, event_type)."""
+    _write_config(sandbox["student"], "community")
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--run-id", "first-run",
+    ], env=_env(sandbox["state"]))
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--run-id", "second-run",
+    ], env=_env(sandbox["state"]))
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    lines = [l for l in jsonl.split("\n") if l]
+    assert len(lines) == 2
+
+
 def test_log_strips_embedded_newlines_from_numeric_values(sandbox):
     """Defensive: callers that pass '0\\n0' (e.g. from `grep -c ... || echo 0`
     returning doubled output on zero-match) must not corrupt the JSONL.
