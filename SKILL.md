@@ -79,7 +79,12 @@ This sets:
 - `TEL` — absolute path to `bin/resumasher-telemetry-log`, the no-op-when-tier-off event logger called at 8 pipeline boundaries below.
 - `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
 
-**Telemetry model identifier (`$MODEL`).** Many `"$TEL"` calls below pass `--model "$MODEL"`. `$MODEL` is NOT a shell variable the prologue sets — it's a string you (the AI orchestrator LLM) substitute literally with your own model identifier before executing the command. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit the `--model` flag; null is better than fabricated. This is self-reported because bash doesn't have a clean way to detect which LLM is driving it across three host CLIs.
+**Telemetry identifiers you (the orchestrator) substitute literally: `$MODEL` and `$HOST`.** Many `"$TEL"` calls below pass `--model "$MODEL"` and `--host "$HOST"`. These are NOT shell variables the prologue sets — they're strings you substitute with literals before executing the command.
+
+- `$MODEL`: your own model identifier. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit `--model`; null is better than fabricated.
+- `$HOST`: which AI CLI you're running in. Exactly one of `claude_code`, `codex_cli`, or `gemini_cli`. You know this — it's literally the CLI that loaded this SKILL.md. If omitted, the log script falls back to env-var sniffing and then to `"unknown"`, which is what we want to avoid.
+
+Both are self-reported because bash can't reliably detect them across host CLIs (Codex, for instance, doesn't set a discoverable env var).
 
 The check distinguishes three failure modes:
 - **SKILL_ROOT set, success** — everything good, proceed.
@@ -376,6 +381,7 @@ Write `.resumasher/config.json` with those values, then:
 
 ```bash
 "$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --setup-outcome completed \
   --style "$STYLE" \
@@ -421,6 +427,7 @@ echo "$RUN_ID" > "$RUN_DIR/run-id.txt"
 echo "$START_TS" > "$RUN_DIR/start-ts.txt"
 
 "$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --jd-source-mode "$JD_MODE" \
@@ -549,6 +556,7 @@ If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the st
 RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
 RUN_ID=$(cat "$RUN_DIR/run-id.txt")
 "$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --fit-score "$FIT_SCORE" \
@@ -615,6 +623,7 @@ NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null 
 USED_MULTIROLE=$(grep -q 'sub-role\|· \*\*' "$OUT_DIR/tailored-resume.md" 2>/dev/null && echo true || echo false)
 
 "$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --num-placeholders "$NUM_PLACEHOLDERS" \
@@ -709,9 +718,10 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
 
    ```bash
    RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
-RUN_ID=$(cat "$RUN_DIR/run-id.txt")
+   RUN_ID=$(cat "$RUN_DIR/run-id.txt")
    "$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
-     --model "$MODEL" \
+     --host "$HOST" \
+  --model "$MODEL" \
      --run-id "$RUN_ID" \
      --choice-type "$CHOICE"
    ```
@@ -840,6 +850,7 @@ PHOTO_INCLUDED=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/confi
 GITHUB_CONFIGURED=$(jq -r '(.github_username // "") != ""' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
 
 "$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
@@ -864,6 +875,7 @@ If any phase hard-stopped with an error before reaching Phase 9, fire `run_faile
 
 ```bash
 "$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
@@ -1016,6 +1028,7 @@ For the **interview prep**:
 
 ```bash
 "$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --rerender-kind "$KIND"
 ```
@@ -1102,23 +1115,20 @@ Resolve `$TEL` once per Bash tool call, just like `$RS`:
 TEL="$RS_DIR/bin/resumasher-telemetry-log"
 ```
 
-**Every call-site below should include `--model "$MODEL"`**, where `$MODEL`
-is your (the orchestrator LLM's) own model identifier. You know what you
-are; substitute it as a literal string. Examples by host:
+**Every call-site below should include both `--host "$HOST"` and `--model "$MODEL"`.** `$HOST` is the AI CLI you're running in (one of `claude_code`, `codex_cli`, `gemini_cli`); `$MODEL` is your own model identifier. You substitute both as literal strings — you know what CLI you are and what model you are. Examples by host:
 
-- Claude Code: `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`
-- Codex CLI: `gpt-5-codex`, `gpt-5`, `gpt-5-mini`
-- Gemini CLI: `gemini-2.5-pro`, `gemini-2.5-flash`
+- Claude Code: `--host claude_code --model claude-opus-4-7` (or `claude-sonnet-4-6`, `claude-haiku-4-5`)
+- Codex CLI: `--host codex_cli --model gpt-5-codex` (or `gpt-5`, `gpt-5-mini`)
+- Gemini CLI: `--host gemini_cli --model gemini-2.5-pro` (or `gemini-2.5-flash`)
 
-If you genuinely don't know your model ID, omit the flag — null is better
-than fabricated. The edge function caps model strings at 40 chars; no
-enum validation (the model ID space moves too fast to whitelist).
+If you genuinely don't know the model ID, omit `--model` (null is better than fabricated). Same rule for `--host`: omit rather than guess. The edge function caps both at 40 chars; no enum validation on model (space moves too fast), but host should match the three canonical values above.
 
 **Phase 0 (end) — first_run_setup_completed.** Fired right after config.json
 is written:
 
 ```bash
 "$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --setup-duration "$SETUP_DURATION_SECONDS" \
   --setup-outcome completed \
@@ -1137,6 +1147,7 @@ where the skill lives (inside `~/.claude/skills/` vs `<project>/.claude/skills/`
 
 ```bash
 "$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --jd-source-mode "$JD_MODE" \
@@ -1160,6 +1171,7 @@ GAPS_COUNT=$("$RS" orchestration extract-gaps-count < "$OUT_DIR/fit-assessment.m
 RECOMMENDATION=$("$RS" orchestration extract-recommendation < "$OUT_DIR/fit-assessment.md")
 
 "$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --fit-score "$FIT_SCORE" \
@@ -1176,6 +1188,7 @@ NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null 
 USED_MULTIROLE=$(grep -q 'sub-role\|- \*\*.*\*\* ·' "$OUT_DIR/tailored-resume.md" && echo true || echo false)
 
 "$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --num-placeholders "$NUM_PLACEHOLDERS" \
@@ -1187,6 +1200,7 @@ placeholder is resolved (once per student answer):
 
 ```bash
 "$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --choice-type "$CHOICE"
@@ -1201,6 +1215,7 @@ is appended. Include all the fields from the fit event plus configuration:
 DURATION=$(( $(date +%s) - $START_TS ))
 
 "$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
@@ -1229,6 +1244,7 @@ phase. Include whatever fields are already known at that point:
 
 ```bash
 "$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
   --duration "$DURATION" \
@@ -1249,6 +1265,7 @@ section:
 
 ```bash
 "$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
   --model "$MODEL" \
   --rerender-kind "$KIND"
 ```

@@ -294,6 +294,65 @@ def test_log_strips_dangerous_chars_from_strings(sandbox):
     assert "\\" not in parsed["company"]
 
 
+def test_log_includes_host_when_flag_passed(sandbox):
+    """--host "<id>" lands in the JSONL and takes precedence over env sniffing.
+
+    Motivating bug: Codex CLI doesn't set CODEX_VERSION/CODEX env vars, so the
+    env-based host detection falls back to "unknown". The fix is orchestrator
+    self-reporting via --host, same pattern as --model."""
+    _write_config(sandbox["student"], "anonymous")
+    # Explicitly clear RESUMASHER_HOST env override so we're testing --host flag.
+    env = _env(sandbox["state"])
+    env.pop("RESUMASHER_HOST", None)
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--host", "codex_cli",
+    ], env=env)
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["host"] == "codex_cli"
+
+
+def test_log_host_flag_overrides_env(sandbox):
+    """If both --host and RESUMASHER_HOST are set, --host wins."""
+    _write_config(sandbox["student"], "anonymous")
+    env = _env(sandbox["state"])
+    env["RESUMASHER_HOST"] = "claude_code"  # env says one thing
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+        "--host", "gemini_cli",  # flag says another — flag wins
+    ], env=env)
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["host"] == "gemini_cli"
+
+
+def test_log_host_falls_through_to_unknown_when_unset(sandbox):
+    """No --host flag, no RESUMASHER_HOST, no sniffable env signal → host=unknown.
+    This is the Codex behavior that prompted the --host addition.
+
+    We have to actively clear CLAUDE_CODE env vars because the test suite
+    itself runs inside Claude Code; without the explicit clear the sniffer
+    sees CLAUDECODE=1 and reports claude_code, hiding the real regression."""
+    _write_config(sandbox["student"], "anonymous")
+    env = _env(sandbox["state"])
+    env.pop("RESUMASHER_HOST", None)
+    for v in ["CLAUDE_CODE_VERSION", "CLAUDECODE",
+              "CODEX_VERSION", "CODEX",
+              "GEMINI_VERSION", "GEMINI_CLI"]:
+        env.pop(v, None)
+        env[v] = ""  # explicitly empty in case it's set in parent env
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+    ], env=env)
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["host"] == "unknown"
+
+
 def test_log_includes_model_when_flag_passed(sandbox):
     """--model "<id>" lands in the JSONL so orchestrator self-reporting works."""
     _write_config(sandbox["student"], "anonymous")

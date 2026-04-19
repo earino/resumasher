@@ -17,6 +17,13 @@
 #   --cwd <path>        — student's working directory (source of config.json)
 #
 # Recommended:
+#   --host <id>         — the AI CLI the orchestrator is running in. One of
+#                          claude_code, codex_cli, gemini_cli. Self-reported
+#                          by the orchestrator (it knows what host it is)
+#                          because env-var sniffing is unreliable across
+#                          host CLI versions (Codex, for instance, does not
+#                          set a discoverable env var). If omitted, falls
+#                          back to env-var detection, then "unknown".
 #   --model <id>        — the model the AI orchestrator is running as
 #                          (e.g. claude-opus-4-7, gpt-5-codex, gemini-2.5-pro).
 #                          Self-reported by the LLM — the orchestrator knows
@@ -98,6 +105,7 @@ SETUP_OUTCOME=""
 # Ambient
 TIME_OF_DAY=""
 MODEL=""
+HOST_OVERRIDE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -135,6 +143,7 @@ while [ $# -gt 0 ]; do
     --setup-outcome)          SETUP_OUTCOME="$2"; shift 2 ;;
     --time-of-day)            TIME_OF_DAY="$2"; shift 2 ;;
     --model)                  MODEL="$2"; shift 2 ;;
+    --host)                   HOST_OVERRIDE="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -217,9 +226,14 @@ fi
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
-# Host: detect which AI CLI we're running under.
-# Defaults to "unknown" if no signal is available.
-HOST="${RESUMASHER_HOST:-}"
+# Host: prefer the orchestrator's self-reported value (passed via --host),
+# then RESUMASHER_HOST env override (used by tests), then env-var sniffing,
+# then "unknown". Self-reporting is more reliable than sniffing because host
+# CLIs don't consistently set discoverable env vars (Codex in particular).
+HOST="$HOST_OVERRIDE"
+if [ -z "$HOST" ]; then
+  HOST="${RESUMASHER_HOST:-}"
+fi
 if [ -z "$HOST" ]; then
   if [ -n "${CLAUDE_CODE_VERSION:-}${CLAUDECODE:-}" ]; then
     HOST="claude_code"
