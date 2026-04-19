@@ -546,7 +546,8 @@ If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the st
 **Fire telemetry (end of Phase 3).** After fit-assessment.md is written and extractors have run:
 
 ```bash
-RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
 "$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
   --model "$MODEL" \
   --run-id "$RUN_ID" \
@@ -608,7 +609,8 @@ Save the output to `$OUT_DIR/tailored-resume.md`.
 **Fire telemetry (end of Phase 5).** After tailored-resume.md is written:
 
 ```bash
-RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
 NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null || echo 0)
 USED_MULTIROLE=$(grep -q 'sub-role\|· \*\*' "$OUT_DIR/tailored-resume.md" 2>/dev/null && echo true || echo false)
 
@@ -706,7 +708,8 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
    **Fire telemetry after each placeholder is resolved** (one call per placeholder). `$CHOICE` is one of `specifics`, `soften`, or `drop`:
 
    ```bash
-   RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+   RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
    "$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
      --model "$MODEL" \
      --run-id "$RUN_ID" \
@@ -818,11 +821,12 @@ PH_PREP=$(count_placeholders "$OUT_DIR/interview-prep.md")
 **Fire telemetry (end of Phase 9, terminal flush).** This is the `run_completed` event — it triggers the actual HTTP sync that flushes every mid-run event queued locally during this run:
 
 ```bash
-RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+RUN_DIR="$STUDENT_CWD/.resumasher/run"   # re-derive: shell state doesn't persist across Bash tool calls
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
 END_TS=$(date +%s)
 # Read $START_TS from disk (captured at Phase 1 start). Shell state doesn't
 # persist across Bash tool calls, so we re-read from the saved file.
-START_TS=$(cat "$STUDENT_CWD/.resumasher/run/start-ts.txt" 2>/dev/null || echo "$END_TS")
+START_TS=$(cat "$RUN_DIR/start-ts.txt" 2>/dev/null || echo "$END_TS")
 DURATION=$(( END_TS - START_TS ))
 STYLE_CHOSEN=$(jq -r '.default_style // "us"' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
 PHOTO_INCLUDED=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
