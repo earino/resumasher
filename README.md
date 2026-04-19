@@ -349,9 +349,14 @@ Before opening a PR:
 - Local application history log (`.resumasher/history.jsonl`)
 - Runs on Claude Code, OpenAI Codex CLI, and Google Gemini CLI
 
-**v0.2 (shaped by early user feedback):**
+**v0.2 (shipped):**
+- Opt-in usage analytics with three-tier consent (off / anonymous / community), default off, GDPR-compliant ([#2](https://github.com/earino/resumasher/issues/2)). Supabase backend in Ireland. Student-facing CLI: `resumasher telemetry status / export / delete / set-tier`. Full detail in [PRIVACY.md](PRIVACY.md).
+- Fit-analyst emits structured sentinels (`ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, `RECOMMENDATION:`) with multilingual seniority classification (any language the LLM understands).
+
+**v0.3 (shaped by early user feedback):**
 - `--review` mode: step-by-step interactive rewriting for every bullet, not just placeholders
 - Final coherence pass flagging cross-document drift before PDF render ([#1](https://github.com/earino/resumasher/issues/1))
+- Non-English resume filename detection ([#3](https://github.com/earino/resumasher/issues/3))
 - GitHub Actions CI with automated PDF round-trip on every push
 - Incremental folder-mine cache invalidation
 - German / French JD translation pre-pass

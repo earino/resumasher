@@ -884,9 +884,28 @@ telemetry events at 8 pipeline boundaries. The `resumasher-telemetry-log`
 script is a no-op when `config.json` has `"telemetry": "off"` (which is the
 default), so it's safe to call unconditionally.
 
-**Do not block on telemetry.** The log script is `set -uo pipefail` (no `-e`),
-exits 0 on any internal error, and backgrounds the sync call. Telemetry
-failures must never surface to the student.
+**Do not block on telemetry.** The log script is `set -uo pipefail` (no `-e`)
+and exits 0 on any internal error. Telemetry failures never surface to the
+student.
+
+**Sync behavior.** The log script writes to a local JSONL file on every call.
+The HTTP sync to Supabase only fires when event_type is "terminal":
+`first_run_setup_completed`, `run_completed`, `run_failed`, or `rerender_used`.
+Terminal events flush the whole queue of mid-run events in a single POST.
+Measured against the live Supabase Ireland backend:
+
+- Mid-run events (`run_started`, `fit_computed`, `tailor_completed`,
+  `placeholder_fill_choice`): ~30ms per call (write-only, imperceptible).
+- Terminal events: ~500ms (flushes the batch in one round-trip).
+
+A typical full run costs ~1.6s of telemetry latency total, concentrated at
+Phase 0 end and Phase 9 end where a half-second pause reads as "saving"
+rather than "why is this hanging."
+
+If the student kills the process mid-run before a terminal event fires,
+queued mid-run events sit in the JSONL file and ship on the next run via
+cursor-based catch-up. "Best of our abilities" — no shutdown hooks across
+three host CLIs.
 
 ### Run correlation
 

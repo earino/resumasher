@@ -6,7 +6,22 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
-Nothing queued.
+### Added
+
+- **Opt-in usage analytics** ([#2](https://github.com/earino/resumasher/issues/2)). Three-tier consent (off / anonymous / community), default off, active opt-in only. Students can change anytime via `resumasher telemetry set-tier <off|anonymous|community>`. Backend is Supabase in the Ireland region (eu-west-1), free tier. Nothing sent unless the student opts in during first-run setup.
+- **Eight instrumented pipeline events**: `first_run_setup_completed`, `run_started`, `fit_computed`, `tailor_completed`, `placeholder_fill_choice`, `run_completed`, `run_failed`, `rerender_used`. Events correlate via a per-run UUID so the maintainer can see "this run hit X then Y then failed at Z" instead of orphan signals. Mid-run events write to local JSONL only; terminal events batch-flush in a single HTTP round-trip (~500ms at end of run, imperceptible inside a multi-minute pipeline).
+- **Right-to-access and right-to-erasure CLI.** `resumasher telemetry export` dumps the local JSONL to stdout so students can see exactly what's been logged. `resumasher telemetry delete` POSTs the right-to-erasure endpoint AND wipes local state (JSONL, cursor, installation ID). Returns a count so the student can verify.
+- **GDPR-compliant `PRIVACY.md`** at repo root. Lists every field that gets sent and every field that does NOT get sent (no resume content, no JD text, no names, no GitHub usernames, no email addresses). Explicit on retention (90-day events, 180-day installations), data region (EU/Ireland), and data controller. Sensitive-employer guidance.
+- **Fit-analyst emits structured sentinels.** In addition to the existing `FIT_SCORE:` and `COMPANY:`, the fit-analyst prompt now emits `ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, and `RECOMMENDATION:` on their own lines. Seniority is classified LLM-side in any language (German "Leitender Entwickler" → senior, Japanese シニア → senior, Spanish "Jefe de Datos" → manager). Edge function only validates the emitted value against an enum whitelist — no English-only regex.
+- **`scripts/orchestration.py` extractor subcommands.** `extract-role`, `extract-seniority`, `extract-strengths-count`, `extract-gaps-count`, `extract-recommendation` each mirror the existing extract-fit-score pattern.
+- **`pg_cron` retention job.** Events older than 90 days and installations with no activity for 180 days are deleted daily at 03:00 UTC. Runs inside Supabase — no external scheduler needed. Aggregate dashboard views survive retention.
+- **`supabase/` source of truth.** Seven applied migrations + both edge functions + public config committed to the repo so the backend state is auditable.
+
+### Security
+
+- **RLS locked down to deny-all for the anon role** on both `telemetry_events` and `installations`. The edge functions use `SUPABASE_SERVICE_ROLE_KEY` internally to bypass RLS for validated writes; the anon key is purely a gateway ticket for `verify_jwt`. Students (and anyone with the public anon key) cannot read, insert, update, or delete directly via the REST API. Verified end-to-end: direct `POST /rest/v1/telemetry_events` with the anon key returns `42501 permission denied`.
+- **Views recreated with `security_invoker=true`** so aggregate views respect the caller's RLS instead of running as their owner. Belt-and-suspenders over the existing `REVOKE SELECT FROM anon`.
+- **`run_telemetry_retention()` has a pinned `search_path`** (`public, pg_catalog`) to close the Postgres "mutable search path" advisory-linter finding.
 
 ## [0.1.0] — 2026-04-18
 
