@@ -6,7 +6,9 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
-Nothing queued.
+### Added
+
+- **Non-English resume filenames** ([#3](https://github.com/earino/resumasher/issues/3)). A student whose resume is saved as `Lebenslauf.md`, `curriculum.md`, `cv_francais.md`, `履歴書.md`, `简历.md`, or `my_resume_final_v3.md` no longer hits "FAILURE: no resume found" as a terminal error. When `discover-resume` misses, the skill falls through to asking the student "what's the filename?" via the cross-host question tool and validates the answer with a new `validate-resume-path` subcommand. Handles CJK characters, spaces, absolute paths, and subdirectory paths. Up to 3 re-ask attempts before giving up. No filename-list expansion, no directory scan, no LLM classification — one prompt.
 
 ## [0.2.0] — 2026-04-19
 

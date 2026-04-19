@@ -113,6 +113,69 @@ def discover_resume(cwd: Path) -> Optional[Path]:
     return None
 
 
+ACCEPTED_RESUME_EXTENSIONS = frozenset({".md", ".markdown", ".pdf"})
+
+
+def validate_resume_path(cwd: Path, filename: str) -> tuple[Optional[Path], Optional[str]]:
+    """
+    Validate a student-provided resume filename and return (abs_path, None) if
+    acceptable, or (None, error_message) otherwise.
+
+    Used as the fallback when `discover_resume` returns None (e.g., the
+    student's file is named `Lebenslauf.md`, `履歴書.md`, `my_resume_v3.md`,
+    or anything else not in RESUME_CANDIDATES). The SKILL.md orchestrator
+    asks the student "what's the filename?" via the cross-host question tool
+    and feeds the response through this validator.
+
+    Accepts:
+    - A relative path (resolved against `cwd`).
+    - An absolute path (used as-is).
+    - Any Unicode filename including CJK characters, spaces, and hyphens.
+    - Extensions .md / .markdown / .pdf (case-insensitive).
+
+    Rejects:
+    - Files that don't exist.
+    - Files with unsupported extensions (.docx, .txt, .rtf, etc).
+    - Directories (even if the name looks like a resume).
+    - Paths the current process can't read.
+    """
+    if not filename or not filename.strip():
+        return None, "filename is empty"
+
+    filename = filename.strip()
+    # Accept both relative-to-cwd and absolute paths.
+    candidate = Path(filename) if Path(filename).is_absolute() else (cwd / filename)
+
+    # Resolve symlinks + ".." segments; works even if the file doesn't exist yet.
+    # (Path.resolve(strict=False) was added in 3.6; we target 3.10+.)
+    try:
+        candidate = candidate.resolve()
+    except (OSError, RuntimeError):
+        return None, f"could not resolve path: {filename}"
+
+    if not candidate.exists():
+        return None, f"file does not exist: {candidate}"
+    if not candidate.is_file():
+        return None, f"not a regular file (directory or special): {candidate}"
+
+    ext = candidate.suffix.lower()
+    if ext not in ACCEPTED_RESUME_EXTENSIONS:
+        accepted = ", ".join(sorted(ACCEPTED_RESUME_EXTENSIONS))
+        return None, (
+            f"unsupported extension {ext or '(none)'}: {candidate}. "
+            f"Accepted: {accepted}"
+        )
+
+    try:
+        # Probe readability without loading the whole file.
+        with candidate.open("rb") as f:
+            f.read(1)
+    except OSError as exc:
+        return None, f"file is not readable: {candidate} ({exc})"
+
+    return candidate, None
+
+
 # ---------------------------------------------------------------------------
 # 3. read file with encoding detection (chardet fallback to utf-8-sig / utf-8)
 # ---------------------------------------------------------------------------
@@ -662,6 +725,10 @@ def _cli() -> int:
     p = sub.add_parser("discover-resume")
     p.add_argument("cwd", nargs="?", default=".")
 
+    p = sub.add_parser("validate-resume-path")
+    p.add_argument("cwd")
+    p.add_argument("filename")
+
     p = sub.add_parser("folder-state-hash")
     p.add_argument("cwd", nargs="?", default=".")
 
@@ -766,6 +833,14 @@ def _cli() -> int:
                 + ": "
                 + ", ".join(RESUME_CANDIDATES)
             )
+            return 1
+        print(str(path))
+        return 0
+
+    if args.command == "validate-resume-path":
+        path, err = validate_resume_path(Path(args.cwd), args.filename)
+        if err is not None:
+            print(f"FAILURE: {err}", file=sys.stderr)
             return 1
         print(str(path))
         return 0

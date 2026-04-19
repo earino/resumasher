@@ -30,6 +30,7 @@ from scripts.orchestration import (
     parse_job_source,
     read_config,
     read_resume,
+    validate_resume_path,
     write_config,
 )
 
@@ -110,6 +111,113 @@ def test_discover_resume_accepts_cv_pdf_variants(tmp_path: Path):
     (tmp_path / "CV.pdf").write_bytes(b"%PDF-1.4\n...")
     result = discover_resume(tmp_path)
     assert result is not None and result.name == "CV.pdf"
+
+
+# ---------------------------------------------------------------------------
+# validate_resume_path: fallback when discover_resume misses
+# ---------------------------------------------------------------------------
+# Added in v0.3 (issue #3) for non-English-filename students: Lebenslauf.md,
+# 履歴書.md, curriculum.md, my_resume_final_v3.md, etc. The SKILL.md orchestrator
+# asks the student "what's the filename?" via the cross-host question tool
+# and feeds the response through this validator.
+
+
+def test_discover_resume_unchanged_behavior_non_english(tmp_path: Path):
+    """Documentary: discover_resume still returns None for non-English names.
+    This is intentional — the fallback-and-ask logic lives in SKILL.md."""
+    (tmp_path / "Lebenslauf.md").write_text("# Bewerbung", encoding="utf-8")
+    assert discover_resume(tmp_path) is None
+
+
+def test_validate_resume_path_accepts_german_filename(tmp_path: Path):
+    (tmp_path / "Lebenslauf.md").write_text("# Bewerbung", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "Lebenslauf.md")
+    assert err is None
+    assert path is not None and path.name == "Lebenslauf.md"
+
+
+def test_validate_resume_path_accepts_cjk_filename(tmp_path: Path):
+    """CJK characters in filenames must round-trip cleanly."""
+    (tmp_path / "履歴書.md").write_text("# 職務経歴書", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "履歴書.md")
+    assert err is None
+    assert path is not None and path.name == "履歴書.md"
+
+
+def test_validate_resume_path_accepts_name_with_spaces(tmp_path: Path):
+    """my_resume_final_FINAL_v3.md is a real filename students pick."""
+    (tmp_path / "my resume final v3.md").write_text("# Me", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "my resume final v3.md")
+    assert err is None
+    assert path is not None and "my resume final v3.md" in str(path)
+
+
+def test_validate_resume_path_accepts_absolute_path(tmp_path: Path):
+    """A student can paste an absolute path instead of a relative filename."""
+    target = tmp_path / "Lebenslauf.md"
+    target.write_text("# Bewerbung", encoding="utf-8")
+    path, err = validate_resume_path(Path("/tmp"), str(target))
+    assert err is None
+    assert path == target.resolve()
+
+
+def test_validate_resume_path_rejects_nonexistent(tmp_path: Path):
+    path, err = validate_resume_path(tmp_path, "nonexistent.md")
+    assert path is None
+    assert err is not None and "does not exist" in err
+
+
+def test_validate_resume_path_rejects_wrong_extension(tmp_path: Path):
+    """A student typing `Lebenslauf.docx` gets a clear rejection."""
+    (tmp_path / "Lebenslauf.docx").write_text("garbage", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "Lebenslauf.docx")
+    assert path is None
+    assert err is not None and "unsupported extension" in err
+    # Error message should name the accepted extensions so the student knows
+    # what to rename to.
+    assert ".md" in err and ".pdf" in err
+
+
+def test_validate_resume_path_rejects_directory_masquerading_as_file(tmp_path: Path):
+    """A directory named `resume.md` is not a resume, even though the name matches."""
+    (tmp_path / "resume.md").mkdir()
+    path, err = validate_resume_path(tmp_path, "resume.md")
+    assert path is None
+    assert err is not None and "not a regular file" in err
+
+
+def test_validate_resume_path_accepts_subdirectory_paths(tmp_path: Path):
+    """Students who keep resumes under `./documents/resume.md` should still work."""
+    subdir = tmp_path / "documents"
+    subdir.mkdir()
+    target = subdir / "Lebenslauf.md"
+    target.write_text("# Bewerbung", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "documents/Lebenslauf.md")
+    assert err is None
+    assert path is not None and path.name == "Lebenslauf.md"
+
+
+def test_validate_resume_path_rejects_empty_filename(tmp_path: Path):
+    """An empty answer from the student should produce a clear error, not a crash."""
+    path, err = validate_resume_path(tmp_path, "")
+    assert path is None
+    assert err is not None and "empty" in err
+
+
+def test_validate_resume_path_accepts_markdown_extension(tmp_path: Path):
+    """The rarer `.markdown` extension is also valid (matches RESUME_CANDIDATES)."""
+    (tmp_path / "cv.markdown").write_text("# Me", encoding="utf-8")
+    path, err = validate_resume_path(tmp_path, "cv.markdown")
+    assert err is None
+    assert path is not None
+
+
+def test_validate_resume_path_accepts_uppercase_extension(tmp_path: Path):
+    """Extension matching is case-insensitive — `RESUME.PDF` is fine."""
+    (tmp_path / "RESUME.PDF").write_bytes(b"%PDF-1.4\n...")
+    path, err = validate_resume_path(tmp_path, "RESUME.PDF")
+    assert err is None
+    assert path is not None
 
 
 # ---------------------------------------------------------------------------
