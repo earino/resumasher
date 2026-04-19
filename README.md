@@ -1,8 +1,9 @@
 # resumasher
 
+[![CI](https://github.com/earino/resumasher/actions/workflows/ci.yml/badge.svg)](https://github.com/earino/resumasher/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/earino/resumasher/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 141 passing](https://img.shields.io/badge/tests-141%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
+[![Tests: 220 passing](https://img.shields.io/badge/tests-220%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
 resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, or **Google Gemini CLI**), reading your actual work to back every claim with concrete evidence.
 
@@ -354,13 +355,13 @@ Before opening a PR:
 - Fit-analyst emits structured sentinels (`ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, `RECOMMENDATION:`) with multilingual seniority classification (any language the LLM understands).
 
 **v0.3 (shaped by early user feedback):**
-- `--review` mode: step-by-step interactive rewriting for every bullet, not just placeholders
+- `--review` mode: step-by-step interactive rewriting for every bullet, not just placeholders ([#11](https://github.com/earino/resumasher/issues/11))
 - Final coherence pass flagging cross-document drift before PDF render ([#1](https://github.com/earino/resumasher/issues/1))
 - Non-English resume filename detection ([#3](https://github.com/earino/resumasher/issues/3))
-- GitHub Actions CI with automated PDF round-trip on every push
-- Incremental folder-mine cache invalidation
-- German / French JD translation pre-pass
-- Facts persistence: remember placeholder-fill answers across runs
+- GitHub Actions CI with automated PDF round-trip on every push ([#8](https://github.com/earino/resumasher/issues/8))
+- Incremental folder-mine cache invalidation ([#10](https://github.com/earino/resumasher/issues/10))
+- German / French JD translation pre-pass ([#7](https://github.com/earino/resumasher/issues/7))
+- Facts persistence: remember placeholder-fill answers across runs ([#9](https://github.com/earino/resumasher/issues/9))
 
 ## Contributing
 
