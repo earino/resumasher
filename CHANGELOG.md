@@ -6,6 +6,10 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
+Nothing queued.
+
+## [0.2.0] — 2026-04-19
+
 ### Added
 
 - **Opt-in usage analytics** ([#2](https://github.com/earino/resumasher/issues/2)). Three-tier consent (off / anonymous / community), default off, active opt-in only. Students can change anytime via `resumasher telemetry set-tier <off|anonymous|community>`. Backend is Supabase in the Ireland region (eu-west-1), free tier. Nothing sent unless the student opts in during first-run setup.
@@ -16,6 +20,24 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 - **`scripts/orchestration.py` extractor subcommands.** `extract-role`, `extract-seniority`, `extract-strengths-count`, `extract-gaps-count`, `extract-recommendation` each mirror the existing extract-fit-score pattern.
 - **`pg_cron` retention job.** Events older than 90 days and installations with no activity for 180 days are deleted daily at 03:00 UTC. Runs inside Supabase — no external scheduler needed. Aggregate dashboard views survive retention.
 - **`supabase/` source of truth.** Applied migrations + both edge functions + public config committed to the repo so the backend state is auditable.
+- **Host self-reporting (`--host`)** alongside model self-reporting. Codex CLI doesn't set env vars that bash can sniff, so the orchestrator passes `--host codex_cli` literally. Same pattern as `--model`. Resolution order: flag > RESUMASHER_HOST env > env-var sniff > "unknown". Result: 100% `host` field population across Claude Code / Codex / Gemini in live tests.
+- **Scope-matched state directory.** User-scope install (skill at `~/.claude/skills/...`) → state in `~/.resumasher/`. Project-scope install (skill at `<project>/.claude/skills/...`) → state in `<project>/.resumasher/`. Deleting the project actually cleans up the telemetry state. Auto-detected based on skill install path.
+- **Auto-detected `install_scope_path`.** Log script derives `user_home` vs `project_local` from the skill's install path — orchestrator doesn't have to pass it. Works across all three host conventions (`.claude`, `.codex`, `.gemini`).
+- **Per-(run_id, event_type) dedup** for terminal events (`run_started`, `run_completed`, `run_failed`). If an orchestrator retries a phase after a transient error, the second fire is suppressed silently. `placeholder_fill_choice` is intentionally exempt (fires N times per run).
+
+### Data philosophy
+
+- **Raw in, curated out.** The fit-analyst prompt asks the LLM for structured enums (`SENIORITY`, `RECOMMENDATION`); stronger models (Claude Opus, Gemini 2.5 Pro, GPT-5 Codex) comply reliably; weaker models (Haiku, `-mini`) paraphrase. Rather than null-out non-conforming values at ingest, the edge function now stores whatever the LLM emitted (lowercased + length-capped). Pipeline views downstream normalize via `CASE WHEN`. Event type is the only enum that stays validated because the schema shape depends on it.
+
+### Fixed during live multi-host testing
+
+- Phase 1 `mkdir -p .resumasher/run/` now happens BEFORE `jd.txt` is written (Gemini retry case).
+- `$RUN_DIR` re-derived at the start of every phase's telemetry block — shell state doesn't persist across Bash tool calls.
+- Empty `start-ts.txt` content now treated the same as a missing file (fall back to END_TS) so `duration_s` never ends up as a 56-year unix-epoch-sized value.
+- `count_placeholders()` in Phase 9 no longer doubles stdout on zero matches (replaced `|| echo 0` with `|| true`); the log script's `f_num` helper defensively takes the first whitespace-delimited token of any numeric input as a second layer of protection.
+- Consent prompt reorder: Off first (highlighted default), no "(Recommended)" label on Community — GDPR Article 7 says pre-selected yes + press-Enter is NOT valid consent.
+
+Eight commits of live-test refinements sit inside this release. Full list: `git log v0.1.0..v0.2.0 --oneline`.
 - **Model tracking.** Events now carry a `model` field (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`) so the maintainer can answer questions like "which model produces the highest fit scores" or "which model hits this bug most". Self-reported by the orchestrator LLM on every event. Migration 008 adds the column; edge function propagates it with a 40-char cap; `--model` flag added to `bin/resumasher-telemetry-log`. PRIVACY.md updated to disclose.
 - **Phase 9 underfill fixed.** `run_completed` now carries `used_multirole_format` alongside the existing tailor_completed event, so dashboards don't have to join events by `run_id` to see whether the multi-role rendering path was exercised.
 
