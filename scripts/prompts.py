@@ -131,6 +131,30 @@ Produce a prose fit assessment. Include:
 - On a line by itself: FIT_SCORE: N  (where N is an integer 0-10)
 - On a line by itself: COMPANY: <name of the employer, as written in the JD>
   (If you cannot confidently identify the employer, write: COMPANY: UNKNOWN)
+- On a line by itself: ROLE: <job title exactly as stated in the JD>
+  (If the title isn't in the JD, write: ROLE: UNKNOWN)
+- On a line by itself: SENIORITY: <one of: intern, junior, mid, senior, staff,
+  manager, director, vp, cxo, unknown>
+- On a line by itself: STRENGTHS_COUNT: <integer, number of specific-strengths bullets you listed>
+- On a line by itself: GAPS_COUNT: <integer, number of specific-gaps bullets you listed>
+- On a line by itself: RECOMMENDATION: <one of: yes, yes_with_caveats, no>
+
+SENIORITY classification guidance:
+- "Senior Software Engineer" -> senior
+- "Staff Data Scientist" / "Principal Engineer" -> staff
+- "Director of X" -> director
+- "VP of X" -> vp
+- "CTO" / "CEO" / "Chief X Officer" -> cxo
+- "Software Engineer II/III" / "Data Analyst" with no explicit senior modifier -> mid
+- "Junior X" / "Associate X" / "X I" -> junior
+- "Intern" / "Praktikant" / "Becario" and other language equivalents -> intern
+- Infer level from context in any language. German "Leitender Entwickler" = senior,
+  Spanish "Jefe de Datos" = manager, Japanese シニア = senior, etc.
+- If the title is genuinely unclassifiable (missing, or too ambiguous to call) -> unknown
+
+DO NOT default to "mid" when uncertain. "mid" is a positive claim about the role.
+"unknown" is the correct value when the title is ambiguous. Misclassifying as
+"mid" creates bad data downstream.
 
 Be honest. A 3/10 fit is a 3/10 fit. The student needs the truth, not a pep
 talk. If you would give this resume an 8/10 for a completely different role,

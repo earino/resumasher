@@ -323,6 +323,25 @@ Concrete question shapes. Every free-text question has EXACTLY 2 or more explici
      Other: username (e.g., earino) or profile URL (we'll strip the prefix)
    ```
 
+10. **Usage analytics consent** — this is the LAST question of first-run setup, before config.json is written:
+    ```
+    Question: "Help us improve resumasher?
+
+    resumasher is a research tool. With your permission we log anonymous usage
+    events so the maintainer can see what's breaking and what students actually
+    use. See PRIVACY.md for the full list of what's logged. Default is Off if
+    you don't choose."
+      A) Community (recommended). Helps most. Logs events + a random installation
+         ID so the maintainer can see 'this user is hitting the same bug repeatedly'.
+         No names, no resume content, no JD text.
+      B) Anonymous. Same events but no installation ID, runs cannot be correlated.
+      C) Off. Nothing is logged or sent. Tier can be changed later with
+         'resumasher telemetry set-tier <off|anonymous|community>'.
+    ```
+    Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or
+    `"community"`. **If the student presses Enter without actively choosing, treat
+    as `"off"` — under GDPR, ignored-prompt is not consent. Active opt-in only.**
+
 If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
 
 Write `.resumasher/config.json` with those values, then:
@@ -855,3 +874,178 @@ failed, with a concrete retry command for each failed artifact.
 
 `--style` always wins. If `--style us` is passed or config says `us`, the
 photo is suppressed regardless of `--photo` or config photo settings.
+
+---
+
+## Usage analytics (telemetry)
+
+If the student opted in during Phase 0 first-run setup, the orchestrator fires
+telemetry events at 8 pipeline boundaries. The `resumasher-telemetry-log`
+script is a no-op when `config.json` has `"telemetry": "off"` (which is the
+default), so it's safe to call unconditionally.
+
+**Do not block on telemetry.** The log script is `set -uo pipefail` (no `-e`),
+exits 0 on any internal error, and backgrounds the sync call. Telemetry
+failures must never surface to the student.
+
+### Run correlation
+
+At the start of Phase 1, generate a `run_id` (UUID v4) and save it so all
+events from the run share the same ID:
+
+```bash
+RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+mkdir -p "$STUDENT_CWD/.resumasher/run"
+echo "$RUN_ID" > "$STUDENT_CWD/.resumasher/run/run-id.txt"
+```
+
+Subsequent phases read `$STUDENT_CWD/.resumasher/run/run-id.txt` to get the
+run_id.
+
+### The 8 call-sites
+
+Resolve `$TEL` once per Bash tool call, just like `$RS`:
+
+```bash
+TEL="$RS_DIR/bin/resumasher-telemetry-log"
+```
+
+**Phase 0 (end) — first_run_setup_completed.** Fired right after config.json
+is written:
+
+```bash
+"$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
+  --setup-duration "$SETUP_DURATION_SECONDS" \
+  --setup-outcome completed \
+  --style "$STYLE" \
+  --photo-included "$PHOTO_INCLUDED" \
+  --github-configured "$GITHUB_CONFIGURED" \
+  --install-scope-path "$INSTALL_SCOPE"
+```
+
+`$INSTALL_SCOPE` is one of `user_home`, `project_local`, or `unknown` based on
+where the skill lives (inside `~/.claude/skills/` vs `<project>/.claude/skills/`).
+`$SETUP_DURATION_SECONDS` is time elapsed since the consent prompt started.
+
+**Phase 1 (start) — run_started.** Fired right after `parse-job-source` and
+`discover-resume` succeed:
+
+```bash
+"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --jd-source-mode "$JD_MODE" \
+  --resume-format "$RESUME_FORMAT"
+```
+
+`$JD_MODE` is the `mode` field from `parse-job-source` output (`file`, `url`,
+or `literal`). `$RESUME_FORMAT` is one of `resume_md`, `resume_pdf`, `cv_md`,
+`cv_pdf` based on the `discover-resume` filename.
+
+**Phase 3 (end) — fit_computed.** Fired after fit-assessment.md is written
+and the extract-* commands have pulled the structured fields:
+
+```bash
+FIT_SCORE=$("$RS" orchestration extract-fit-score < "$OUT_DIR/fit-assessment.md")
+COMPANY=$("$RS" orchestration extract-company < "$OUT_DIR/fit-assessment.md")
+ROLE=$("$RS" orchestration extract-role < "$OUT_DIR/fit-assessment.md")
+SENIORITY=$("$RS" orchestration extract-seniority < "$OUT_DIR/fit-assessment.md")
+STRENGTHS_COUNT=$("$RS" orchestration extract-strengths-count < "$OUT_DIR/fit-assessment.md")
+GAPS_COUNT=$("$RS" orchestration extract-gaps-count < "$OUT_DIR/fit-assessment.md")
+RECOMMENDATION=$("$RS" orchestration extract-recommendation < "$OUT_DIR/fit-assessment.md")
+
+"$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --fit-score "$FIT_SCORE" \
+  --fit-strengths-count "$STRENGTHS_COUNT" \
+  --fit-gaps-count "$GAPS_COUNT" \
+  --fit-recommendation "$RECOMMENDATION"
+```
+
+**Phase 5 (end) — tailor_completed.** Fired after tailored-resume.md is
+written:
+
+```bash
+NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null || echo 0)
+USED_MULTIROLE=$(grep -q 'sub-role\|- \*\*.*\*\* ·' "$OUT_DIR/tailored-resume.md" && echo true || echo false)
+
+"$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --num-placeholders "$NUM_PLACEHOLDERS" \
+  --used-multirole-format "$USED_MULTIROLE"
+```
+
+**Phase 7 (per placeholder) — placeholder_fill_choice.** Fired after EACH
+placeholder is resolved (once per student answer):
+
+```bash
+"$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --choice-type "$CHOICE"
+```
+
+`$CHOICE` is one of `specifics`, `soften`, `drop`.
+
+**Phase 9 (end) — run_completed.** Fired after all PDFs render and history
+is appended. Include all the fields from the fit event plus configuration:
+
+```bash
+DURATION=$(( $(date +%s) - $START_TS ))
+
+"$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --duration "$DURATION" \
+  --outcome success \
+  --company "$COMPANY" \
+  --job-title "$ROLE" \
+  --seniority "$SENIORITY" \
+  --fit-score "$FIT_SCORE" \
+  --fit-strengths-count "$STRENGTHS_COUNT" \
+  --fit-gaps-count "$GAPS_COUNT" \
+  --fit-recommendation "$RECOMMENDATION" \
+  --num-placeholders "$NUM_PLACEHOLDERS" \
+  --style "$STYLE" \
+  --photo-included "$PHOTO_INCLUDED" \
+  --github-configured "$GITHUB_CONFIGURED" \
+  --used-github-evidence "$USED_GITHUB_EVIDENCE" \
+  --used-folder-evidence true \
+  --github-repos-count "$GITHUB_REPOS_COUNT" \
+  --folder-files-count "$FOLDER_FILES_COUNT" \
+  --all-pdfs-rendered "$ALL_PDFS_RENDERED"
+```
+
+**Any phase (failure) — run_failed.** Fired from the hard-stop path of any
+phase. Include whatever fields are already known at that point:
+
+```bash
+"$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
+  --run-id "$RUN_ID" \
+  --duration "$DURATION" \
+  --failed-phase "$PHASE_NUMBER" \
+  --error-class "$ERROR_CLASS" \
+  ${COMPANY:+--company "$COMPANY"} \
+  ${ROLE:+--job-title "$ROLE"} \
+  ${SENIORITY:+--seniority "$SENIORITY"}
+```
+
+`$ERROR_CLASS` comes from a pre-declared enum: `no_resume`, `non_english_jd`,
+`folder_miner_failed`, `fit_analyst_failed`, `tailor_failed`, `pdf_render_failed`,
+`timeout`, `unknown`.
+
+**Re-render flow — rerender_used.** Fired when a student invokes the
+"re-render the PDF" shortcut from the "Re-rendering PDFs after manual edits"
+section:
+
+```bash
+"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --rerender-kind "$KIND"
+```
+
+`$KIND` is one of `resume`, `cover`, `prep`.
+
+### Field whitelist
+
+The edge function validates every event against a fixed schema and silently
+drops anything that doesn't match. Don't add new `--flag` values without
+also adding the matching column + whitelist entry to
+`supabase/migrations/001_telemetry.sql` and
+`supabase/functions/telemetry-ingest/index.ts`.

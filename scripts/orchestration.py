@@ -429,6 +429,18 @@ def mine_folder_context(
 _FIT_SCORE_RE = re.compile(r"FIT_SCORE:\s*(-?\d{1,2})\b", re.IGNORECASE)
 _COMPANY_RE = re.compile(r"^\s*COMPANY:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _FAILURE_RE = re.compile(r"^\s*FAILURE:\s*.+", re.IGNORECASE)
+_ROLE_RE = re.compile(r"^\s*ROLE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_SENIORITY_RE = re.compile(r"^\s*SENIORITY:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_STRENGTHS_COUNT_RE = re.compile(r"^\s*STRENGTHS_COUNT:\s*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
+_GAPS_COUNT_RE = re.compile(r"^\s*GAPS_COUNT:\s*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
+_RECOMMENDATION_RE = re.compile(r"^\s*RECOMMENDATION:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+
+VALID_SENIORITY = frozenset({
+    "intern", "junior", "mid", "senior", "staff",
+    "manager", "director", "vp", "cxo", "unknown",
+})
+
+VALID_RECOMMENDATION = frozenset({"yes", "yes_with_caveats", "no"})
 
 
 def extract_fit_score(prose: str) -> Optional[int]:
@@ -464,6 +476,77 @@ def is_failure_sentinel(prose: str) -> bool:
             continue
         return bool(_FAILURE_RE.match(stripped))
     return False
+
+
+def extract_role(prose: str) -> Optional[str]:
+    """Return the ROLE: value, stripped. Blank / UNKNOWN / missing -> None."""
+    match = _ROLE_RE.search(prose)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if not value or value.upper() == "UNKNOWN":
+        return None
+    return value
+
+
+def extract_seniority(prose: str) -> Optional[str]:
+    """Return the SENIORITY: value as a lowercase enum in VALID_SENIORITY.
+
+    The fit-analyst prompt guides the LLM to classify in ANY language (German
+    'Leitender Entwickler' -> senior, Japanese シニア -> senior, etc). Here
+    we only validate the emitted value against the enum whitelist. Unknown
+    -> None (so callers can distinguish "explicitly unknown" from "missing",
+    which matters for telemetry: we want to know when classification failed).
+    """
+    match = _SENIORITY_RE.search(prose)
+    if not match:
+        return None
+    value = match.group(1).strip().lower()
+    if value not in VALID_SENIORITY:
+        return None
+    if value == "unknown":
+        return None
+    return value
+
+
+def extract_strengths_count(prose: str) -> Optional[int]:
+    """Return the integer from STRENGTHS_COUNT: N, else None."""
+    match = _STRENGTHS_COUNT_RE.search(prose)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (ValueError, TypeError):
+        return None
+
+
+def extract_gaps_count(prose: str) -> Optional[int]:
+    """Return the integer from GAPS_COUNT: N, else None."""
+    match = _GAPS_COUNT_RE.search(prose)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (ValueError, TypeError):
+        return None
+
+
+def extract_recommendation(prose: str) -> Optional[str]:
+    """Return the RECOMMENDATION: value normalized to one of
+    {yes, yes_with_caveats, no} or None.
+
+    Accepts case variations ("Yes", "YES"), space-separated ("yes with
+    caveats"), and the hyphenated / underscored forms.
+    """
+    match = _RECOMMENDATION_RE.search(prose)
+    if not match:
+        return None
+    raw = match.group(1).strip().lower()
+    # Normalize punctuation between words to '_'
+    normalized = re.sub(r"[-\s]+", "_", raw)
+    if normalized in VALID_RECOMMENDATION:
+        return normalized
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +678,11 @@ def _cli() -> int:
 
     p = sub.add_parser("extract-fit-score")
     p = sub.add_parser("extract-company")
+    p = sub.add_parser("extract-role")
+    p = sub.add_parser("extract-seniority")
+    p = sub.add_parser("extract-strengths-count")
+    p = sub.add_parser("extract-gaps-count")
+    p = sub.add_parser("extract-recommendation")
     p = sub.add_parser("is-failure")
 
     p = sub.add_parser("append-history")
@@ -776,6 +864,51 @@ def _cli() -> int:
             print("")
             return 1
         print(company)
+        return 0
+
+    if args.command == "extract-role":
+        text = sys.stdin.read()
+        role = extract_role(text)
+        if role is None:
+            print("")
+            return 1
+        print(role)
+        return 0
+
+    if args.command == "extract-seniority":
+        text = sys.stdin.read()
+        seniority = extract_seniority(text)
+        if seniority is None:
+            print("")
+            return 1
+        print(seniority)
+        return 0
+
+    if args.command == "extract-strengths-count":
+        text = sys.stdin.read()
+        n = extract_strengths_count(text)
+        if n is None:
+            print("")
+            return 1
+        print(n)
+        return 0
+
+    if args.command == "extract-gaps-count":
+        text = sys.stdin.read()
+        n = extract_gaps_count(text)
+        if n is None:
+            print("")
+            return 1
+        print(n)
+        return 0
+
+    if args.command == "extract-recommendation":
+        text = sys.stdin.read()
+        rec = extract_recommendation(text)
+        if rec is None:
+            print("")
+            return 1
+        print(rec)
         return 0
 
     if args.command == "is-failure":

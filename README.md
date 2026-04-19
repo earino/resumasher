@@ -298,6 +298,25 @@ resumasher/
 └── requirements.txt
 ```
 
+## Usage analytics
+
+resumasher can optionally send anonymous usage data to help the maintainer see what's breaking and what students actually use. **Default is off.** You're asked once during first-run setup; change anytime with `resumasher telemetry set-tier <off|anonymous|community>`.
+
+Three tiers:
+
+- **Off** (default): nothing logged, nothing sent.
+- **Anonymous**: event data sent without an installation identifier. Individual runs cannot be correlated.
+- **Community**: same data plus a random UUID so the maintainer can see "one user is hitting this bug three times in a row" vs "three unrelated users".
+
+See [PRIVACY.md](PRIVACY.md) for the complete list of what's logged and what isn't. Highlights: no resume content, no JD text, no names, no GitHub usernames, no email addresses. Data is stored on Supabase in the Ireland region (eu-west-1) and retained for 90 days.
+
+```bash
+resumasher telemetry status             # Show tier, installation ID, log size
+resumasher telemetry export             # See everything that's been logged locally
+resumasher telemetry delete             # Wipe local data + backend data for your ID
+resumasher telemetry set-tier anonymous # Change tier
+```
+
 ## Development
 
 ```bash
