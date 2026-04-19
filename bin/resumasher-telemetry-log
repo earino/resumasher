@@ -271,16 +271,30 @@ LINE+='}'
 
 echo "$LINE" >> "$JSONL_FILE" 2>/dev/null || true
 
-# ─── Fire sync synchronously ─────────────────────────────────
-# Synchronous because a resumasher run takes minutes; the ~100-500ms per
-# event × 8-9 events of network latency is rounding error inside that. The
-# alternative (background the sync) meant events queued for 5 minutes
-# behind a rate gate could be lost if the student didn't run again, and
-# introduced a concurrency-duplicate bug that a lock file would only
-# partially fix. "Fire, wait, move on" is simpler and actually delivers.
-SYNC="$RESUMASHER_DIR/bin/resumasher-telemetry-sync"
-if [ -x "$SYNC" ]; then
-  "$SYNC" 2>/dev/null || true
-fi
+# ─── Sync only on terminal events ────────────────────────────
+# Measurement: syncing after EVERY event = ~515ms × 9 = ~4.6s per run
+# (9 separate HTTP round-trips, each with JWT validation + edge function
+# invocation). Syncing only at "terminal" events batches the queued events
+# into one POST: one round-trip covers everything, ~500-700ms total per run.
+#
+# Terminal events that trigger a flush:
+#   - first_run_setup_completed: end of Phase 0 setup (standalone event)
+#   - run_completed:             end of a successful pipeline run
+#   - run_failed:                end of a failed pipeline run
+#   - rerender_used:             end of a standalone rerender action
+#
+# Mid-run events (run_started, fit_computed, tailor_completed,
+# placeholder_fill_choice) only write to JSONL; the terminal event that
+# closes the run flushes them. If the student kills the process before a
+# terminal event fires, those mid-run events sit in JSONL and ship on
+# the next run (cursor-based sync catches them up). Best of our abilities.
+case "$EVENT_TYPE" in
+  first_run_setup_completed|run_completed|run_failed|rerender_used)
+    SYNC="$RESUMASHER_DIR/bin/resumasher-telemetry-sync"
+    if [ -x "$SYNC" ]; then
+      "$SYNC" 2>/dev/null || true
+    fi
+    ;;
+esac
 
 exit 0
