@@ -390,10 +390,20 @@ Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with
 
 ### Phase 1 — Intake
 
-Parse the job source:
+**Set up the run scratch directory FIRST** — every later step in this phase writes files into it, so it must exist before anything else runs:
+
+```bash
+RUN_DIR="$STUDENT_CWD/.resumasher/run"
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+```
+
+Parse the job source and save the JD text to `$RUN_DIR/jd.txt` (later phases — fit-analyst, tailor, cover-letter, interview-coach — read from that path):
 
 ```bash
 "$RS" orchestration parse-job-source "$JOB_SOURCE_ARG"
+# Persist the JD content to $RUN_DIR/jd.txt from the "content" field of the
+# returned JSON, OR, if mode=="url", after you've fetched the page text.
 ```
 
 This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."}`.
@@ -402,14 +412,13 @@ If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the e
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
-**Generate `$RUN_ID`, capture `$START_TS`, and fire telemetry (start of Phase 1).** Every event from this run shares the same UUID so the maintainer can trace "what did run X do":
+**Generate `$RUN_ID`, capture `$START_TS`, and fire telemetry (start of Phase 1).** Every event from this run shares the same UUID so the maintainer can trace "what did run X do". `$RUN_DIR` was created at the top of this phase; reuse it:
 
 ```bash
 RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
 START_TS=$(date +%s)
-mkdir -p "$STUDENT_CWD/.resumasher/run"
-echo "$RUN_ID" > "$STUDENT_CWD/.resumasher/run/run-id.txt"
-echo "$START_TS" > "$STUDENT_CWD/.resumasher/run/start-ts.txt"
+echo "$RUN_ID" > "$RUN_DIR/run-id.txt"
+echo "$START_TS" > "$RUN_DIR/start-ts.txt"
 
 "$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
   --model "$MODEL" \
