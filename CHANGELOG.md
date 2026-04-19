@@ -8,6 +8,45 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 Nothing queued.
 
+## [0.2.0] — 2026-04-19
+
+### Added
+
+- **Opt-in usage analytics** ([#2](https://github.com/earino/resumasher/issues/2)). Three-tier consent (off / anonymous / community), default off, active opt-in only. Students can change anytime via `resumasher telemetry set-tier <off|anonymous|community>`. Backend is Supabase in the Ireland region (eu-west-1), free tier. Nothing sent unless the student opts in during first-run setup.
+- **Eight instrumented pipeline events**: `first_run_setup_completed`, `run_started`, `fit_computed`, `tailor_completed`, `placeholder_fill_choice`, `run_completed`, `run_failed`, `rerender_used`. Events correlate via a per-run UUID so the maintainer can see "this run hit X then Y then failed at Z" instead of orphan signals. Mid-run events write to local JSONL only; terminal events batch-flush in a single HTTP round-trip (~500ms at end of run, imperceptible inside a multi-minute pipeline).
+- **Right-to-access and right-to-erasure CLI.** `resumasher telemetry export` dumps the local JSONL to stdout so students can see exactly what's been logged. `resumasher telemetry delete` POSTs the right-to-erasure endpoint AND wipes local state (JSONL, cursor, installation ID). Returns a count so the student can verify.
+- **GDPR-compliant `PRIVACY.md`** at repo root. Lists every field that gets sent and every field that does NOT get sent (no resume content, no JD text, no names, no GitHub usernames, no email addresses). Explicit on retention (90-day events, 180-day installations), data region (EU/Ireland), and data controller. Sensitive-employer guidance.
+- **Fit-analyst emits structured sentinels.** In addition to the existing `FIT_SCORE:` and `COMPANY:`, the fit-analyst prompt now emits `ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, and `RECOMMENDATION:` on their own lines. Seniority is classified LLM-side in any language (German "Leitender Entwickler" → senior, Japanese シニア → senior, Spanish "Jefe de Datos" → manager). Edge function only validates the emitted value against an enum whitelist — no English-only regex.
+- **`scripts/orchestration.py` extractor subcommands.** `extract-role`, `extract-seniority`, `extract-strengths-count`, `extract-gaps-count`, `extract-recommendation` each mirror the existing extract-fit-score pattern.
+- **`pg_cron` retention job.** Events older than 90 days and installations with no activity for 180 days are deleted daily at 03:00 UTC. Runs inside Supabase — no external scheduler needed. Aggregate dashboard views survive retention.
+- **`supabase/` source of truth.** Applied migrations + both edge functions + public config committed to the repo so the backend state is auditable.
+- **Host self-reporting (`--host`)** alongside model self-reporting. Codex CLI doesn't set env vars that bash can sniff, so the orchestrator passes `--host codex_cli` literally. Same pattern as `--model`. Resolution order: flag > RESUMASHER_HOST env > env-var sniff > "unknown". Result: 100% `host` field population across Claude Code / Codex / Gemini in live tests.
+- **Scope-matched state directory.** User-scope install (skill at `~/.claude/skills/...`) → state in `~/.resumasher/`. Project-scope install (skill at `<project>/.claude/skills/...`) → state in `<project>/.resumasher/`. Deleting the project actually cleans up the telemetry state. Auto-detected based on skill install path.
+- **Auto-detected `install_scope_path`.** Log script derives `user_home` vs `project_local` from the skill's install path — orchestrator doesn't have to pass it. Works across all three host conventions (`.claude`, `.codex`, `.gemini`).
+- **Per-(run_id, event_type) dedup** for terminal events (`run_started`, `run_completed`, `run_failed`). If an orchestrator retries a phase after a transient error, the second fire is suppressed silently. `placeholder_fill_choice` is intentionally exempt (fires N times per run).
+
+### Data philosophy
+
+- **Raw in, curated out.** The fit-analyst prompt asks the LLM for structured enums (`SENIORITY`, `RECOMMENDATION`); stronger models (Claude Opus, Gemini 2.5 Pro, GPT-5 Codex) comply reliably; weaker models (Haiku, `-mini`) paraphrase. Rather than null-out non-conforming values at ingest, the edge function now stores whatever the LLM emitted (lowercased + length-capped). Pipeline views downstream normalize via `CASE WHEN`. Event type is the only enum that stays validated because the schema shape depends on it.
+
+### Fixed during live multi-host testing
+
+- Phase 1 `mkdir -p .resumasher/run/` now happens BEFORE `jd.txt` is written (Gemini retry case).
+- `$RUN_DIR` re-derived at the start of every phase's telemetry block — shell state doesn't persist across Bash tool calls.
+- Empty `start-ts.txt` content now treated the same as a missing file (fall back to END_TS) so `duration_s` never ends up as a 56-year unix-epoch-sized value.
+- `count_placeholders()` in Phase 9 no longer doubles stdout on zero matches (replaced `|| echo 0` with `|| true`); the log script's `f_num` helper defensively takes the first whitespace-delimited token of any numeric input as a second layer of protection.
+- Consent prompt reorder: Off first (highlighted default), no "(Recommended)" label on Community — GDPR Article 7 says pre-selected yes + press-Enter is NOT valid consent.
+
+Eight commits of live-test refinements sit inside this release. Full list: `git log v0.1.0..v0.2.0 --oneline`.
+- **Model tracking.** Events now carry a `model` field (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`) so the maintainer can answer questions like "which model produces the highest fit scores" or "which model hits this bug most". Self-reported by the orchestrator LLM on every event. Migration 008 adds the column; edge function propagates it with a 40-char cap; `--model` flag added to `bin/resumasher-telemetry-log`. PRIVACY.md updated to disclose.
+- **Phase 9 underfill fixed.** `run_completed` now carries `used_multirole_format` alongside the existing tailor_completed event, so dashboards don't have to join events by `run_id` to see whether the multi-role rendering path was exercised.
+
+### Security
+
+- **RLS locked down to deny-all for the anon role** on both `telemetry_events` and `installations`. The edge functions use `SUPABASE_SERVICE_ROLE_KEY` internally to bypass RLS for validated writes; the anon key is purely a gateway ticket for `verify_jwt`. Students (and anyone with the public anon key) cannot read, insert, update, or delete directly via the REST API. Verified end-to-end: direct `POST /rest/v1/telemetry_events` with the anon key returns `42501 permission denied`.
+- **Views recreated with `security_invoker=true`** so aggregate views respect the caller's RLS instead of running as their owner. Belt-and-suspenders over the existing `REVOKE SELECT FROM anon`.
+- **`run_telemetry_retention()` has a pinned `search_path`** (`public, pg_catalog`) to close the Postgres "mutable search path" advisory-linter finding.
+
 ## [0.1.0] — 2026-04-18
 
 First public release. Built in a single design-through-ship session; the CHANGELOG below bundles every meaningful change that landed between the initial commit and the first student-ready state.

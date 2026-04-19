@@ -131,7 +131,7 @@ Three input forms, all work:
 
 ### First-run setup (one time per folder)
 
-The first time you run `/resumasher` in a folder, it asks for your contact info, default resume style (EU or US), and whether to include a photo by default. Short one-time setup. Everything is stored locally in `.resumasher/config.json`. Nothing is uploaded.
+The first time you run `/resumasher` in a folder, it asks for your contact info, default resume style (EU or US), whether to include a photo by default, and (last question) whether to opt into anonymous usage analytics. Short one-time setup. Your contact info and application history are stored locally in `.resumasher/` — never uploaded. The analytics tier defaults to off; if you opt in, see [PRIVACY.md](PRIVACY.md) for exactly what gets sent and what doesn't.
 
 ### Accepted resume formats
 
@@ -298,6 +298,25 @@ resumasher/
 └── requirements.txt
 ```
 
+## Usage analytics
+
+resumasher can optionally send anonymous usage data to help the maintainer see what's breaking and what students actually use. **Default is off.** You're asked once during first-run setup; change anytime with `resumasher telemetry set-tier <off|anonymous|community>`.
+
+Three tiers:
+
+- **Off** (default): nothing logged, nothing sent.
+- **Anonymous**: event data sent without an installation identifier. Individual runs cannot be correlated.
+- **Community**: same data plus a random UUID so the maintainer can see "one user is hitting this bug three times in a row" vs "three unrelated users".
+
+See [PRIVACY.md](PRIVACY.md) for the complete list of what's logged and what isn't. Highlights: no resume content, no JD text, no names, no GitHub usernames, no email addresses. Data is stored on Supabase in the Ireland region (eu-west-1) and retained for 90 days.
+
+```bash
+resumasher telemetry status             # Show tier, installation ID, log size
+resumasher telemetry export             # See everything that's been logged locally
+resumasher telemetry delete             # Wipe local data + backend data for your ID
+resumasher telemetry set-tier anonymous # Change tier
+```
+
 ## Development
 
 ```bash
@@ -330,9 +349,14 @@ Before opening a PR:
 - Local application history log (`.resumasher/history.jsonl`)
 - Runs on Claude Code, OpenAI Codex CLI, and Google Gemini CLI
 
-**v0.2 (shaped by early user feedback):**
+**v0.2 (shipped):**
+- Opt-in usage analytics with three-tier consent (off / anonymous / community), default off, GDPR-compliant ([#2](https://github.com/earino/resumasher/issues/2)). Supabase backend in Ireland. Student-facing CLI: `resumasher telemetry status / export / delete / set-tier`. Full detail in [PRIVACY.md](PRIVACY.md).
+- Fit-analyst emits structured sentinels (`ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, `RECOMMENDATION:`) with multilingual seniority classification (any language the LLM understands).
+
+**v0.3 (shaped by early user feedback):**
 - `--review` mode: step-by-step interactive rewriting for every bullet, not just placeholders
 - Final coherence pass flagging cross-document drift before PDF render ([#1](https://github.com/earino/resumasher/issues/1))
+- Non-English resume filename detection ([#3](https://github.com/earino/resumasher/issues/3))
 - GitHub Actions CI with automated PDF round-trip on every push
 - Incremental folder-mine cache invalidation
 - German / French JD translation pre-pass
