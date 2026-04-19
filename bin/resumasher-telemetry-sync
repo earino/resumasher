@@ -33,11 +33,17 @@ KEY="${RESUMASHER_SUPABASE_ANON_KEY:-}"
 [ -z "$KEY" ] && exit 0
 [ -f "$JSONL_FILE" ] || exit 0
 
-# Rate limit: once per 5 minutes
+# Rate limit + concurrency guard: once per 5 minutes.
+# Touch the rate file BEFORE the work so concurrent invocations (e.g.,
+# multiple events fired in quick succession by the same orchestrator,
+# each backgrounding its own sync) hit the rate gate immediately and
+# exit instead of all duplicating the same POST.
 if [ -f "$RATE_FILE" ]; then
   FRESH="$(find "$RATE_FILE" -mmin +5 2>/dev/null || true)"
   [ -z "$FRESH" ] && exit 0
 fi
+mkdir -p "$ANALYTICS_DIR" 2>/dev/null
+touch "$RATE_FILE" 2>/dev/null || true
 
 # ─── Cursor ─────────────────────────────────────────────────
 CURSOR=0
@@ -109,6 +115,5 @@ case "$HTTP" in
 esac
 
 rm -f "$RESP" 2>/dev/null || true
-touch "$RATE_FILE" 2>/dev/null || true
 
 exit 0
