@@ -32,10 +32,15 @@ const VALID_EVENT_TYPES = new Set([
   "rerender_used",
 ]);
 
-const VALID_SENIORITY = new Set([
-  "intern", "junior", "mid", "senior", "staff",
-  "manager", "director", "vp", "cxo", "unknown"
-]);
+// Seniority is NOT enum-validated at ingest. The fit-analyst prompt asks the
+// LLM to emit one of (intern, junior, mid, senior, staff, manager, director,
+// vp, cxo, unknown) — stronger models comply, weaker ones (Haiku, mini
+// variants) paraphrase. Rejecting non-conforming values at ingest costs us
+// the raw signal ("Early-Career/Graduate" is meaningful even if it's not
+// in the enum). Pipeline views downstream normalize via CASE WHEN.
+//
+// Philosophy: raw in, curated out. The one exception is event_type, which
+// must stay enum-validated because the schema shape depends on it.
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return new Response("POST required", { status: 405 });
@@ -113,8 +118,9 @@ Deno.serve(async (req: Request) => {
         row.job_title_raw = String(e.job_title).toLowerCase().slice(0, 100);
       }
       if (e.seniority) {
-        const s = String(e.seniority).toLowerCase();
-        row.job_seniority = VALID_SENIORITY.has(s) ? s : null;
+        // Store whatever the LLM said, lowercased + length-capped. Pipeline
+        // does the bucket normalization downstream (see comment above).
+        row.job_seniority = String(e.seniority).toLowerCase().slice(0, 30);
       }
 
       rows.push(row);
