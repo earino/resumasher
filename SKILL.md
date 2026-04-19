@@ -453,19 +453,35 @@ If `$GITHUB_USER` is set (either from config or the flag), the mine phase mixes 
 Locate the resume:
 
 ```bash
-"$RS" orchestration discover-resume "$STUDENT_CWD"
+RESUME_PATH=$("$RS" orchestration discover-resume "$STUDENT_CWD")
 ```
 
 `discover-resume` looks for (in priority order): `resume.md`, `resume.markdown`, `cv.md`, `CV.md`, `resume.pdf`, `Resume.pdf`, `cv.pdf`, `CV.pdf`. Markdown is preferred because it's source-of-truth and diff-friendly; PDF works when the student only has a PDF export. If both a `.md` and a `.pdf` exist, the `.md` wins.
 
-If this exits with a `FAILURE: no resume found` message, halt the skill with:
+**If `$RESUME_PATH` is empty (discover-resume exited with `FAILURE: no resume found`):** the fast path missed. Don't halt — a student whose resume is named `Lebenslauf.md` (German), `curriculum.md` (Spanish), `履歴書.md` (Japanese), `my_resume_final_v3.md`, or anything else outside the canonical English filename list is still a valid user. Fall through to asking.
 
-> resumasher needs a resume to work with. Please add a `resume.md`, `cv.md`, or `resume.pdf` to this folder and try again. You can use the skill's GOLDEN_FIXTURES/resume.md as a template.
+Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) with:
 
-Otherwise: read the resume.
+> I couldn't find a resume with one of the default filenames (resume.md, cv.md, resume.pdf, etc.) in this folder. What's the filename? Examples: `Lebenslauf.md`, `履歴書.md`, `my_resume.pdf`.
+
+Validate the student's answer with the `validate-resume-path` subcommand:
 
 ```bash
-RESUME_PATH=$("$RS" orchestration discover-resume "$STUDENT_CWD")
+RESUME_PATH=$("$RS" orchestration validate-resume-path "$STUDENT_CWD" "$STUDENT_ANSWER")
+```
+
+- Exits 0 and prints the absolute path on success.
+- Exits 1 and prints `FAILURE: <reason>` to stderr on failure (file doesn't exist, wrong extension, is a directory, unreadable).
+
+If validation fails, re-ask the student with a clearer error — e.g., "That file (`notes.docx`) has an unsupported extension. resumasher accepts `.md`, `.markdown`, and `.pdf`. What's the actual filename?"
+
+Give the student up to 3 attempts. If all 3 fail, halt with:
+
+> resumasher needs a resume to work with. Please add a `.md`, `.markdown`, or `.pdf` file to this folder and try again. You can use the skill's GOLDEN_FIXTURES/resume.md as a template.
+
+Once `$RESUME_PATH` is set (either from discover-resume or from the validated fallback), read the resume:
+
+```bash
 "$RS" orchestration read-resume "$RESUME_PATH" > $RUN_DIR/resume.txt
 ```
 
