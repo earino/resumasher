@@ -8,6 +8,7 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ### Added
 
+- **Live community stats dashboard** at [earino.github.io/resumasher/stats](https://earino.github.io/resumasher/stats/). Aggregates from community-tier telemetry: runs/day, host distribution, model distribution, fit score histogram, seniority of targeted roles, placeholder fill choices, and failures by phase. Served as a static Jekyll page that `fetch`es a Supabase RPC function (`public.telemetry_stats()`, `SECURITY DEFINER`) via the public anon key. The function returns pre-aggregated JSON only — company names, job titles, installation IDs, and any free-text field are explicitly excluded at the curation boundary. No build step, no backend, no secrets in the browser; RLS still blocks direct table access. Linked from the site-wide footer colophon.
 - **Non-English resume filenames** ([#3](https://github.com/earino/resumasher/issues/3)). A student whose resume is saved as `Lebenslauf.md`, `curriculum.md`, `cv_francais.md`, `履歴書.md`, `简历.md`, or `my_resume_final_v3.md` no longer hits "FAILURE: no resume found" as a terminal error. When `discover-resume` misses, the skill falls through to asking the student "what's the filename?" via the cross-host question tool and validates the answer with a new `validate-resume-path` subcommand. Handles CJK characters, spaces, absolute paths, and subdirectory paths. Up to 3 re-ask attempts before giving up. No filename-list expansion, no directory scan, no LLM classification — one prompt.
 
 ## [0.2.0] — 2026-04-19
