@@ -321,7 +321,7 @@ resumasher telemetry set-tier anonymous # Change tier
 ## Development
 
 ```bash
-# Run the test suite (141 tests, ~2 seconds)
+# Run the test suite (220 tests, ~4 seconds)
 source .venv/bin/activate
 pytest tests/ -v
 
@@ -354,18 +354,21 @@ Before opening a PR:
 - Opt-in usage analytics with three-tier consent (off / anonymous / community), default off, GDPR-compliant ([#2](https://github.com/earino/resumasher/issues/2)). Supabase backend in Ireland. Student-facing CLI: `resumasher telemetry status / export / delete / set-tier`. Full detail in [PRIVACY.md](PRIVACY.md).
 - Fit-analyst emits structured sentinels (`ROLE:`, `SENIORITY:`, `STRENGTHS_COUNT:`, `GAPS_COUNT:`, `RECOMMENDATION:`) with multilingual seniority classification (any language the LLM understands).
 
-**v0.3 (shaped by early user feedback):**
+**v0.3 (shipped):**
+- Non-English resume filename detection ([#3](https://github.com/earino/resumasher/issues/3)). Students whose resume lives as `Lebenslauf.md`, `履歴書.md`, `cv_francais.md`, or `my_resume_final_v3.md` no longer hit a terminal "no resume found" error — when auto-discovery misses, the skill asks once and validates the answer.
+- GitHub Actions CI with PDF round-trip on every push ([#8](https://github.com/earino/resumasher/issues/8)). Full pytest suite (220 tests) runs on Python 3.10, 3.11, 3.12 on every push and PR. Failed runs upload the generated PDFs as debug artifacts.
+- Live community stats dashboard at [earino.github.io/resumasher/stats](https://earino.github.io/resumasher/stats/). Aggregate metrics from opt-in community telemetry: runs per day, host distribution, model mix, fit score histogram, failures by phase. No per-user data exposed.
+
+**Planned (shaped by early user feedback):**
 - `--review` mode: step-by-step interactive rewriting for every bullet, not just placeholders ([#11](https://github.com/earino/resumasher/issues/11))
 - Final coherence pass flagging cross-document drift before PDF render ([#1](https://github.com/earino/resumasher/issues/1))
-- Non-English resume filename detection ([#3](https://github.com/earino/resumasher/issues/3))
-- GitHub Actions CI with automated PDF round-trip on every push ([#8](https://github.com/earino/resumasher/issues/8))
 - Incremental folder-mine cache invalidation ([#10](https://github.com/earino/resumasher/issues/10))
 - German / French JD translation pre-pass ([#7](https://github.com/earino/resumasher/issues/7))
 - Facts persistence: remember placeholder-fill answers across runs ([#9](https://github.com/earino/resumasher/issues/9))
 
 ## Contributing
 
-PRs and issues welcome. v0.2 is explicitly shaped by feedback from early users: what surprised you, what looked wrong, what you wish the tool had caught. File anything that helped or bit you.
+PRs and issues welcome. resumasher is explicitly shaped by feedback from early users: what surprised you, what looked wrong, what you wish the tool had caught. File anything that helped or bit you.
 
 ## License
 

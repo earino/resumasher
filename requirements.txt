@@ -2,3 +2,7 @@ reportlab>=4.0.0
 pdfminer.six>=20221105
 chardet>=5.0.0
 nbconvert>=7.0.0
+# Pillow comes in transitively via reportlab, but we import PIL.Image
+# directly in scripts/render_pdf.py (photo downscale) and in the test
+# fixtures, so pin it explicitly.
+Pillow>=9.0.0

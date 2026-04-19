@@ -6,6 +6,8 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-19
+
 ### Added
 
 - **GitHub Actions CI** ([#8](https://github.com/earino/resumasher/issues/8)). `.github/workflows/ci.yml` runs the full pytest suite on every push and PR across Python 3.10 / 3.11 / 3.12, matching the README's "Python 3.10+" claim. Failed runs upload the generated golden-fixture PDFs as artifacts so regressions are debuggable without reproducing locally. `concurrency: cancel-in-progress` keeps the queue clean on force-push. Plus a new `tests/test_pdf_round_trip.py` with four integration tests against `GOLDEN_FIXTURES/resume.md`: EU/US round-trip, section-order positional check, bullet-attachment check, and a baseline <200KB size ceiling for the no-photo path (previously only enforced when photo downscaling fired).
@@ -28,6 +30,8 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 - **Scope-matched state directory.** User-scope install (skill at `~/.claude/skills/...`) → state in `~/.resumasher/`. Project-scope install (skill at `<project>/.claude/skills/...`) → state in `<project>/.resumasher/`. Deleting the project actually cleans up the telemetry state. Auto-detected based on skill install path.
 - **Auto-detected `install_scope_path`.** Log script derives `user_home` vs `project_local` from the skill's install path — orchestrator doesn't have to pass it. Works across all three host conventions (`.claude`, `.codex`, `.gemini`).
 - **Per-(run_id, event_type) dedup** for terminal events (`run_started`, `run_completed`, `run_failed`). If an orchestrator retries a phase after a transient error, the second fire is suppressed silently. `placeholder_fill_choice` is intentionally exempt (fires N times per run).
+- **Model tracking.** Events now carry a `model` field (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`) so the maintainer can answer questions like "which model produces the highest fit scores" or "which model hits this bug most". Self-reported by the orchestrator LLM on every event. Migration 008 adds the column; edge function propagates it with a 40-char cap; `--model` flag added to `bin/resumasher-telemetry-log`. PRIVACY.md updated to disclose.
+- **Phase 9 underfill fixed.** `run_completed` now carries `used_multirole_format` alongside the existing `tailor_completed` event, so dashboards don't have to join events by `run_id` to see whether the multi-role rendering path was exercised.
 
 ### Data philosophy
 
@@ -40,10 +44,6 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 - Empty `start-ts.txt` content now treated the same as a missing file (fall back to END_TS) so `duration_s` never ends up as a 56-year unix-epoch-sized value.
 - `count_placeholders()` in Phase 9 no longer doubles stdout on zero matches (replaced `|| echo 0` with `|| true`); the log script's `f_num` helper defensively takes the first whitespace-delimited token of any numeric input as a second layer of protection.
 - Consent prompt reorder: Off first (highlighted default), no "(Recommended)" label on Community — GDPR Article 7 says pre-selected yes + press-Enter is NOT valid consent.
-
-Eight commits of live-test refinements sit inside this release. Full list: `git log v0.1.0..v0.2.0 --oneline`.
-- **Model tracking.** Events now carry a `model` field (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`) so the maintainer can answer questions like "which model produces the highest fit scores" or "which model hits this bug most". Self-reported by the orchestrator LLM on every event. Migration 008 adds the column; edge function propagates it with a 40-char cap; `--model` flag added to `bin/resumasher-telemetry-log`. PRIVACY.md updated to disclose.
-- **Phase 9 underfill fixed.** `run_completed` now carries `used_multirole_format` alongside the existing tailor_completed event, so dashboards don't have to join events by `run_id` to see whether the multi-role rendering path was exercised.
 
 ### Security
 

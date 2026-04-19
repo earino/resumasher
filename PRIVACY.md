@@ -78,6 +78,27 @@ Events older than **90 days** are deleted automatically. Installation
 records with no recent events for **180 days** are deleted. Aggregate
 dashboard views survive retention (they are counts, not individual rows).
 
+## Public aggregates
+
+A curated subset of community-tier data is published publicly at
+[earino.github.io/resumasher/stats](https://earino.github.io/resumasher/stats/).
+The page shows counts only: runs per day, host distribution (Claude
+Code / Codex / Gemini), model mix, fit score histogram, seniority
+buckets, placeholder fill mix, and failures by phase.
+
+Every number is produced by a `SECURITY DEFINER` Postgres function
+(`public.telemetry_stats()` in `supabase/migrations/009_`) that runs
+inside the backend and returns pre-aggregated JSON. The function never
+exposes `company_normalized`, `job_title_raw`, `installation_id`,
+`run_id`, or any free-text field. Row-level security still blocks
+direct table reads by the browser; the function is the only path
+anonymous callers have to any aggregate view.
+
+If you opt into community tier, your runs contribute to these counts.
+If you want your data erased, `resumasher telemetry delete` wipes every
+row tied to your installation ID from both tables before the next
+aggregation window.
+
 ## Your rights under GDPR
 
 - **Access.** Run `resumasher telemetry export` to see every event that

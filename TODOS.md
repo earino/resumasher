@@ -26,7 +26,7 @@ Deferred work captured during development. When picking something up, read the f
 
 ### Validate path containment in `parse_job_source`
 
-**What.** In `scripts/orchestration.py:74`, resolve `candidate.resolve()` and assert `candidate.relative_to(cwd.resolve())` succeeds before reading the file. If the path escapes CWD, fall through to literal mode (treat `arg` as pasted JD text, not a file path).
+**What.** In `scripts/orchestration.py:72`, resolve `candidate.resolve()` and assert `candidate.relative_to(cwd.resolve())` succeeds before reading the file. If the path escapes CWD, fall through to literal mode (treat `arg` as pasted JD text, not a file path).
 
 **Why.** Defense in depth against a prompt-injection chain. Current code reads any file the student's OS user can access, including `~/.ssh/id_rsa` or `/etc/passwd`, if `arg` resolves to one. A prompt-injected Claude session could invoke `/resumasher ../../../.ssh/id_rsa` and the SSH key becomes "JD content" flowing to every sub-agent and on-disk output files.
 
