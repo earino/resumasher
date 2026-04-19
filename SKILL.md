@@ -69,13 +69,17 @@ if [ -z "$SKILL_ROOT" ]; then
   exit 1
 fi
 RS="$SKILL_ROOT/bin/resumasher-exec"
+TEL="$SKILL_ROOT/bin/resumasher-telemetry-log"
 STUDENT_CWD="$PWD"
 ```
 
 This sets:
 - `SKILL_ROOT` — absolute path to the installed skill (user-scope OR project-scope).
 - `RS` — absolute path to the `bin/resumasher-exec` wrapper that auto-locates the venv Python and the right script.
+- `TEL` — absolute path to `bin/resumasher-telemetry-log`, the no-op-when-tier-off event logger called at 8 pipeline boundaries below.
 - `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
+
+**Telemetry model identifier (`$MODEL`).** Many `"$TEL"` calls below pass `--model "$MODEL"`. `$MODEL` is NOT a shell variable the prologue sets — it's a string you (the AI orchestrator LLM) substitute literally with your own model identifier before executing the command. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit the `--model` flag; null is better than fabricated. This is self-reported because bash doesn't have a clean way to detect which LLM is driving it across three host CLIs.
 
 The check distinguishes three failure modes:
 - **SKILL_ROOT set, success** — everything good, proceed.
@@ -362,6 +366,20 @@ Write `.resumasher/config.json` with those values, then:
 
 (Idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
 
+**Fire telemetry (end of Phase 0).** If the student opted into `anonymous` or `community` this call logs a `first_run_setup_completed` event and syncs to the backend; if they chose `off` the script exits 0 without writing anything. Either way, run it unconditionally — the script reads the tier from `config.json` and decides:
+
+```bash
+"$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --setup-outcome completed \
+  --style "$STYLE" \
+  --photo-included "$PHOTO_INCLUDED" \
+  --github-configured "$GITHUB_CONFIGURED" \
+  --install-scope-path user_home
+```
+
+Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with "true" or "false", `$GITHUB_CONFIGURED` with "true" or "false" depending on whether `github_username` is set. For `$MODEL` substitute your own model identifier literally (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`). The script never exits non-zero; its failures are silent so the student never sees telemetry errors.
+
 ---
 
 ### Phase 1 — Intake
@@ -377,6 +395,24 @@ This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."
 If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to paste the JD text manually, then treat the response as `mode: "literal"`.
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
+
+**Generate `$RUN_ID`, capture `$START_TS`, and fire telemetry (start of Phase 1).** Every event from this run shares the same UUID so the maintainer can trace "what did run X do":
+
+```bash
+RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
+START_TS=$(date +%s)
+mkdir -p "$STUDENT_CWD/.resumasher/run"
+echo "$RUN_ID" > "$STUDENT_CWD/.resumasher/run/run-id.txt"
+echo "$START_TS" > "$STUDENT_CWD/.resumasher/run/start-ts.txt"
+
+"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --jd-source-mode "$JD_MODE" \
+  --resume-format "$RESUME_FORMAT"
+```
+
+Substitute `$JD_MODE` with the `mode` field from `parse-job-source` output (`file`, `url`, or `literal`). Substitute `$RESUME_FORMAT` with one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned. Substitute `$MODEL` as described in the prologue.
 
 ---
 
@@ -478,14 +514,32 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-Parse the output:
+Parse the output (the fit-analyst emits more than just fit_score/company — ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION — extract them all for telemetry and downstream phases):
 
 ```bash
 FIT_SCORE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-score)
 COMPANY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-company)
+ROLE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-role)
+SENIORITY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-seniority)
+STRENGTHS_COUNT=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-strengths-count)
+GAPS_COUNT=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-gaps-count)
+RECOMMENDATION=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-recommendation)
 ```
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
+
+**Fire telemetry (end of Phase 3).** After fit-assessment.md is written and extractors have run:
+
+```bash
+RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+"$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --fit-score "$FIT_SCORE" \
+  --fit-strengths-count "$STRENGTHS_COUNT" \
+  --fit-gaps-count "$GAPS_COUNT" \
+  --fit-recommendation "$RECOMMENDATION"
+```
 
 Compute the output directory:
 
@@ -535,6 +589,20 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt
 Save the output to `$OUT_DIR/tailored-resume.md`.
 
 **Retry budget:** tailor gets 1 retry. If the retry also fails, hard-stop (the tailored resume is the core deliverable — a stub isn't acceptable).
+
+**Fire telemetry (end of Phase 5).** After tailored-resume.md is written:
+
+```bash
+RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null || echo 0)
+USED_MULTIROLE=$(grep -q 'sub-role\|· \*\*' "$OUT_DIR/tailored-resume.md" 2>/dev/null && echo true || echo false)
+
+"$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --num-placeholders "$NUM_PLACEHOLDERS" \
+  --used-multirole-format "$USED_MULTIROLE"
+```
 
 ---
 
@@ -619,6 +687,16 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
    - **Soften**: replace the whole line with the content of the `<!--SOFT: ... -->` comment, stripped of the comment markers.
    - **Drop**: delete the entire bullet line.
    - **Other (student provided specifics)**: mechanically substitute each placeholder token with the value the student provided. If the student pasted free-form prose like "team of 8 in Measurement Infra" rather than field=value pairs, use your own judgment to substitute grammatically — but do NOT invent any values not in the student's response.
+
+   **Fire telemetry after each placeholder is resolved** (one call per placeholder). `$CHOICE` is one of `specifics`, `soften`, or `drop`:
+
+   ```bash
+   RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+   "$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
+     --model "$MODEL" \
+     --run-id "$RUN_ID" \
+     --choice-type "$CHOICE"
+   ```
 
 5. After processing all placeholders, re-grep to verify none remain:
    ```bash
@@ -717,6 +795,51 @@ PH_COVER=$(count_placeholders "$OUT_DIR/cover-letter.md")
 PH_PREP=$(count_placeholders "$OUT_DIR/interview-prep.md")
 ```
 
+**Fire telemetry (end of Phase 9, terminal flush).** This is the `run_completed` event — it triggers the actual HTTP sync that flushes every mid-run event queued locally during this run:
+
+```bash
+RUN_ID=$(cat "$STUDENT_CWD/.resumasher/run/run-id.txt")
+END_TS=$(date +%s)
+# Read $START_TS from disk (captured at Phase 1 start). Shell state doesn't
+# persist across Bash tool calls, so we re-read from the saved file.
+START_TS=$(cat "$STUDENT_CWD/.resumasher/run/start-ts.txt" 2>/dev/null || echo "$END_TS")
+DURATION=$(( END_TS - START_TS ))
+STYLE_CHOSEN=$(jq -r '.default_style // "us"' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
+PHOTO_INCLUDED=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
+GITHUB_CONFIGURED=$(jq -r '(.github_username // "") != ""' "$STUDENT_CWD/.resumasher/config.json" 2>/dev/null)
+
+"$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --duration "$DURATION" \
+  --outcome success \
+  --company "$COMPANY" \
+  --job-title "$ROLE" \
+  --seniority "$SENIORITY" \
+  --fit-score "$FIT_SCORE" \
+  --fit-strengths-count "$STRENGTHS_COUNT" \
+  --fit-gaps-count "$GAPS_COUNT" \
+  --fit-recommendation "$RECOMMENDATION" \
+  --num-placeholders "$PH_RESUME" \
+  --used-multirole-format "$USED_MULTIROLE" \
+  --style "$STYLE_CHOSEN" \
+  --photo-included "$PHOTO_INCLUDED" \
+  --github-configured "$GITHUB_CONFIGURED" \
+  --used-folder-evidence true \
+  --all-pdfs-rendered true
+```
+
+If any phase hard-stopped with an error before reaching Phase 9, fire `run_failed` instead with whatever fields you know at that point — `--error-class` is a pre-declared enum (`no_resume`, `non_english_jd`, `folder_miner_failed`, `fit_analyst_failed`, `tailor_failed`, `pdf_render_failed`, `timeout`, `unknown`):
+
+```bash
+"$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --duration "$DURATION" \
+  --failed-phase "$PHASE_NUMBER" \
+  --error-class "$ERROR_CLASS"
+```
+
 Print a 1-screen summary:
 
 ```
@@ -805,6 +928,7 @@ for c in \
   [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break
 done
 RS="$SKILL_ROOT/bin/resumasher-exec"
+TEL="$SKILL_ROOT/bin/resumasher-telemetry-log"
 STUDENT_CWD="$PWD"
 ```
 
@@ -855,6 +979,14 @@ For the **interview prep**:
   --input "$OUT_DIR/interview-prep.md" \
   --kind interview-prep \
   --output "$OUT_DIR/interview-prep.pdf"
+```
+
+**Fire telemetry after a re-render.** `$KIND` is one of `resume`, `cover`, `prep` depending on which file the student asked to re-render:
+
+```bash
+"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --model "$MODEL" \
+  --rerender-kind "$KIND"
 ```
 
 **Important constraints:**
