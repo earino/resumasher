@@ -3,7 +3,7 @@
 [![CI](https://github.com/earino/resumasher/actions/workflows/ci.yml/badge.svg)](https://github.com/earino/resumasher/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/earino/resumasher/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 220 passing](https://img.shields.io/badge/tests-220%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
+[![Tests: 233 passing](https://img.shields.io/badge/tests-233%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
 resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, or **Google Gemini CLI**), reading your actual work to back every claim with concrete evidence.
 
@@ -329,7 +329,7 @@ resumasher telemetry set-tier anonymous # Change tier
 ## Development
 
 ```bash
-# Run the test suite (220 tests, ~4 seconds)
+# Run the test suite (233 tests, ~4 seconds)
 source .venv/bin/activate
 pytest tests/ -v
 

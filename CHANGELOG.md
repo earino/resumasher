@@ -6,6 +6,10 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
+### Added
+
+- **Persist JD to application folder as `jd.md`** ([#15](https://github.com/earino/resumasher/issues/15)). The job description now lands in `applications/<slug>-<date>/jd.md` alongside the other artifacts, so students can re-read the exact wording of a requirement, open it next to `interview-prep.md`, or grab the source URL for a recruiter follow-up — weeks after the run, and even after the `.resumasher/run/` scratch directory has been wiped by subsequent runs. Done at Phase 3 (right after `mkdir -p "$OUT_DIR"`) rather than Phase 9, so the JD survives even if a later phase (tailor, PDF render) hard-stops. For URL-mode inputs, a `Source URL: <url>` header is prepended by a new `format-jd` orchestration subcommand at Phase 1, so the posting URL is preserved into `jd.md` even if the posting page is later taken down. File-mode and literal-mode inputs carry no URL (nothing to preserve). First v0.4 feature shaped by actual cohort feedback (h/t @b0glarka).
+
 ## [0.3.0] — 2026-04-19
 
 ### Added

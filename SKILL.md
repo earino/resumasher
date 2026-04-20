@@ -405,17 +405,26 @@ rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 ```
 
-Parse the job source and save the JD text to `$RUN_DIR/jd.txt` (later phases — fit-analyst, tailor, cover-letter, interview-coach — read from that path):
+Parse the job source and save the JD text to `$RUN_DIR/jd.txt` (later phases — fit-analyst, tailor, cover-letter, interview-coach — read from that path, and Phase 3 copies the file to `$OUT_DIR/jd.md` for the student's records):
 
 ```bash
 "$RS" orchestration parse-job-source "$JOB_SOURCE_ARG"
-# Persist the JD content to $RUN_DIR/jd.txt from the "content" field of the
-# returned JSON, OR, if mode=="url", after you've fetched the page text.
+# Returns JSON: {"mode": "file|url|literal", "path": "...", "content": "..."}
 ```
 
-This returns JSON: `{"mode": "file|url|literal", "path": "...", "content": "..."}`.
+Route the write through `format-jd` so the Source URL header is prepended for URL-mode inputs (matters for `applications/<slug>/jd.md`: students recovering an old run need the URL for recruiter follow-up even after the posting is taken down). Pass the content via stdin:
 
-If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to paste the JD text manually, then treat the response as `mode: "literal"`.
+```bash
+# mode=file or mode=literal — content comes straight from parse-job-source:
+echo -n "$CONTENT" | "$RS" orchestration format-jd --mode "$MODE" > "$RUN_DIR/jd.txt"
+
+# mode=url — fetch the page FIRST, then pipe the fetched text with --url set:
+echo -n "$FETCHED_PAGE_TEXT" | "$RS" orchestration format-jd --mode url --url "$URL" > "$RUN_DIR/jd.txt"
+```
+
+`format-jd` is a pure transform — it takes the raw content on stdin, prepends `Source URL: <url>\n\n` when `mode=url`, and emits the final bytes on stdout. File and literal modes pass through unchanged. If `--url` is omitted under `mode=url`, the prepend is skipped (defensive fallback — better to ship an un-headered JD than crash).
+
+If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to paste the JD text manually, then treat the response as `mode: "literal"` (no `--url` needed in the format-jd call since the student's paste has no URL).
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
@@ -589,7 +598,10 @@ SLUG=$("$RS" orchestration company-slug "$COMPANY")
 DATE=$(date +%Y%m%d)
 OUT_DIR="$STUDENT_CWD/applications/$SLUG-$DATE"
 mkdir -p "$OUT_DIR"
+cp "$RUN_DIR/jd.txt" "$OUT_DIR/jd.md"
 ```
+
+The `cp` persists the JD (with Source URL header for URL-mode inputs) into the application folder. `$RUN_DIR/jd.txt` gets wiped at the start of every new run, so without this copy the JD is lost as soon as the student runs resumasher against a different posting. Doing the copy at Phase 3 rather than Phase 9 means the JD survives even if a later phase (company research, tailor, PDF render) hard-stops.
 
 Print the fit score to the terminal: `Fit score: $FIT_SCORE/10. Full assessment saved to $OUT_DIR/fit-assessment.md.`
 
