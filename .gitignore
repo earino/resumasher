@@ -9,5 +9,6 @@ examples/
 .context/
 internal_notes/
 trace_comparison/
+pr*_samples/
 *.egg-info/
 .DS_Store
