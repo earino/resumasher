@@ -17,6 +17,9 @@ lives, so you can jump straight to the code.
 
 ## #1 — Missing contact header (no name on PDF)
 
+**Tracked in:** [#18](https://github.com/earino/resumasher/issues/18).
+
+
 **Symptom.** The rendered PDF has no name, no email, no phone, no LinkedIn.
 The first visible content is either the photo (EU style) or the "Summary"
 heading. An ATS cannot identify the candidate from this PDF.
@@ -55,6 +58,9 @@ test). Full original student-reported pair is kept locally at
 ---
 
 ## #2 — Orphaned bullets (bullets float to end of section)
+
+**Tracked in:** [#19](https://github.com/earino/resumasher/issues/19).
+
 
 **Symptom.** In sections with multiple projects/roles (Research Experience,
 Work Experience), all project titles appear stacked with no bullets under
@@ -174,6 +180,49 @@ img = Image(photo_source, width=w_cm * cm, height=h_cm * cm)
 
 **Reference repro.** `examples/sections_dropped/` (Jiaqi Pan — portrait
 photo rendered at 3cm × 3cm, visible horizontal stretch).
+
+---
+
+## #5 — Photo path not persisted to tailored markdown
+
+**Tracked in:** [#20](https://github.com/earino/resumasher/issues/20).
+
+**Symptom.** A student provides a photo via `--photo <path>` or config, and
+resumasher embeds it in `resume.pdf` correctly. But the source
+`tailored-resume.md` has no record of the photo — no image syntax, no path
+reference, no HTML comment. If the student later edits the markdown and
+re-renders (the SKILL.md "Re-rendering PDFs after manual edits" workflow),
+the renderer has no way to source the photo from the markdown itself and
+depends on external state (config or CLI flag).
+
+**Signature** (from `orchestration inspect --resume <path>`):
+- `tailored-resume.md` exists in the application folder
+- `resume.pdf` exists and contains an embedded image (visible in extracted
+  text or confirmed by file size > ~40KB above a no-photo baseline)
+- `inspect --resume` shows no photo-related content: `first_line_raw`
+  doesn't contain "photo", no image link syntax in
+  `raw_paragraph_previews`, no HTML comment with "photo:" anywhere
+- Student's config (`.resumasher/config.json`) has a `photo` field OR the
+  `/resumasher` invocation included `--photo <path>`
+
+**Root cause.** The tailor prompt doesn't include the photo reference in
+its output. The markdown isn't self-describing about non-text artifacts
+the tool used. Re-render currently depends on external state to source
+the photo.
+
+**Fix location.**
+- `scripts/prompts.py` tailor template — when a photo is provided, emit
+  an HTML comment next to the contact header: `<!-- photo: <path> -->`.
+  HTML comments render as invisible in markdown previews, so no visual
+  weirdness.
+- `scripts/render_pdf.py::parse_resume_markdown` — extract the comment
+  and surface the path on `ResumeDoc` (new field, e.g., `photo_path`).
+- `scripts/render_pdf.py` render flow — use the comment's path when
+  `--photo` is not explicitly passed. Precedence: explicit flag > markdown
+  comment > no photo.
+
+**Reference fixture.** `examples/sections_dropped/tailored-resume.md` —
+has no photo reference anywhere despite the rendered PDF having one.
 
 ---
 
