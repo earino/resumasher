@@ -690,6 +690,244 @@ GDPR_NOTE = (
 )
 
 
+# ---------------------------------------------------------------------------
+# inspect — JSON introspection for agent-driven debugging.
+#
+# When a student says "my resume looks wrong," the AI CLI running the
+# resumasher skill follows the playbook in SKILL.md's "Debugging this skill"
+# section. That playbook calls these `inspect` helpers to get structured
+# views of the artifacts: the parsed resume tree, the extracted PDF text,
+# the source photo dimensions. Each helper returns JSON so the LLM can read
+# it without having to shell-parse the output.
+#
+# Design: these return DATA, not interpretations. The LLM does the
+# hypothesis-forming using docs/KNOWN_FAILURE_MODES.md as a checklist.
+# We include a light `warnings` field that surfaces three obvious
+# parser-state red flags (empty name, empty contact, orphaned bullets);
+# the failure modes doc covers everything else.
+# ---------------------------------------------------------------------------
+
+
+def inspect_resume(path: Path) -> dict:
+    """
+    Parse a resume markdown file (usually `tailored-resume.md` from an
+    application folder, or the student's source `resume.md`) and return a
+    JSON-ready snapshot of the parser's internal view.
+
+    The LLM reading this uses it to spot mismatches between what the
+    markdown "looks like" and what the parser actually extracted. If the
+    markdown visually contains a name on line 1 but `doc.name` comes back
+    empty, that tells the agent the parser dropped the contact header.
+    Similarly, 0-bullet blocks next to N>0 `raw_bullets` in the same
+    section is the signature of orphaned bullets.
+    """
+    # Imported here to avoid a hard dependency at module-load time — the
+    # inspect flow is a debug path, not the hot path.
+    from scripts.render_pdf import parse_resume_markdown
+
+    text = _read_text_with_encoding_detection(path)
+    doc = parse_resume_markdown(text)
+
+    # Light warnings for the three obvious bug signatures. These are
+    # shortcuts for the most common failure modes; the full checklist
+    # lives in docs/KNOWN_FAILURE_MODES.md for the agent to consult.
+    warnings = []
+    if not doc.name:
+        warnings.append({
+            "severity": "critical",
+            "code": "EMPTY_NAME",
+            "message": (
+                "Parser extracted no candidate name. The resume-header parse "
+                "expects `# Name` as the first non-empty line. Without it, "
+                "the rendered PDF will have no name — an ATS cannot associate "
+                "the resume with a candidate. Check line 1 of the markdown."
+            ),
+        })
+    if not doc.contact_line:
+        warnings.append({
+            "severity": "critical",
+            "code": "EMPTY_CONTACT_LINE",
+            "message": (
+                "Parser extracted no contact line. Expected on line 2 after "
+                "the `# Name` header, with email/phone/linkedin/location "
+                "separated by ` | `."
+            ),
+        })
+
+    sections_json = []
+    for section in doc.sections:
+        block_bullet_counts = [len(b.bullets) for b in section.blocks]
+        sub_block_counts = [len(b.sub_blocks) for b in section.blocks]
+        section_raw_bullets = len(section.raw_bullets)
+
+        # Orphaned bullets shows up in two shapes depending on how the
+        # markdown was structured:
+        #
+        # Shape A (parser saw blocks but didn't attach bullets):
+        #   section.blocks is non-empty, every block has 0 bullets, and
+        #   raw_bullets > 0. Rare — would require `###` headings with
+        #   no content under them.
+        #
+        # Shape B (parser didn't create blocks at all — Jiaqi's case):
+        #   section.blocks is empty, raw_paragraphs contains `**Title**`-
+        #   looking lines that a reader would naturally read as sub-block
+        #   headings, and raw_bullets > 0. This is the "**Title** directly
+        #   under ##" shape the tailor produces when it skips the `###`
+        #   wrapper entirely.
+        title_like_paragraphs = [
+            p for p in section.raw_paragraphs
+            if p.startswith("**") and p.count("**") >= 2
+        ]
+        shape_a = (
+            bool(section.blocks)
+            and section_raw_bullets > 0
+            and all(c == 0 for c in block_bullet_counts)
+            and all(s == 0 for s in sub_block_counts)
+        )
+        shape_b = (
+            not section.blocks
+            and section_raw_bullets > 0
+            and bool(title_like_paragraphs)
+        )
+        if shape_a or shape_b:
+            shape = "A" if shape_a else "B"
+            warnings.append({
+                "severity": "critical",
+                "code": "ORPHANED_BULLETS",
+                "section": section.heading,
+                "shape": shape,
+                "message": (
+                    f"Section '{section.heading}' has {section_raw_bullets} "
+                    f"section-level bullets that look like they should be "
+                    f"attached to {max(len(section.blocks), len(title_like_paragraphs))} "
+                    f"sub-block titles but aren't. Classic '**Title** directly "
+                    f"under ##' shape (shape {shape}); the parser emitted "
+                    f"the titles as paragraphs and the bullets as loose "
+                    f"section-level items, so the PDF shows all titles first "
+                    f"then a flat bullet list. See KNOWN_FAILURE_MODES.md #2."
+                ),
+            })
+
+        # Previews help the agent see the actual shape without re-reading
+        # the file. Truncate long strings to keep JSON readable.
+        def _preview(s: str, n: int = 120) -> str:
+            s = s.replace("\n", " ").strip()
+            return s if len(s) <= n else s[:n] + "…"
+
+        sections_json.append({
+            "heading": section.heading,
+            "block_count": len(section.blocks),
+            "raw_bullet_count": section_raw_bullets,
+            "raw_paragraph_count": len(section.raw_paragraphs),
+            "block_titles": [b.title for b in section.blocks],
+            "block_bullet_counts": block_bullet_counts,
+            "block_sub_block_counts": sub_block_counts,
+            "raw_paragraph_previews": [_preview(p) for p in section.raw_paragraphs],
+            "raw_bullet_previews": [_preview(b) for b in section.raw_bullets],
+        })
+
+    # First non-empty line of the raw markdown — useful for EMPTY_NAME
+    # diagnosis. If there's no `# Name` H1, this is what the parser saw
+    # on line 1 and couldn't interpret as a header.
+    first_line_raw = ""
+    for line in text.splitlines():
+        if line.strip():
+            first_line_raw = line.strip()
+            break
+    has_h1 = first_line_raw.startswith("# ")
+
+    return {
+        "path": str(path),
+        "name": doc.name,
+        "contact_line": doc.contact_line,
+        "first_line_raw": first_line_raw,
+        "has_h1": has_h1,
+        "section_count": len(doc.sections),
+        "section_order": [s.heading for s in doc.sections],
+        "sections": sections_json,
+        "warnings": warnings,
+    }
+
+
+def inspect_pdf(path: Path) -> dict:
+    """
+    Extract text and basic metadata from a PDF produced by resumasher.
+    Used for rendered-vs-source comparisons (did the section order change?
+    is the contact header visibly missing?).
+    """
+    from pdfminer.high_level import extract_text
+
+    size_bytes = path.stat().st_size
+    extracted = extract_text(str(path))
+
+    # Detect the order in which section headings appear in the PDF text.
+    # Only headings we know resumasher renders — others are ignored to
+    # avoid false positives from bullet content that happens to match.
+    KNOWN_SECTION_HEADINGS = [
+        "Summary", "Experience", "Work Experience", "Research Experience",
+        "Education", "Skills", "Projects", "Languages", "Certifications",
+        "Publications", "Awards", "Volunteering",
+    ]
+    observed = []
+    for heading in KNOWN_SECTION_HEADINGS:
+        idx = extracted.find(heading)
+        if idx != -1:
+            observed.append((idx, heading))
+    observed.sort()
+    section_order_in_text = [h for _, h in observed]
+
+    return {
+        "path": str(path),
+        "size_bytes": size_bytes,
+        "extracted_char_count": len(extracted),
+        "extracted_text": extracted,
+        "section_order_in_text": section_order_in_text,
+    }
+
+
+def inspect_photo(path: Path) -> dict:
+    """
+    Return source photo dimensions so the agent can compare against the
+    render box (3cm × 3cm square). An aspect-ratio mismatch means the
+    rendered photo will be stretched.
+    """
+    from PIL import Image as PILImage
+
+    with PILImage.open(path) as img:
+        width, height = img.size
+        fmt = img.format
+
+    aspect = width / height if height else 0.0
+    # Render box as of 2026-04: 3cm × 3cm, square → aspect 1.0.
+    render_box_aspect = 1.0
+    aspect_delta_pct = abs(aspect - render_box_aspect) / render_box_aspect * 100 if render_box_aspect else 0.0
+
+    warnings = []
+    if abs(aspect - render_box_aspect) > 0.05:
+        warnings.append({
+            "severity": "notice",
+            "code": "PHOTO_ASPECT_STRETCH",
+            "message": (
+                f"Source photo aspect ratio {aspect:.2f} does not match the "
+                f"render box (3cm × 3cm, aspect {render_box_aspect:.2f}). "
+                f"reportlab's Image flowable stretches source to fill the "
+                f"box — the embedded photo will be distorted by ~"
+                f"{aspect_delta_pct:.0f}%. See KNOWN_FAILURE_MODES.md #4."
+            ),
+        })
+
+    return {
+        "path": str(path),
+        "format": fmt,
+        "width": width,
+        "height": height,
+        "aspect": round(aspect, 3),
+        "render_box_aspect": render_box_aspect,
+        "aspect_delta_pct": round(aspect_delta_pct, 1),
+        "warnings": warnings,
+    }
+
+
 def first_run_needed(cwd: Path) -> bool:
     return not (cwd / ".resumasher" / "config.json").exists()
 
@@ -793,6 +1031,18 @@ def _cli() -> int:
     p = sub.add_parser("append-history")
     p.add_argument("cwd")
     p.add_argument("json_line")
+
+    p = sub.add_parser(
+        "inspect",
+        help=(
+            "Return a JSON snapshot of a resumasher artifact for agent-driven "
+            "debugging. Pick exactly one of --resume, --pdf, --photo."
+        ),
+    )
+    inspect_group = p.add_mutually_exclusive_group(required=True)
+    inspect_group.add_argument("--resume", help="Path to a resume markdown file")
+    inspect_group.add_argument("--pdf", help="Path to a rendered PDF")
+    inspect_group.add_argument("--photo", help="Path to the source photo image")
 
     p = sub.add_parser("first-run-needed")
     p.add_argument("cwd", nargs="?", default=".")
@@ -1040,6 +1290,19 @@ def _cli() -> int:
         record = json.loads(args.json_line)
         path = append_history(Path(args.cwd), record)
         print(str(path))
+        return 0
+
+    if args.command == "inspect":
+        if args.resume:
+            result = inspect_resume(Path(args.resume))
+        elif args.pdf:
+            result = inspect_pdf(Path(args.pdf))
+        elif args.photo:
+            result = inspect_photo(Path(args.photo))
+        else:  # pragma: no cover — argparse mutually_exclusive_group(required=True)
+            print("inspect requires --resume, --pdf, or --photo", file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "first-run-needed":
