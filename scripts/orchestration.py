@@ -722,8 +722,11 @@ def inspect_resume(path: Path) -> dict:
     section is the signature of orphaned bullets.
     """
     # Imported here to avoid a hard dependency at module-load time — the
-    # inspect flow is a debug path, not the hot path.
-    from scripts.render_pdf import parse_resume_markdown
+    # inspect flow is a debug path, not the hot path. Uses the sibling
+    # import shape (not `from scripts.render_pdf`) because line 46 puts
+    # `scripts/` on sys.path; the package-qualified shape only works in
+    # test context where conftest.py adds the repo root to sys.path.
+    from render_pdf import parse_resume_markdown
 
     text = _read_text_with_encoding_detection(path)
     doc = parse_resume_markdown(text)
