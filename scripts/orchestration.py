@@ -91,6 +91,29 @@ def parse_job_source(arg: str, cwd: Optional[Path] = None) -> JobSource:
     return JobSource(mode="literal", content=arg)
 
 
+def format_jd(mode: str, content: str, url: Optional[str] = None) -> str:
+    """
+    Format the JD text that gets written to $RUN_DIR/jd.txt and subsequently
+    copied to $OUT_DIR/jd.md in Phase 3.
+
+    For mode="url", prepend a `Source URL: <url>` header (followed by a blank
+    line) so the posting URL survives alongside the fetched page text. A
+    recruiter follow-up weeks after the application, or a re-read of the exact
+    posting phrasing, both need the URL, and the fetched page text alone drops
+    it (the URL is metadata, not content).
+
+    For mode="file" or mode="literal", return content unchanged — there's no
+    URL to preserve (file mode: the student already has the file; literal
+    mode: the JD was pasted inline).
+
+    If mode="url" is passed but url is None/empty, return content unchanged as
+    a defensive fallback — we'd rather ship an un-headered file than crash.
+    """
+    if mode == "url" and url:
+        return f"Source URL: {url}\n\n{content}"
+    return content
+
+
 # ---------------------------------------------------------------------------
 # 2. discover_resume: canonical filenames in priority order
 # ---------------------------------------------------------------------------
@@ -722,6 +745,15 @@ def _cli() -> int:
     p.add_argument("arg")
     p.add_argument("--cwd", default=".")
 
+    p = sub.add_parser("format-jd")
+    p.add_argument("--mode", required=True, choices=["file", "url", "literal"])
+    p.add_argument("--url", default=None, help="Source URL (for mode=url; prepended as a header line)")
+    p.add_argument(
+        "--content-file",
+        default="-",
+        help="Path to a file containing the JD text, or '-' for stdin (default).",
+    )
+
     p = sub.add_parser("discover-resume")
     p.add_argument("cwd", nargs="?", default=".")
 
@@ -822,6 +854,14 @@ def _cli() -> int:
     if args.command == "parse-job-source":
         res = parse_job_source(args.arg, cwd=Path(args.cwd))
         print(json.dumps({"mode": res.mode, "path": res.path, "content": res.content}))
+        return 0
+
+    if args.command == "format-jd":
+        if args.content_file == "-":
+            content = sys.stdin.read()
+        else:
+            content = Path(args.content_file).read_text(encoding="utf-8")
+        sys.stdout.write(format_jd(args.mode, content, args.url))
         return 0
 
     if args.command == "discover-resume":

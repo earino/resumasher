@@ -25,6 +25,7 @@ from scripts.orchestration import (
     extract_fit_score,
     first_run_needed,
     folder_state_hash,
+    format_jd,
     is_failure_sentinel,
     mine_folder_context,
     parse_job_source,
@@ -68,6 +69,140 @@ def test_parse_job_source_handles_utf16_file(tmp_path: Path):
     res = parse_job_source("jd.md", cwd=tmp_path)
     assert res.mode == "file"
     assert "café" in res.content
+
+
+# ---------------------------------------------------------------------------
+# format_jd — persists JD to $RUN_DIR/jd.txt (and onward to $OUT_DIR/jd.md)
+#
+# Issue #15: students running resumasher against multiple postings were losing
+# the JD between runs (it only lived at $RUN_DIR/jd.txt, which gets wiped).
+# format_jd normalizes the write so Phase 3 can `cp` to $OUT_DIR/jd.md, and
+# adds a Source URL header for url-mode inputs so recruiter follow-ups still
+# work weeks later.
+# ---------------------------------------------------------------------------
+
+
+def test_format_jd_file_mode_passes_content_through():
+    """File mode: the JD text came from an existing file the student already
+    owns. No URL to preserve. Output matches input byte-for-byte."""
+    content = "# Senior Analyst\n\nResponsibilities: SQL, dashboards, stakeholder management.\n"
+    out = format_jd("file", content)
+    assert out == content
+
+
+def test_format_jd_literal_mode_passes_content_through():
+    """Literal mode: the student pasted the JD inline. No URL exists."""
+    content = "Junior Data Scientist at Acme. Python, SQL, some ML."
+    out = format_jd("literal", content)
+    assert out == content
+
+
+def test_format_jd_url_mode_prepends_source_url_header():
+    """URL mode: the fetched page text is the content; the URL itself is
+    metadata. Prepend it so Phase 3's cp carries the URL into jd.md."""
+    url = "https://company.com/careers/junior-data-scientist.html"
+    fetched_page = "Junior Data Scientist\n\nWe are looking for...\n"
+    out = format_jd("url", fetched_page, url=url)
+    assert out.startswith(f"Source URL: {url}\n\n")
+    assert fetched_page in out
+    # The header ends with exactly one blank line before the fetched content.
+    assert out == f"Source URL: {url}\n\n{fetched_page}"
+
+
+def test_format_jd_url_mode_without_url_arg_defensive_fallback():
+    """If the caller passes mode=url but forgets --url (shouldn't happen, but
+    we'd rather return un-headered content than crash)."""
+    content = "Fetched job description text."
+    out = format_jd("url", content, url=None)
+    assert out == content  # No prepend when url is None.
+
+
+def test_format_jd_url_mode_with_empty_url_defensive_fallback():
+    """Same defensive behavior for empty-string url."""
+    content = "Fetched job description text."
+    out = format_jd("url", content, url="")
+    assert out == content
+
+
+def test_format_jd_preserves_unicode_content():
+    """JD text may contain unicode (company names, German/French descriptions,
+    em dashes from copy-paste). Don't corrupt it."""
+    content = "Stellenbeschreibung: Senior Data Analyst — München. Gehalt €65k–€80k."
+    out = format_jd("literal", content)
+    assert out == content
+    # And with a URL:
+    out_url = format_jd("url", content, url="https://example.de/job")
+    assert "München" in out_url and "€65k–€80k" in out_url
+
+
+def test_format_jd_preserves_trailing_newlines():
+    """Don't trim content — the student may rely on a trailing newline for
+    clean markdown rendering of jd.md."""
+    content = "Line one.\nLine two.\n"
+    out = format_jd("file", content)
+    assert out.endswith("\n")
+    # URL mode should also preserve the trailing newline of the input.
+    out_url = format_jd("url", content, url="https://example.com/job")
+    assert out_url.endswith("\n")
+
+
+# ---------------------------------------------------------------------------
+# format-jd CLI subcommand (stdin → stdout transform)
+# ---------------------------------------------------------------------------
+
+
+def _run_format_jd(*args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
+    cmd = ["python", "-m", "scripts.orchestration", "format-jd", *args]
+    return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False)
+
+
+def test_cli_format_jd_file_mode_reads_stdin_and_passes_through():
+    content = "File-mode JD.\nSecond line.\n"
+    r = _run_format_jd("--mode", "file", stdin=content)
+    assert r.returncode == 0
+    assert r.stdout == content
+
+
+def test_cli_format_jd_literal_mode_passes_through():
+    content = "Literal pasted text."
+    r = _run_format_jd("--mode", "literal", stdin=content)
+    assert r.returncode == 0
+    assert r.stdout == content
+
+
+def test_cli_format_jd_url_mode_prepends_source_url():
+    url = "https://company.com/jobs/42"
+    content = "Page text from the fetch.\n"
+    r = _run_format_jd("--mode", "url", "--url", url, stdin=content)
+    assert r.returncode == 0
+    assert r.stdout.startswith(f"Source URL: {url}\n\n")
+    assert "Page text from the fetch." in r.stdout
+
+
+def test_cli_format_jd_url_mode_without_url_flag_is_noop():
+    """Defensive: mode=url without --url should pass content through, not
+    crash. This exercises the same fallback the Python function has."""
+    content = "Content without a URL."
+    r = _run_format_jd("--mode", "url", stdin=content)
+    assert r.returncode == 0
+    assert r.stdout == content
+
+
+def test_cli_format_jd_rejects_unknown_mode():
+    """argparse `choices` should reject anything outside file/url/literal."""
+    r = _run_format_jd("--mode", "garbage", stdin="anything")
+    assert r.returncode != 0
+    assert "invalid choice" in r.stderr
+
+
+def test_cli_format_jd_reads_content_from_file_argument(tmp_path: Path):
+    """--content-file <path> is an alternative to piping via stdin. Useful
+    when the JD text is multi-KB and stdin plumbing gets awkward."""
+    jd_file = tmp_path / "fetched.txt"
+    jd_file.write_text("JD text from disk.\n", encoding="utf-8")
+    r = _run_format_jd("--mode", "literal", "--content-file", str(jd_file))
+    assert r.returncode == 0
+    assert r.stdout == "JD text from disk.\n"
 
 
 # ---------------------------------------------------------------------------
