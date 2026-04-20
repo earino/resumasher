@@ -5,6 +5,12 @@ description: |
   bundle for a specific job posting. Runs in the student's working directory so it
   can cite evidence from their actual project files (capstone, notebooks, READMEs,
   PDFs). Outputs ATS-friendly PDFs in ./applications/<company-slug>-<date>/.
+
+  Also investigates its own output when students report issues — if a student
+  says the PDF looks wrong (missing content, stretched photo, weird section
+  order, anything off), follow the "Debugging this skill" playbook at the
+  bottom of this file to match the symptom against known failure modes and
+  draft a bug report for the maintainer.
 argument-hint: <job-source> [--style eu|us] [--photo <path>] [--no-photo]
 ---
 
