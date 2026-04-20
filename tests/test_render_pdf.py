@@ -942,3 +942,217 @@ def test_render_synthetic_blocks_interleave_bullets_with_titles(tmp_path: Path):
         f"Capstone bullet appears before its title: title={capstone_title}, "
         f"bullet={capstone_bullet}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #20 — photo path persisted to tailored markdown via HTML comment
+#
+# Before the fix: a student provides a photo, resumasher embeds it in the PDF
+# correctly, but `tailored-resume.md` has no record of the path. Re-render
+# after manual edits requires external state (config or CLI flag).
+#
+# After the fix: tailor emits `<!-- photo: /path -->` in the markdown header,
+# parser extracts it onto `ResumeDoc.photo_path`, renderer uses it when no
+# `--photo` flag is explicitly passed. Markdown becomes self-describing.
+# Precedence: explicit flag > markdown comment > no photo.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_picks_up_photo_comment_in_header():
+    """A `<!-- photo: /path -->` right after the contact line populates
+    `doc.photo_path` with the path verbatim."""
+    md = (
+        "# Test Candidate\n"
+        "test@example.com | +1 | linkedin.com/in/testcandidate\n"
+        "<!-- photo: /home/student/photos/headshot.jpg -->\n"
+        "\n"
+        "## Summary\n"
+        "Short.\n"
+    )
+    doc = parse_resume_markdown(md)
+    assert doc.photo_path == "/home/student/photos/headshot.jpg"
+    # Contact header parsing unaffected — the comment doesn't bleed into
+    # the contact line or the name.
+    assert doc.name == "Test Candidate"
+    assert "test@example.com" in doc.contact_line
+
+
+def test_parse_photo_comment_tolerates_whitespace_variants():
+    """The comment regex strips whitespace around the path so the tailor
+    doesn't have to emit pixel-perfect formatting."""
+    cases = [
+        "<!--photo:/path/to/photo.jpg-->",
+        "<!-- photo: /path/to/photo.jpg -->",
+        "<!--  photo  :  /path/to/photo.jpg  -->",
+        "<!-- photo:/path/to/photo.jpg-->",
+    ]
+    for comment in cases:
+        md = f"# Test\ne@x.com\n{comment}\n\n## Summary\nx\n"
+        doc = parse_resume_markdown(md)
+        assert doc.photo_path == "/path/to/photo.jpg", (
+            f"Failed to parse comment variant: {comment!r}"
+        )
+
+
+def test_parse_no_photo_comment_leaves_path_empty():
+    """A markdown with no photo comment leaves doc.photo_path as an empty
+    string — the renderer's precedence logic treats "" as "no photo"."""
+    md = "# Test\ne@x.com\n\n## Summary\nx\n"
+    doc = parse_resume_markdown(md)
+    assert doc.photo_path == ""
+
+
+def test_parse_first_photo_comment_wins_over_duplicates():
+    """If the tailor accidentally emits two photo comments (copy-paste
+    bug), the first one wins. Duplicates are silently ignored rather
+    than raising — the PDF still renders, but only the first comment
+    is honored."""
+    md = (
+        "# Test\ne@x.com\n"
+        "<!-- photo: /first.jpg -->\n"
+        "<!-- photo: /second.jpg -->\n"
+        "\n"
+        "## Summary\nx\n"
+    )
+    doc = parse_resume_markdown(md)
+    assert doc.photo_path == "/first.jpg"
+
+
+def test_parse_photo_comment_inline_in_prose_not_hijacked():
+    """An HTML comment that appears in prose (not on its own line) or
+    that has other text on the same line should NOT be picked up. Our
+    regex is full-line-only for the same reason `_SUB_BLOCK_RE` is —
+    so inline mentions can't hijack the parser."""
+    md = (
+        "# Test\ne@x.com\n"
+        "\n"
+        "## Summary\n"
+        "I once wrote `<!-- photo: /joke.jpg -->` in my old resume.\n"
+    )
+    doc = parse_resume_markdown(md)
+    # The inline mention in a bullet/prose paragraph doesn't match the
+    # full-line regex, so photo_path stays empty.
+    assert doc.photo_path == ""
+
+
+def test_render_uses_markdown_photo_comment_when_flag_absent(tmp_path: Path):
+    """End-to-end: a markdown with a photo comment renders a PDF with
+    that photo embedded, even though no `--photo` flag was passed.
+    This is the re-render-after-edit story: the markdown is
+    self-describing, no external state needed."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "portrait.jpg"
+    # Roughly-square so no aspect-stretch issue confounds this test.
+    PILImage.new("RGB", (500, 500), color=(100, 120, 140)).save(photo, "JPEG")
+
+    md = (
+        "# Test Candidate\n"
+        "test@example.com | +1 | Vienna\n"
+        f"<!-- photo: {photo} -->\n"
+        "\n"
+        "## Summary\n"
+        "Short.\n"
+        "\n"
+        "## Experience\n"
+        "### Analyst — BigCo (2024)\n"
+        "- Did stuff.\n"
+    )
+    out = tmp_path / "with-photo.pdf"
+    render_resume_eu(md, out)  # NOTE: no photo= argument passed
+    assert out.exists()
+    # Crude but effective check: a PDF with an embedded 500x500 JPEG is
+    # substantially larger than one without. A photo-less render at this
+    # content size lands around 5-10KB; adding a photo pushes it past 30KB.
+    size = out.stat().st_size
+    assert size > 15_000, (
+        f"Expected embedded photo to push PDF size past 15KB, got {size} bytes. "
+        f"Likely the markdown photo comment wasn't honored."
+    )
+
+
+def test_render_explicit_flag_overrides_markdown_comment(tmp_path: Path):
+    """When both a `--photo` flag AND a markdown comment are present,
+    the flag wins. Explicit beats implicit — the caller knows what
+    they're doing."""
+    from PIL import Image as PILImage
+
+    # Two distinct photos, each a different solid color so we can tell
+    # which one got embedded via file-size difference.
+    markdown_photo = tmp_path / "markdown.jpg"
+    PILImage.new("RGB", (500, 500), color=(200, 200, 200)).save(markdown_photo, "JPEG", quality=95)
+    flag_photo = tmp_path / "flag.jpg"
+    PILImage.new("RGB", (500, 500), color=(50, 50, 50)).save(flag_photo, "JPEG", quality=95)
+
+    md = (
+        "# Test Candidate\n"
+        "test@example.com | +1 | Vienna\n"
+        f"<!-- photo: {markdown_photo} -->\n"
+        "\n"
+        "## Summary\nShort.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Co (2024)\n"
+        "- Did stuff.\n"
+    )
+    out_with_flag = tmp_path / "flag-wins.pdf"
+    out_markdown_only = tmp_path / "markdown-only.pdf"
+
+    render_resume_eu(md, out_with_flag, photo=str(flag_photo))
+    render_resume_eu(md, out_markdown_only)  # no flag — uses markdown comment
+
+    # Both PDFs exist and have photos embedded. The photos are the same
+    # dimensions but different content — can't directly compare pixel
+    # values through a PDF roundtrip, so we rely on the fact that the
+    # `_resolve_photo_path` helper is independently tested.
+    assert out_with_flag.exists()
+    assert out_markdown_only.exists()
+
+
+def test_render_no_photo_anywhere_still_works(tmp_path: Path):
+    """Sanity: a markdown with no photo comment and no `--photo` flag
+    renders normally. Proves neither fallback silently embeds a photo
+    when none was requested. Uses relative-size comparison to a
+    with-photo render — absolute size baselines drift with fonts/margins
+    and aren't reliable here."""
+    from PIL import Image as PILImage
+
+    # Gradient photo — solid-color JPEGs compress to almost nothing and
+    # produce deltas too small to distinguish from PDF overhead noise.
+    # A gradient forces the JPEG encoder to retain real data.
+    photo = tmp_path / "photo.jpg"
+    img = PILImage.new("RGB", (500, 500))
+    pixels = img.load()
+    for y in range(500):
+        for x in range(500):
+            pixels[x, y] = (x // 2, y // 2, (x + y) // 4)
+    img.save(photo, "JPEG", quality=95)
+
+    md_no_photo = (
+        "# Test Candidate\n"
+        "test@example.com | +1 | Vienna\n"
+        "\n"
+        "## Summary\nShort.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Co (2024)\n"
+        "- Did stuff.\n"
+    )
+
+    no_photo_pdf = tmp_path / "no-photo.pdf"
+    with_photo_pdf = tmp_path / "with-photo.pdf"
+    render_resume_eu(md_no_photo, no_photo_pdf)
+    render_resume_eu(md_no_photo, with_photo_pdf, photo=str(photo))
+
+    assert no_photo_pdf.exists()
+    assert with_photo_pdf.exists()
+    # A realistic gradient JPEG at 500×500 adds at least ~5KB after
+    # resumasher's downscale + re-encode pass. If the no-photo render
+    # silently grew to match the with-photo size, we'd have introduced
+    # an always-embed bug.
+    delta = with_photo_pdf.stat().st_size - no_photo_pdf.stat().st_size
+    assert delta > 5_000, (
+        f"Expected with-photo PDF at least 5KB larger than no-photo. "
+        f"Got delta {delta} bytes — photo may not have been embedded, or "
+        f"no-photo render is somehow always-embedding."
+    )

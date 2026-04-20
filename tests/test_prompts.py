@@ -287,6 +287,69 @@ def test_format_contact_info_missing_name_raises():
         format_contact_info(name="   ")
 
 
+# ---------------------------------------------------------------------------
+# Issue #20 — photo_path argument emits `<!-- photo: ... -->` comment
+# ---------------------------------------------------------------------------
+
+
+def test_format_contact_info_with_photo_emits_html_comment():
+    """When photo_path is provided, the header gains a third line with
+    an HTML comment carrying the path. Markdown previews render the
+    comment as invisible; the resumasher parser picks it up and exposes
+    it on ResumeDoc.photo_path for the renderer."""
+    ci = format_contact_info(
+        name="Test Candidate",
+        email="test@example.com",
+        phone="+43 664 0000000",
+        location="Vienna",
+        photo_path="/home/student/photos/headshot.jpg",
+    )
+    lines = ci.splitlines()
+    assert lines[0] == "# Test Candidate"
+    assert lines[1] == "test@example.com | +43 664 0000000 | Vienna"
+    assert lines[2] == "<!-- photo: /home/student/photos/headshot.jpg -->"
+    assert len(lines) == 3
+
+
+def test_format_contact_info_without_photo_omits_comment():
+    """Backwards compatibility: the default (no photo_path) keeps the
+    two-line header exactly as it was pre-#20. Callers that never pass
+    photo_path see zero change."""
+    ci = format_contact_info(
+        name="Test Candidate",
+        email="test@example.com",
+        location="Vienna",
+    )
+    assert ci == "# Test Candidate\ntest@example.com | Vienna"
+    assert "<!-- photo" not in ci
+
+
+def test_format_contact_info_photo_path_whitespace_treated_as_absent():
+    """Whitespace-only photo_path behaves like no photo_path at all.
+    Matches the treatment of email/phone/etc. — whitespace doesn't
+    count as a real value."""
+    ci = format_contact_info(
+        name="Test Candidate",
+        email="test@example.com",
+        photo_path="   ",
+    )
+    assert "<!-- photo" not in ci
+
+
+def test_format_contact_info_photo_path_trimmed_in_comment():
+    """A photo_path with leading/trailing whitespace gets trimmed before
+    going into the comment. The markdown stays clean even when the
+    caller is sloppy."""
+    ci = format_contact_info(
+        name="Test Candidate",
+        email="test@example.com",
+        photo_path="  /home/student/headshot.jpg  ",
+    )
+    assert "<!-- photo: /home/student/headshot.jpg -->" in ci
+    # Leading/trailing spaces never reach the comment body.
+    assert "<!-- photo:  " not in ci
+
+
 def test_format_contact_info_handles_non_ascii():
     """
     Non-ASCII names (Müller, Arino with tilde, Jiří) must flow through

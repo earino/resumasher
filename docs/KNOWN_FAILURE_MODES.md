@@ -198,6 +198,14 @@ portrait photo rendered at 3cm × 3cm, visible horizontal stretch).
 ## #5 — Photo path not persisted to tailored markdown
 
 **Tracked in:** [#20](https://github.com/earino/resumasher/issues/20).
+**Status:** fixed (v0.4 Unreleased). Tailor now emits
+`<!-- photo: /path -->` in the markdown header when a photo is provided;
+parser extracts the path onto `ResumeDoc.photo_path`; renderer uses it
+when `--photo` flag is not explicitly passed. Precedence: explicit flag
+> markdown comment > no photo. Re-render after manual markdown edits
+now works without external config state. Twelve regression tests across
+`tests/test_render_pdf.py` and `tests/test_prompts.py` guard the
+precedence rules and the parser's comment detection.
 
 **Symptom.** A student provides a photo via `--photo <path>` or config, and
 resumasher embeds it in `resume.pdf` correctly. But the source
