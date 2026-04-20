@@ -18,6 +18,11 @@ lives, so you can jump straight to the code.
 ## #1 — Missing contact header (no name on PDF)
 
 **Tracked in:** [#18](https://github.com/earino/resumasher/issues/18).
+**Status:** renderer now fails loudly on this shape (v0.4 Unreleased) — no
+more silent broken PDFs. Tailor-prompt hardening + regression tests shipped
+alongside. Original silent-drop bug cannot recur without removing the gate
+in `scripts/render_pdf.py::_assert_contact_header_present`, which is
+guarded by tests in `tests/test_render_pdf.py`.
 
 
 **Symptom.** The rendered PDF has no name, no email, no phone, no LinkedIn.

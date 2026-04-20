@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from scripts.render_pdf import (
+    MissingContactHeaderError,
     assert_ats_roundtrip,
     parse_resume_markdown,
     render_cover_letter,
@@ -561,3 +562,142 @@ def test_assert_ats_roundtrip_raises_on_missing(tmp_path: Path):
     with pytest.raises(AssertionError) as exc:
         assert_ats_roundtrip(out, ["this string is definitely not in the resume xyz789"])
     assert "Missing substrings" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# MissingContactHeaderError — loud failure when tailor emits no `# Name` H1
+#
+# Issue #18 / KNOWN_FAILURE_MODES.md #1: the tailor sometimes produces a
+# tailored-resume.md that pipe-joins the name and contact info onto line 1
+# with no `# ` prefix. The parser doesn't recognize it as a contact header,
+# silently drops everything before the first `##`, and the PDF ships with
+# no candidate name anywhere — an ATS cannot identify the applicant.
+#
+# Fix: renderer raises MissingContactHeaderError loudly. Student gets an
+# actionable error instead of a subtly-broken PDF they'd submit without
+# noticing.
+# ---------------------------------------------------------------------------
+
+
+# Jiaqi's real repro shape, anonymized. Pipe-separated contact, no H1.
+JIAQI_SHAPE_NO_H1_MD = """Test Candidate | +43 664 0000000 | test@example.com | Vienna, Austria | linkedin.com/in/testcandidate | github.com/testcandidate
+
+## Summary
+MSc Business Analytics candidate with a strong foundation in statistical modeling.
+
+## Experience
+### Data Analyst — Some Company (2024)
+- Did a thing.
+"""
+
+
+def test_render_resume_eu_raises_on_missing_contact_header(tmp_path: Path):
+    """The headline Jiaqi bug: pipe-separated line 1 with no `# Name` H1.
+    The renderer MUST refuse — a broken PDF shipped to an ATS silently
+    filters out the application and the student never hears back.
+
+    This test is the regression guard. If it ever starts passing WITHOUT
+    the exception, someone removed the loud-failure gate and we risk
+    shipping subtly-wrong PDFs again."""
+    out = tmp_path / "no-header.pdf"
+    with pytest.raises(MissingContactHeaderError) as exc:
+        render_resume_eu(JIAQI_SHAPE_NO_H1_MD, out)
+
+    # The exception message should name the problem clearly.
+    assert "missing the candidate name header" in str(exc.value).lower()
+    # The first_line attribute should carry what the parser actually saw,
+    # so the caller can surface it in the student-facing error message.
+    assert "Test Candidate" in exc.value.first_line
+    assert "|" in exc.value.first_line
+    # No PDF should have been written — the renderer refuses BEFORE rendering.
+    assert not out.exists()
+
+
+def test_render_resume_us_raises_on_missing_contact_header(tmp_path: Path):
+    """Same loud-failure gate applies to US style. US suppresses the photo
+    but still needs the candidate name for ATS identification — the bug
+    and the fix are style-agnostic."""
+    out = tmp_path / "no-header-us.pdf"
+    with pytest.raises(MissingContactHeaderError):
+        render_resume_us(JIAQI_SHAPE_NO_H1_MD, out)
+    assert not out.exists()
+
+
+def test_missing_contact_header_error_captures_first_line_for_diagnostics():
+    """The exception's `first_line` attribute is the diagnostic breadcrumb
+    the SKILL.md Phase 8 error handler shows the student ('Got: <this>').
+    Verify it's set correctly for three different failure shapes."""
+    # Shape A: pipe-separated without H1 (the Jiaqi case)
+    md_a = "Candidate Name | email@example.com | +1 555 0000\n\n## Summary\nHi.\n"
+    out = Path("/tmp/never-written.pdf")
+    with pytest.raises(MissingContactHeaderError) as exc:
+        render_resume_eu(md_a, out)
+    assert exc.value.first_line.startswith("Candidate Name |")
+
+    # Shape B: a title/summary line (agent might synthesize this wrong —
+    # option (a) of our design debate would have embedded "MSc Business
+    # Analytics Candidate" as the candidate's name if we'd gone that way).
+    md_b = "MSc Business Analytics Candidate, Available July 2026\n\n## Summary\nHi.\n"
+    with pytest.raises(MissingContactHeaderError) as exc:
+        render_resume_eu(md_b, out)
+    assert "MSc Business Analytics Candidate" in exc.value.first_line
+
+    # Shape C: completely empty markdown. first_line should be empty string,
+    # the exception should still raise (empty name → fail).
+    md_c = ""
+    with pytest.raises(MissingContactHeaderError) as exc:
+        render_resume_eu(md_c, out)
+    assert exc.value.first_line == ""
+
+
+def test_render_resume_eu_happy_path_still_works_with_gate(tmp_path: Path):
+    """Sanity check: a well-formed resume with `# Name` H1 renders
+    normally. The loud-failure gate doesn't interfere with good input."""
+    md = (
+        "# Ana Müller\n"
+        "ana@example.com | +43 123 | Vienna\n"
+        "\n"
+        "## Summary\n"
+        "Short summary.\n"
+        "\n"
+        "## Experience\n"
+        "### Data Analyst — Raiffeisen (2025)\n"
+        "- Shipped a churn model.\n"
+    )
+    out = tmp_path / "ok.pdf"
+    render_resume_eu(md, out)
+    assert out.exists()
+    assert_ats_roundtrip(out, ["Ana Müller", "ana@example.com", "Raiffeisen"])
+
+
+def test_cli_render_pdf_prints_actionable_error_and_exits_2(tmp_path: Path):
+    """End-to-end via the CLI: simulate the path SKILL.md Phase 8 takes.
+    Running `render_pdf --input <bad-md>` on a no-H1 markdown should
+    print a multi-line error to stderr naming the problem, the expected
+    shape, the actual line 1, and the suggested action — and exit 2
+    so the orchestrator knows something broke."""
+    import subprocess
+    bad_md = tmp_path / "bad.md"
+    bad_md.write_text(JIAQI_SHAPE_NO_H1_MD, encoding="utf-8")
+    out = tmp_path / "out.pdf"
+    r = subprocess.run(
+        [
+            "python", "-m", "scripts.render_pdf",
+            "--input", str(bad_md),
+            "--kind", "resume",
+            "--style", "eu",
+            "--output", str(out),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode == 2
+    # Error message reaches stderr (so Phase 8 can surface it to the student)
+    assert "missing the candidate name header" in r.stderr.lower()
+    # And names the specific expected shape
+    assert "# Your Name" in r.stderr
+    # And shows the student what was actually on line 1
+    assert "Test Candidate | +43" in r.stderr
+    # And references the tracking issue so the student / agent can follow up
+    assert "#18" in r.stderr
+    # No PDF should have been written
+    assert not out.exists()
