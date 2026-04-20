@@ -193,7 +193,7 @@ If none of the three question tools is available (e.g., `codex exec` non-interac
 Instead:
 
 1. Stop before Phase 1.
-2. Write a skeleton `.resumasher/config.json` in `$STUDENT_CWD` with every required field set to the sentinel string `"__ASK__"`. Include `name`, `email`, `phone`, `linkedin`, `location`, `default_style`, `include_photo`, `photo_path`, `github_username`, and `github_prompted: false`.
+2. Write a skeleton `.resumasher/config.json` in `$STUDENT_CWD` with every required field set to the sentinel string `"__ASK__"`. Include `name`, `email`, `phone`, `linkedin`, `location`, `default_style`, `include_photo`, `photo_path`, `photo_position`, `github_username`, and `github_prompted: false`.
 3. Print exactly this message to stdout, then exit with code 2:
 
    ```
@@ -336,6 +336,15 @@ Concrete question shapes. Every free-text question has EXACTLY 2 or more explici
    ```
    After the student answers, verify the file exists with `ls -la <path>`. If missing, re-ask; don't silently fall through.
 
+8a. **Photo position** (only if include-photo=yes and the photo path is valid):
+   ```
+   Question: "Where should your photo go on the resume?"
+     A) Top right (DACH / German-speaking markets convention)
+     B) Top left (French / Benelux convention)
+     C) Centered (unusual but supported)
+   ```
+   Save the answer to `photo_position` in `.resumasher/config.json` ("right", "left", or "center"). Default is "right" if the question is skipped, but the question flow answers first so the default is rarely used at first-run.
+
 9. **GitHub profile**:
    ```
    Question: "Do you have a GitHub? We can leverage it for this."
@@ -374,6 +383,8 @@ Concrete question shapes. Every free-text question has EXACTLY 2 or more explici
     pre-select a non-Off option in any way. Active opt-in only.
 
 If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
+
+**Photo position migration (issue #22, added 2026-04).** If the student has a `config.json` with `include_photo: true` but no `photo_position` field, ask the same photo-position question from step 8a once, save the answer, and continue. One-time upgrade prompt per student. Students with `include_photo: false` are unaffected (no photo → placement is moot).
 
 Write `.resumasher/config.json` with those values, then:
 
@@ -794,10 +805,11 @@ Build the photo argument as a bash array — unquoted string expansion (`$PHOTO_
 # Read photo config fresh in this shell invocation (shell state does not persist between Bash calls).
 INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
 PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
+PHOTO_POSITION=$(jq -r '.photo_position // "right"' "$STUDENT_CWD/.resumasher/config.json")
 
 PHOTO_ARGS=()
 if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
-  PHOTO_ARGS=(--photo "$PHOTO_PATH")
+  PHOTO_ARGS=(--photo "$PHOTO_PATH" --photo-position "$PHOTO_POSITION")
 fi
 
 # Resume
@@ -1026,6 +1038,7 @@ OUT_DIR="$STUDENT_CWD/applications/<slug>-<date>"   # substitute the real path
 STYLE=$(jq -r '.default_style // "eu"' "$STUDENT_CWD/.resumasher/config.json")
 INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
 PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
+PHOTO_POSITION=$(jq -r '.photo_position // "right"' "$STUDENT_CWD/.resumasher/config.json")
 ```
 
 **Re-render the one(s) the student edited:**
@@ -1035,7 +1048,7 @@ For the **resume** — pass `--photo` only if style is EU and include_photo is t
 ```bash
 PHOTO_ARGS=()
 if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
-  PHOTO_ARGS=(--photo "$PHOTO_PATH")
+  PHOTO_ARGS=(--photo "$PHOTO_PATH" --photo-position "$PHOTO_POSITION")
 fi
 "$RS" render_pdf \
   --input "$OUT_DIR/tailored-resume.md" \

@@ -74,6 +74,8 @@ from reportlab.platypus import (
     KeepTogether,
     PageBreak,
 )
+from reportlab.platypus.flowables import HRFlowable
+from reportlab.lib.colors import HexColor
 
 # Pillow is a transitive dependency of reportlab 4.x, so importing it here
 # adds no new requirement. We use it to downscale oversized student photos
@@ -231,6 +233,18 @@ class MissingContactHeaderError(ValueError):
         )
 
 
+# Sentinel used in `ResumeSection.raw_paragraphs` to mark a horizontal rule
+# (markdown `---` / `___` / `***` on its own line). The renderer detects this
+# exact string and emits an `HRFlowable` instead of a text paragraph. Null
+# bytes are safe — they never appear in parsed markdown content. Tracked: #22.
+_HR_SENTINEL = "\x00HR\x00"
+
+# Markdown horizontal rule: `---`, `___`, or `***` on its own line, optionally
+# with surrounding whitespace. Full-line match only (same design as
+# `_SUB_BLOCK_RE` and `_PHOTO_COMMENT_RE`) — inline occurrences in prose
+# don't trigger.
+_HR_RE = re.compile(r"^\s*(?:-{3,}|_{3,}|\*{3,})\s*$")
+
 _SUB_BLOCK_RE = re.compile(r"^\*\*(.+?)\*\*\s*(.*)$")
 
 # `<!-- photo: /path/to/photo.jpg -->` — HTML comment the tailor emits at the
@@ -288,6 +302,15 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
             if photo_match:
                 doc.photo_path = photo_match.group(1).strip()
                 continue
+
+        # Horizontal rule (`---` / `___` / `***` on its own line). Emit
+        # the sentinel into the current section's paragraphs so the
+        # renderer can convert it to an HRFlowable. Rules appearing
+        # before any `##` section are dropped (no home for them). See #22.
+        if _HR_RE.match(line):
+            if current_section is not None:
+                current_section.raw_paragraphs.append(_HR_SENTINEL)
+            continue
 
         if line.startswith("## "):
             current_section = ResumeSection(heading=line[3:].strip())
@@ -505,12 +528,41 @@ def _ordered_sections(doc: ResumeDoc, preferred: list[str]) -> list[ResumeSectio
     return ordered
 
 
+_PHOTO_MAX_SIDE_CM = 3.0
+_VALID_PHOTO_POSITIONS = ("left", "right", "center")
+
+
+def _photo_render_size_cm(photo_source) -> tuple[float, float]:
+    """Compute embed width/height in cm, preserving source aspect ratio.
+
+    Clamps the longer side to `_PHOTO_MAX_SIDE_CM`. A 3:4 portrait renders
+    at ~2.25cm × 3cm; a 16:9 landscape at 3cm × 1.7cm; a square at 3cm × 3cm.
+
+    Before this change (issue #22), the renderer hard-coded 3×3cm regardless
+    of source aspect, which stretched portrait sources horizontally by up
+    to ~33%. Students described it as "flattened" or "like a funeral hall
+    portrait." See KNOWN_FAILURE_MODES.md #4.
+    """
+    from reportlab.lib.utils import ImageReader
+    reader = ImageReader(photo_source)
+    src_w, src_h = reader.getSize()
+    if src_w <= 0 or src_h <= 0:
+        # Defensive fallback — shouldn't happen for real images, but if
+        # an image reports invalid dimensions, render at max × max rather
+        # than crashing.
+        return _PHOTO_MAX_SIDE_CM, _PHOTO_MAX_SIDE_CM
+    if src_w >= src_h:
+        return _PHOTO_MAX_SIDE_CM, _PHOTO_MAX_SIDE_CM * (src_h / src_w)
+    return _PHOTO_MAX_SIDE_CM * (src_w / src_h), _PHOTO_MAX_SIDE_CM
+
+
 def _build_resume_flowables(
     doc: ResumeDoc,
     styles: StyleSheet1,
     section_order_fn,
     center_header: bool,
     photo_path: Optional[str],
+    photo_position: str = "right",
 ) -> list:
     flow: list = []
     name_style = styles["NameCenter"] if center_header else styles["Name"]
@@ -518,12 +570,22 @@ def _build_resume_flowables(
 
     if photo_path:
         try:
-            # Small photo, ~3cm wide, inline above the name. EU conventional.
-            # Downscale oversized images (typical phone/camera export) before
-            # embedding so the output PDF stays small enough to email + upload
-            # to ATS without hitting size caps.
+            # Small photo in the header, aspect-preserved, aligned per
+            # `photo_position` (right / left / center). DACH convention is
+            # top-right; French convention is top-left; centered is unusual
+            # but supported. Downscale oversized source images before
+            # embedding so the output PDF stays under the ATS-friendly size
+            # cap (~200KB).
             photo_source = _downscale_photo_for_embed(photo_path)
-            img = Image(photo_source, width=3 * cm, height=3 * cm)
+            w_cm, h_cm = _photo_render_size_cm(photo_source)
+            img = Image(photo_source, width=w_cm * cm, height=h_cm * cm)
+            # Map photo_position to reportlab's hAlign. Unknown values fall
+            # back to the default (right) rather than erroring — the
+            # config write path validates, and tolerance here means a
+            # typo'd config doesn't crash rendering.
+            if photo_position not in _VALID_PHOTO_POSITIONS:
+                photo_position = "right"
+            img.hAlign = photo_position.upper()  # "LEFT" / "RIGHT" / "CENTER"
             flow.append(img)
             flow.append(Spacer(1, 4))
         except Exception as e:
@@ -539,9 +601,22 @@ def _build_resume_flowables(
 
     for section in section_order_fn(doc):
         flow.append(Paragraph(_escape(section.heading), styles["SectionHeading"]))
-        # Paragraphs directly under the section (summary body).
+        # Paragraphs directly under the section (summary body). Horizontal-
+        # rule sentinels get emitted as HRFlowable instead of text. See
+        # `_HR_SENTINEL` for why this shape (issue #22 markdown `---` was
+        # silently dropped pre-fix).
         for para in section.raw_paragraphs:
-            flow.append(Paragraph(_escape(para), styles["Body"]))
+            if para == _HR_SENTINEL:
+                flow.append(Spacer(1, 4))
+                flow.append(HRFlowable(
+                    width="100%",
+                    thickness=0.5,
+                    color=HexColor("#888888"),
+                    spaceBefore=2,
+                    spaceAfter=4,
+                ))
+            else:
+                flow.append(Paragraph(_escape(para), styles["Body"]))
         # Bare bullets (common for Skills).
         for bullet in section.raw_bullets:
             flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
@@ -698,11 +773,16 @@ def render_resume_eu(
     source_markdown: str,
     output_path: str | Path,
     photo: Optional[str] = None,
+    photo_position: str = "right",
 ) -> Path:
     """EU-style single-column resume. Photo optional (DACH convention).
 
     Photo source precedence: `photo` argument > markdown `<!-- photo: -->`
     comment > no photo. See `_resolve_photo_path`.
+
+    `photo_position` controls alignment: "right" (DACH convention, default),
+    "left" (French / Benelux convention), or "center" (unusual but
+    supported). Unknown values fall back to "right".
     """
     styles = _build_styles()
     doc = parse_resume_markdown(source_markdown)
@@ -714,6 +794,7 @@ def render_resume_eu(
         section_order_fn=_section_order_eu,
         center_header=False,
         photo_path=resolved_photo,
+        photo_position=photo_position,
     )
     return _write_pdf(flow, output_path, pagesize=A4)
 
@@ -906,6 +987,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     parser.add_argument("--output", required=True, help="Output PDF path")
     parser.add_argument("--photo", default=None, help="Optional photo path (EU resume only)")
+    parser.add_argument(
+        "--photo-position",
+        choices=["right", "left", "center"],
+        default="right",
+        help="Photo alignment (EU resume only). Right is DACH convention. "
+             "Left is French/Benelux. Center is unusual but supported.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -921,7 +1009,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         if args.kind == "resume":
             if args.style == "eu":
-                render_resume_eu(source, args.output, photo=args.photo)
+                render_resume_eu(
+                    source, args.output,
+                    photo=args.photo,
+                    photo_position=args.photo_position,
+                )
             else:
                 render_resume_us(source, args.output, photo=args.photo)
         elif args.kind == "cover-letter":
