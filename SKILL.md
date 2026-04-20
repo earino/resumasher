@@ -990,6 +990,10 @@ before sending.
 💡 Edited a markdown file after this run? Ask me to "re-render the {resume|cover|prep} PDF"
 and I'll regenerate just that PDF without re-running the full pipeline.
 
+✨ Want to tweak the look? Open resume.pdf in Google Docs, Pages, Word, or Canva —
+they all import PDFs and let you adjust fonts, spacing, and colors with tools
+you already know.
+
 🐛 If anything in these PDFs looks off — missing content, weird layout, photo
 looks stretched, sections in a strange order — just tell me what you see and
 I'll investigate. See "Debugging this skill" in SKILL.md for the playbook.
