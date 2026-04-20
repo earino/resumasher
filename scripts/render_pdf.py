@@ -73,6 +73,8 @@ from reportlab.platypus import (
     Image,
     KeepTogether,
     PageBreak,
+    Table,
+    TableStyle,
 )
 from reportlab.platypus.flowables import HRFlowable
 from reportlab.lib.colors import HexColor
@@ -407,32 +409,55 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
 
 
 def _build_styles() -> StyleSheet1:
+    """Typographic system for the rendered PDF.
+
+    Design (issue #22 PR E):
+      - Clear size hierarchy. Before this change, Section (12) / Block (11) /
+        Body (10.5) / Bullet (10) were all within 2pt of each other — the
+        PDF read as "two sizes: big and small." Hierarchy steps are now 4pt
+        and 3pt so the eye can distinguish levels at a glance.
+      - Metadata (dates, locations, contact line) renders in 9pt gray
+        (#666666) to de-emphasize what's "when/where" vs "what/why." Classic
+        resume convention.
+      - Body and Bullet normalized to 10pt so prose and bulletted items look
+        consistent. Previously Body was 10.5pt, which made Summary text
+        feel subtly off vs. Experience bullets.
+      - Sub-role titles stay bold but drop to 10pt and indent 10pt.
+        Keeps weight (sub-blocks are still headings, not body) while
+        clearly subordinate to the 11pt Block title above.
+      - Section headings get more air above (spaceBefore 14 vs 10) so the
+        document breathes between sections.
+      - Dates right-align in gray (#666666) next to block titles via a
+        2-cell Table. Classic resume convention: title-left / date-right
+        gives the reader a fast "when" scan without re-reading each line.
+    """
     regular, bold = _register_fonts()
     ss = StyleSheet1()
     ss.add(ParagraphStyle(
         name="Name",
         fontName=bold,
-        fontSize=20,
-        leading=24,
+        fontSize=22,
+        leading=26,
         alignment=TA_LEFT,
         spaceAfter=2,
     ))
     ss.add(ParagraphStyle(
         name="Contact",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        fontSize=9.5,
+        leading=12,
         alignment=TA_LEFT,
-        spaceAfter=10,
+        spaceAfter=12,
+        textColor="#666666",
     ))
     ss.add(ParagraphStyle(
         name="SectionHeading",
         fontName=bold,
-        fontSize=12,
-        leading=15,
+        fontSize=14,
+        leading=17,
         alignment=TA_LEFT,
-        spaceBefore=10,
-        spaceAfter=4,
+        spaceBefore=14,
+        spaceAfter=5,
         textColor="#111111",
     ))
     ss.add(ParagraphStyle(
@@ -441,19 +466,20 @@ def _build_styles() -> StyleSheet1:
         fontSize=11,
         leading=14,
         alignment=TA_LEFT,
-        spaceBefore=4,
+        spaceBefore=6,
         spaceAfter=2,
     ))
-    # Sub-block titles (multi-role tenures inside one company). Same face as
-    # BlockTitle but slightly smaller and indented so the visual hierarchy
-    # Company > Role is obvious.
+    # Sub-block titles (multi-role tenures inside one company). Bold and
+    # one size smaller than BlockTitle, left-indented. No italic because we
+    # don't bundle italic DejaVu faces and faking italic via font synthesis
+    # reads as distortion rather than typographic intent.
     ss.add(ParagraphStyle(
         name="SubBlockTitle",
         fontName=bold,
-        fontSize=10.5,
+        fontSize=10,
         leading=13,
         alignment=TA_LEFT,
-        leftIndent=8,
+        leftIndent=10,
         spaceBefore=3,
         spaceAfter=1,
     ))
@@ -470,24 +496,45 @@ def _build_styles() -> StyleSheet1:
     ss.add(ParagraphStyle(
         name="Body",
         fontName=regular,
-        fontSize=10.5,
-        leading=14,
+        fontSize=10,
+        leading=13.5,
         alignment=TA_LEFT,
         spaceAfter=8,
+    ))
+    # Metadata: dates, locations, parenthetical context that sits next to
+    # block titles. Gray and small — subordinate to the main content but
+    # still readable. Right-aligned because that's the classic resume
+    # convention for dates-on-the-right.
+    ss.add(ParagraphStyle(
+        name="Metadata",
+        fontName=regular,
+        fontSize=9,
+        leading=13,
+        alignment=TA_LEFT,  # overridden per-cell when used in Tables
+        textColor="#666666",
+    ))
+    ss.add(ParagraphStyle(
+        name="MetadataRight",
+        fontName=regular,
+        fontSize=9,
+        leading=13,
+        alignment=TA_LEFT,  # alignment set via Table cell style; value here unused
+        textColor="#666666",
     ))
     ss.add(ParagraphStyle(
         name="SubheadCenter",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        fontSize=9.5,
+        leading=12,
         alignment=TA_CENTER,
-        spaceAfter=10,
+        spaceAfter=12,
+        textColor="#666666",
     ))
     ss.add(ParagraphStyle(
         name="NameCenter",
         fontName=bold,
-        fontSize=20,
-        leading=24,
+        fontSize=22,
+        leading=26,
         alignment=TA_CENTER,
         spaceAfter=2,
     ))
@@ -556,6 +603,104 @@ def _photo_render_size_cm(photo_source) -> tuple[float, float]:
     return _PHOTO_MAX_SIDE_CM * (src_w / src_h), _PHOTO_MAX_SIDE_CM
 
 
+# Date column width for the right-aligned date in block title rows. 110pt
+# ≈ 1.5 inches, enough for "September 2024 – December 2025" (the longest
+# realistic fully-spelled-out monthly range) without wrapping. Left column
+# is `None` (fills remaining frame width), so the date sits flush right
+# against the right margin.
+_TITLE_DATE_COL_WIDTH = 110
+
+# Matches a pipe-separated segment that reads as a date. Month names
+# (3-letter or fully spelled), optional year, optional en/em-dash range,
+# and the statuses `Present` / `Ongoing` / `Current`. Case-insensitive so
+# "ongoing" and "Ongoing" both trigger. Conservative on purpose — we'd
+# rather leave a date segment inline than misclassify the word "2024" in
+# a project title as a date.
+_DATE_TOKEN_RE = (
+    r"(?:"
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"(?:[a-z]*)?\.?\s+\d{4}"  # "Sep 2024", "September 2024"
+    r"|\d{4}"                   # bare year
+    r"|Present|Ongoing|Current"
+    r")"
+)
+_DATE_SEGMENT_RE = re.compile(
+    rf"^\s*{_DATE_TOKEN_RE}(?:\s*[-–—]\s*{_DATE_TOKEN_RE})?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
+    """Pull a date-shaped segment out of a pipe-separated title.
+
+    Tailor-emitted block titles look like
+      "MSc Business Analytics | Sep 2025 – Jun 2026 | CEU | GPA: 3.83"
+    or
+      "Meta | Senior Engineer | Aug 2022 – Present | Menlo Park, CA"
+    Classic resume typography puts the date on the right, everything else
+    on the left. This splitter finds the first pipe segment that matches
+    a date shape (month+year, year, or Present/Ongoing/Current, optionally
+    as a range) and returns (rest, date). If no date segment is present,
+    returns (title, None) so the caller falls back to a plain one-line
+    title.
+
+    Only the first date-shaped segment is pulled out. A title with two
+    date-like segments is unusual, but if it happens the second stays in
+    `rest` so nothing gets silently dropped.
+    """
+    if "|" not in title:
+        return title, None
+    segments = [s.strip() for s in title.split("|")]
+    for idx, seg in enumerate(segments):
+        if _DATE_SEGMENT_RE.match(seg):
+            rest = [s for s in (segments[:idx] + segments[idx + 1:]) if s]
+            return " | ".join(rest), seg
+    return title, None
+
+
+def _make_title_flowable(
+    title: str,
+    title_style: ParagraphStyle,
+    date_style: ParagraphStyle,
+):
+    """Render a block/sub-block title as a 2-cell title+date Table when
+    the title contains a date, otherwise a plain Paragraph.
+
+    Why a Table: Paragraph doesn't support per-run alignment (you can't
+    have left-aligned text and right-aligned text on the same line). A
+    1-row 2-column Table with the left column auto-sized (None) and the
+    right column fixed at `_TITLE_DATE_COL_WIDTH` gives the classic
+    resume look — title flush left, date flush right — while staying
+    ATS-safe (each cell is still selectable text in reading order).
+    """
+    left, date = _split_title_and_date(title)
+    if date is None:
+        return Paragraph(_escape(title), title_style)
+
+    tbl = Table(
+        [[
+            Paragraph(_escape(left), title_style),
+            Paragraph(_escape(date), date_style),
+        ]],
+        colWidths=[None, _TITLE_DATE_COL_WIDTH],
+        hAlign="LEFT",
+    )
+    tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    # Preserve the title style's vertical rhythm on the outer flowable
+    # since the inner Paragraph's spaceBefore/spaceAfter gets absorbed
+    # into the cell.
+    tbl.spaceBefore = title_style.spaceBefore
+    tbl.spaceAfter = title_style.spaceAfter
+    return tbl
+
+
 def _build_resume_flowables(
     doc: ResumeDoc,
     styles: StyleSheet1,
@@ -622,7 +767,11 @@ def _build_resume_flowables(
             flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
         # Blocks (Experience, Education, Projects).
         for block in section.blocks:
-            group: list = [Paragraph(_escape(block.title), styles["BlockTitle"])]
+            group: list = [_make_title_flowable(
+                block.title,
+                styles["BlockTitle"],
+                styles["MetadataRight"],
+            )]
             # Direct bullets (single-role blocks).
             for bullet in block.bullets:
                 group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
@@ -630,7 +779,11 @@ def _build_resume_flowables(
             # glued to its own bullets via the group list, so KeepTogether
             # prevents a page break from splitting role-title from its bullets.
             for sub in block.sub_blocks:
-                group.append(Paragraph(_escape(sub.title), styles["SubBlockTitle"]))
+                group.append(_make_title_flowable(
+                    sub.title,
+                    styles["SubBlockTitle"],
+                    styles["MetadataRight"],
+                ))
                 for bullet in sub.bullets:
                     group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
             flow.append(KeepTogether(group))

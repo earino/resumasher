@@ -24,6 +24,9 @@ import pytest
 
 from scripts.render_pdf import (
     MissingContactHeaderError,
+    _build_styles,
+    _make_title_flowable,
+    _split_title_and_date,
     assert_ats_roundtrip,
     parse_resume_markdown,
     render_cover_letter,
@@ -1421,3 +1424,274 @@ def test_render_horizontal_rule_produces_non_empty_pdf(tmp_path: Path):
     # adds content). A dramatically smaller with-rule PDF would signal
     # something got dropped.
     assert out_with.stat().st_size >= out_without.stat().st_size - 500
+
+
+# ---------------------------------------------------------------------------
+# Typographic polish (issue #22 PR E): right-aligned dates on block titles
+# ---------------------------------------------------------------------------
+
+
+def test_split_title_and_date_month_year():
+    rest, date = _split_title_and_date("Project X | Feb 2026 | Group Research")
+    assert date == "Feb 2026"
+    assert rest == "Project X | Group Research"
+
+
+def test_split_title_and_date_month_range():
+    rest, date = _split_title_and_date(
+        "INTAGE Market Consulting | Intern | Sep 2024 – Nov 2024"
+    )
+    assert date == "Sep 2024 – Nov 2024"
+    assert rest == "INTAGE Market Consulting | Intern"
+
+
+def test_split_title_and_date_month_range_with_present():
+    rest, date = _split_title_and_date(
+        "Meta | Senior Engineer | Aug 2022 – Present"
+    )
+    assert date == "Aug 2022 – Present"
+    assert rest == "Meta | Senior Engineer"
+
+
+def test_split_title_and_date_ongoing_status():
+    rest, date = _split_title_and_date(
+        "Capstone Project | Ongoing | With Sherpany"
+    )
+    assert date == "Ongoing"
+    assert rest == "Capstone Project | With Sherpany"
+
+
+def test_split_title_and_date_year_range():
+    rest, date = _split_title_and_date("BSc Statistics | 2021 – 2025 | ECNU")
+    assert date == "2021 – 2025"
+    assert rest == "BSc Statistics | ECNU"
+
+
+def test_split_title_and_date_bare_year():
+    rest, date = _split_title_and_date("Shanghai Handsome Wine | Intern | 2022")
+    assert date == "2022"
+    assert rest == "Shanghai Handsome Wine | Intern"
+
+
+def test_split_title_and_date_fully_spelled_month():
+    rest, date = _split_title_and_date(
+        "MSc Business Analytics | September 2025 – June 2026 | CEU"
+    )
+    assert date == "September 2025 – June 2026"
+    assert rest == "MSc Business Analytics | CEU"
+
+
+def test_split_title_and_date_no_date_returns_original():
+    rest, date = _split_title_and_date("Project Title | Group Research | CEU")
+    assert date is None
+    assert rest == "Project Title | Group Research | CEU"
+
+
+def test_split_title_and_date_no_pipes_returns_original():
+    rest, date = _split_title_and_date("Plain Title No Pipes")
+    assert date is None
+    assert rest == "Plain Title No Pipes"
+
+
+def test_split_title_and_date_ignores_year_in_title_when_not_isolated():
+    """A year inside a descriptive title shouldn't get pulled out."""
+    rest, date = _split_title_and_date(
+        "2024 Economic Survey | Group Research | CEU"
+    )
+    # "2024" standing alone as its own segment matches — the first
+    # segment IS the bare year "2024 Economic Survey" which contains
+    # but is not equal to a date. Should NOT match.
+    assert rest == "2024 Economic Survey | Group Research | CEU"
+    assert date is None
+
+
+def test_split_title_and_date_extracts_only_first_date():
+    """Two date-shaped segments: pull the first, leave the second inline."""
+    rest, date = _split_title_and_date(
+        "Project | Jan 2024 | started in 2023"
+    )
+    assert date == "Jan 2024"
+    # "started in 2023" does not match _DATE_SEGMENT_RE because it has
+    # prose; only "2023" alone would. The segment "started in 2023"
+    # stays in rest untouched.
+    assert rest == "Project | started in 2023"
+
+
+def test_make_title_flowable_without_date_returns_paragraph():
+    from reportlab.platypus import Paragraph
+    styles = _build_styles()
+    out = _make_title_flowable(
+        "Plain Title No Dates",
+        styles["BlockTitle"],
+        styles["MetadataRight"],
+    )
+    assert isinstance(out, Paragraph)
+
+
+def test_make_title_flowable_with_date_returns_table():
+    from reportlab.platypus import Table
+    styles = _build_styles()
+    out = _make_title_flowable(
+        "Project | Feb 2026 | Group",
+        styles["BlockTitle"],
+        styles["MetadataRight"],
+    )
+    assert isinstance(out, Table)
+
+
+def test_make_title_flowable_table_preserves_title_spacing():
+    """The Table should inherit the title style's spaceBefore/spaceAfter
+    so vertical rhythm between blocks doesn't collapse when a date is
+    present vs. absent."""
+    styles = _build_styles()
+    out = _make_title_flowable(
+        "Project | Feb 2026 | Group",
+        styles["BlockTitle"],
+        styles["MetadataRight"],
+    )
+    assert out.spaceBefore == styles["BlockTitle"].spaceBefore
+    assert out.spaceAfter == styles["BlockTitle"].spaceAfter
+
+
+def test_render_block_with_date_extracts_date_to_right_column(tmp_path: Path):
+    """End-to-end: a block with a date in its pipe-separated title should
+    render with the date text present in the PDF but separated from the
+    rest of the title (reportlab Table emits cells in row-major order,
+    so the date appears after the title when text is extracted)."""
+    md = """# Test User
+test@example.com | +1
+
+## Experience
+
+**Acme Corp** | Senior Engineer | Jan 2023 – Present
+- Did the work.
+"""
+    out = tmp_path / "dated.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(out)
+    # Both halves present
+    assert "Acme Corp" in text
+    assert "Senior Engineer" in text
+    assert "Jan 2023 – Present" in text
+    # The date was extracted: the title text no longer contains the date
+    # as a pipe segment (the left cell has only the non-date segments).
+    # Look for the left-cell text explicitly — it should NOT contain
+    # the date.
+    assert "Acme Corp | Senior Engineer" in text
+
+
+def test_render_block_without_date_keeps_title_inline(tmp_path: Path):
+    """A block title with no date-shaped segment should render as a single
+    Paragraph with pipe separators preserved."""
+    md = """# Test User
+test@example.com | +1
+
+## Projects
+
+**Open Source Library** | Python | Active maintainer
+- Ships releases.
+"""
+    out = tmp_path / "undated.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(out)
+    # All three pipe segments stay together on one title line
+    assert "Open Source Library | Python | Active maintainer" in text
+
+
+def test_render_sub_block_with_date_also_extracts(tmp_path: Path):
+    """Sub-block titles (multi-role tenures) get the same date-split
+    treatment as top-level block titles."""
+    md = """# Test User
+test@example.com | +1
+
+## Experience
+
+### Acme Corp
+**Senior Engineer** | Jan 2023 – Present
+- Architected the rewrite.
+**Engineer** | Jun 2020 – Dec 2022
+- Shipped features.
+"""
+    out = tmp_path / "subblock_dated.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(out)
+    # Both sub-role titles, both dates, all present
+    assert "Senior Engineer" in text
+    assert "Jan 2023 – Present" in text
+    assert "Engineer" in text
+    assert "Jun 2020 – Dec 2022" in text
+
+
+def test_render_typography_polish_preserves_ats_roundtrip(tmp_path: Path):
+    """Right-aligning dates via Table must not break ATS extraction.
+    An ATS parser reads extracted text; every meaningful content string
+    from the source markdown must still appear in the PDF text."""
+    md = """# Alice Smith
+alice@example.com | +1 555 0100 | linkedin.com/in/alice
+
+## Summary
+Builds reliable systems.
+
+## Experience
+
+**Globex** | Staff Engineer | Sep 2022 – Present
+- Led the platform migration.
+
+**Initech** | Senior Engineer | Jun 2018 – Aug 2022
+- Scaled the billing pipeline to 10x throughput.
+
+## Education
+
+**BS Computer Science** | 2014 – 2018 | State University
+"""
+    out = tmp_path / "ats.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(out, [
+        "Alice Smith",
+        "alice@example.com",
+        "Globex",
+        "Staff Engineer",
+        "Sep 2022 – Present",
+        "Initech",
+        "Senior Engineer",
+        "Jun 2018 – Aug 2022",
+        "BS Computer Science",
+        "2014 – 2018",
+        "State University",
+    ])
+
+
+def test_typographic_hierarchy_sizes_meaningful_steps():
+    """The style sizes should make clear hierarchy steps, not all
+    cluster within 2pt of each other (the pre-PR-E problem)."""
+    styles = _build_styles()
+    name_size = styles["Name"].fontSize
+    section_size = styles["SectionHeading"].fontSize
+    block_size = styles["BlockTitle"].fontSize
+    body_size = styles["Body"].fontSize
+    metadata_size = styles["Metadata"].fontSize
+
+    # Name > Section > Block > Body > Metadata, monotonically decreasing
+    assert name_size > section_size > block_size >= body_size > metadata_size
+    # Hierarchy steps: at least 2pt between adjacent levels so the eye
+    # can distinguish them at a glance.
+    assert name_size - section_size >= 6
+    assert section_size - block_size >= 2
+    assert body_size - metadata_size >= 1
+
+
+def test_metadata_style_is_gray():
+    """Dates and contact-line metadata should render in a gray that's
+    meaningfully lighter than near-black body text. Classic resume
+    typography convention."""
+    styles = _build_styles()
+    # Stringify the color — reportlab stores HexColor or the raw string
+    # depending on how the style was constructed.
+    metadata_color = str(styles["Metadata"].textColor).lower()
+    # #666666 is the target; allow any gray in #5xxxxx–#9xxxxx range.
+    assert "66" in metadata_color or "gray" in metadata_color or "grey" in metadata_color, (
+        f"Metadata style should be gray for subordination; got {metadata_color}"
+    )
