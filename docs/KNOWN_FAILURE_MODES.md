@@ -144,9 +144,9 @@ markdown to right after Summary in the PDF).
 **Fix location.** `scripts/render_pdf.py` → `_section_order_eu` if the
 style is EU.
 
-**Reference repro.** `examples/sections_dropped/` (Jiaqi Pan — style was
-reported as `eu` but the PDF shows US-style ordering; worth investigating
-whether the student's config overrode the default).
+**Reference repro.** `examples/sections_dropped/` (issue #18 reporter —
+style was reported as `eu` but the PDF shows US-style ordering; worth
+investigating whether the student's config overrode the default).
 
 ---
 
@@ -183,8 +183,8 @@ else:
 img = Image(photo_source, width=w_cm * cm, height=h_cm * cm)
 ```
 
-**Reference repro.** `examples/sections_dropped/` (Jiaqi Pan — portrait
-photo rendered at 3cm × 3cm, visible horizontal stretch).
+**Reference repro.** `examples/sections_dropped/` (issue #18 reporter —
+portrait photo rendered at 3cm × 3cm, visible horizontal stretch).
 
 ---
 

@@ -579,8 +579,8 @@ def test_assert_ats_roundtrip_raises_on_missing(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-# Jiaqi's real repro shape, anonymized. Pipe-separated contact, no H1.
-JIAQI_SHAPE_NO_H1_MD = """Test Candidate | +43 664 0000000 | test@example.com | Vienna, Austria | linkedin.com/in/testcandidate | github.com/testcandidate
+# The shape from issue #18: pipe-joined contact line with no `# Name` H1.
+PIPE_JOINED_NO_H1_MD = """Test Candidate | +43 664 0000000 | test@example.com | Vienna, Austria | linkedin.com/in/testcandidate | github.com/testcandidate
 
 ## Summary
 MSc Business Analytics candidate with a strong foundation in statistical modeling.
@@ -592,16 +592,17 @@ MSc Business Analytics candidate with a strong foundation in statistical modelin
 
 
 def test_render_resume_eu_raises_on_missing_contact_header(tmp_path: Path):
-    """The headline Jiaqi bug: pipe-separated line 1 with no `# Name` H1.
-    The renderer MUST refuse — a broken PDF shipped to an ATS silently
-    filters out the application and the student never hears back.
+    """Regression guard for issue #18: pipe-separated line 1 with no
+    `# Name` H1. The renderer MUST refuse — a broken PDF shipped to an
+    ATS silently filters out the application and the student never
+    hears back.
 
-    This test is the regression guard. If it ever starts passing WITHOUT
-    the exception, someone removed the loud-failure gate and we risk
-    shipping subtly-wrong PDFs again."""
+    If this test ever starts passing WITHOUT the exception, someone
+    removed the loud-failure gate and we risk shipping subtly-wrong
+    PDFs again."""
     out = tmp_path / "no-header.pdf"
     with pytest.raises(MissingContactHeaderError) as exc:
-        render_resume_eu(JIAQI_SHAPE_NO_H1_MD, out)
+        render_resume_eu(PIPE_JOINED_NO_H1_MD, out)
 
     # The exception message should name the problem clearly.
     assert "missing the candidate name header" in str(exc.value).lower()
@@ -619,7 +620,7 @@ def test_render_resume_us_raises_on_missing_contact_header(tmp_path: Path):
     and the fix are style-agnostic."""
     out = tmp_path / "no-header-us.pdf"
     with pytest.raises(MissingContactHeaderError):
-        render_resume_us(JIAQI_SHAPE_NO_H1_MD, out)
+        render_resume_us(PIPE_JOINED_NO_H1_MD, out)
     assert not out.exists()
 
 
@@ -627,7 +628,7 @@ def test_missing_contact_header_error_captures_first_line_for_diagnostics():
     """The exception's `first_line` attribute is the diagnostic breadcrumb
     the SKILL.md Phase 8 error handler shows the student ('Got: <this>').
     Verify it's set correctly for three different failure shapes."""
-    # Shape A: pipe-separated without H1 (the Jiaqi case)
+    # Shape A: pipe-separated without H1 (the #18 reporter case)
     md_a = "Candidate Name | email@example.com | +1 555 0000\n\n## Summary\nHi.\n"
     out = Path("/tmp/never-written.pdf")
     with pytest.raises(MissingContactHeaderError) as exc:
@@ -678,7 +679,7 @@ def test_cli_render_pdf_prints_actionable_error_and_exits_2(tmp_path: Path):
     so the orchestrator knows something broke."""
     import subprocess
     bad_md = tmp_path / "bad.md"
-    bad_md.write_text(JIAQI_SHAPE_NO_H1_MD, encoding="utf-8")
+    bad_md.write_text(PIPE_JOINED_NO_H1_MD, encoding="utf-8")
     out = tmp_path / "out.pdf"
     r = subprocess.run(
         [
