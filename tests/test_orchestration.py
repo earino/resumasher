@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -155,7 +156,7 @@ def test_format_jd_preserves_trailing_newlines():
 
 
 def _run_format_jd(*args: str, stdin: str = "") -> subprocess.CompletedProcess[str]:
-    cmd = ["python", "-m", "scripts.orchestration", "format-jd", *args]
+    cmd = [sys.executable, "-m", "scripts.orchestration", "format-jd", *args]
     return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False)
 
 
@@ -885,7 +886,7 @@ def test_ensure_gitignore_noop_outside_git_repo(tmp_path: Path):
 
 def test_cli_company_slug_roundtrip(tmp_path: Path):
     result = subprocess.run(
-        ["python", "-m", "scripts.orchestration", "company-slug", "Deloitte Consulting LLC"],
+        [sys.executable, "-m", "scripts.orchestration", "company-slug", "Deloitte Consulting LLC"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parent.parent,
@@ -896,7 +897,7 @@ def test_cli_company_slug_roundtrip(tmp_path: Path):
 
 def test_cli_discover_resume_missing_returns_failure(tmp_path: Path):
     result = subprocess.run(
-        ["python", "-m", "scripts.orchestration", "discover-resume", str(tmp_path)],
+        [sys.executable, "-m", "scripts.orchestration", "discover-resume", str(tmp_path)],
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parent.parent,
@@ -922,14 +923,13 @@ def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
     orchestrator must get far enough to emit the warning — which means the
     github_mine module imported cleanly.
     """
-    import subprocess
     repo_root = Path(__file__).resolve().parent.parent
     script = repo_root / "scripts" / "orchestration.py"
     (tmp_path / "resume.md").write_text("# Me\n", encoding="utf-8")
 
     result = subprocess.run(
         [
-            "python", str(script),
+            sys.executable, str(script),
             "mine-context", str(tmp_path),
             "--github-username", "this-username-does-not-exist-xyz-99999",
         ],
@@ -1195,7 +1195,7 @@ def test_cli_inspect_resume_returns_parseable_json(tmp_path: Path):
     p.write_text(md, encoding="utf-8")
 
     r = subprocess.run(
-        ["python", "-m", "scripts.orchestration", "inspect", "--resume", str(p)],
+        [sys.executable, "-m", "scripts.orchestration", "inspect", "--resume", str(p)],
         capture_output=True, text=True, check=False,
     )
     assert r.returncode == 0, r.stderr
@@ -1208,7 +1208,7 @@ def test_cli_inspect_requires_one_of_three_flags():
     """argparse mutually_exclusive_group(required=True) should reject
     `inspect` with no flag."""
     r = subprocess.run(
-        ["python", "-m", "scripts.orchestration", "inspect"],
+        [sys.executable, "-m", "scripts.orchestration", "inspect"],
         capture_output=True, text=True, check=False,
     )
     assert r.returncode != 0
@@ -1220,7 +1220,7 @@ def test_cli_inspect_rejects_multiple_flags(tmp_path: Path):
     (tmp_path / "b.md").write_text("# Y\nf@f.com\n", encoding="utf-8")
     r = subprocess.run(
         [
-            "python", "-m", "scripts.orchestration", "inspect",
+            sys.executable, "-m", "scripts.orchestration", "inspect",
             "--resume", str(tmp_path / "a.md"),
             "--pdf", str(tmp_path / "b.md"),
         ],
@@ -1235,7 +1235,7 @@ def test_cli_inspect_photo_on_real_image(tmp_path: Path):
     photo = tmp_path / "p.jpg"
     PILImage.new("RGB", (600, 450), color=(50, 50, 50)).save(photo, "JPEG")
     r = subprocess.run(
-        ["python", "-m", "scripts.orchestration", "inspect", "--photo", str(photo)],
+        [sys.executable, "-m", "scripts.orchestration", "inspect", "--photo", str(photo)],
         capture_output=True, text=True, check=False,
     )
     assert r.returncode == 0, r.stderr

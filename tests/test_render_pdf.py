@@ -16,6 +16,8 @@ Also covers:
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -677,13 +679,12 @@ def test_cli_render_pdf_prints_actionable_error_and_exits_2(tmp_path: Path):
     print a multi-line error to stderr naming the problem, the expected
     shape, the actual line 1, and the suggested action — and exit 2
     so the orchestrator knows something broke."""
-    import subprocess
     bad_md = tmp_path / "bad.md"
     bad_md.write_text(PIPE_JOINED_NO_H1_MD, encoding="utf-8")
     out = tmp_path / "out.pdf"
     r = subprocess.run(
         [
-            "python", "-m", "scripts.render_pdf",
+            sys.executable, "-m", "scripts.render_pdf",
             "--input", str(bad_md),
             "--kind", "resume",
             "--style", "eu",
