@@ -1017,12 +1017,14 @@ def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
     assert empty_name["severity"] == "critical"
 
 
-def test_inspect_resume_orphaned_bullets_shape_b_triggers_warning(tmp_path: Path):
-    """Regression guard for issue #19 (KNOWN_FAILURE_MODES.md #2):
-    `**Title**` directly under `##` with no intervening `###` heading.
-    The parser lands titles in raw_paragraphs and bullets in raw_bullets,
-    so the PDF stacks all titles then dumps all bullets at the end. This
-    is shape B."""
+def test_inspect_resume_shape_b_no_longer_orphans_bullets(tmp_path: Path):
+    """Inverted from a previous test that asserted the ORPHANED_BULLETS
+    warning fires for the issue #19 shape. After the parser fix, the
+    same shape produces correctly-attached blocks — no warning fires,
+    bullets sit under their titles in the parse tree.
+
+    Input markdown is identical to the pre-fix test so the before/after
+    diff is visible: same input, inverted expectations."""
     md = (
         "# Ana Müller\n"
         "ana@example.com | +43 | Vienna\n"
@@ -1041,16 +1043,23 @@ def test_inspect_resume_orphaned_bullets_shape_b_triggers_warning(tmp_path: Path
 
     result = inspect_resume(p)
 
+    # No ORPHANED_BULLETS warning — the shape is now parsed correctly.
     orphaned = [w for w in result["warnings"] if w["code"] == "ORPHANED_BULLETS"]
-    assert len(orphaned) == 1
-    assert orphaned[0]["section"] == "Research Experience"
-    assert orphaned[0]["shape"] == "B"
-    assert orphaned[0]["severity"] == "critical"
-    # The section's inspection entry shows the bug signature directly:
+    assert orphaned == [], (
+        f"Expected no ORPHANED_BULLETS warning after parser fix, got: {orphaned}"
+    )
+
+    # Two synthetic blocks created from the `**Title** | metadata` lines.
     research = next(s for s in result["sections"] if s["heading"] == "Research Experience")
-    assert research["block_count"] == 0
-    assert research["raw_bullet_count"] == 3
-    assert research["raw_paragraph_count"] >= 2  # the two **Title** lines
+    assert research["block_count"] == 2, (
+        f"Expected 2 blocks (one per project title), got {research['block_count']}"
+    )
+    # Bullets attached to the blocks, not loose at the section level.
+    assert research["raw_bullet_count"] == 0
+    # Each block has the right bullets: 2 under SME, 1 under Cross-Linguistic.
+    assert research["block_bullet_counts"] == [2, 1]
+    # `**Title**` lines no longer end up as raw paragraphs.
+    assert research["raw_paragraph_count"] == 0
 
 
 def test_inspect_resume_well_formed_sub_blocks_no_warning(tmp_path: Path):

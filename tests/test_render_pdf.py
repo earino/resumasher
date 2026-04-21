@@ -702,3 +702,242 @@ def test_cli_render_pdf_prints_actionable_error_and_exits_2(tmp_path: Path):
     assert "#18" in r.stderr
     # No PDF should have been written
     assert not out.exists()
+
+
+# ---------------------------------------------------------------------------
+# Issue #19 — synthetic blocks from `**Title** | metadata` under `##`
+#
+# Before the fix, `parse_resume_markdown` only recognized `**Title**` as a
+# sub-block when it appeared inside a `### Company` block. Tailors often emit
+# `**Project**` directly under `## Research Experience` without the `###`
+# wrapper, and the parser was silently dropping the titles into
+# raw_paragraphs and the bullets into raw_bullets. The renderer emitted
+# all titles first, then all bullets — reader could not tell which bullet
+# belonged to which project.
+#
+# After the fix: `**Title** | metadata` at section level creates a synthetic
+# ResumeBlock. Bullets attach to it until the next `**Title**` or `##`.
+# The trailing-metadata check is load-bearing — bold-only prose like
+# "**Accomplished leader.**" in a Summary still falls through to paragraphs.
+# ---------------------------------------------------------------------------
+
+
+SHAPE_B_RESUME_MD = """# Test Candidate
+test@example.com | +43 | Vienna, Austria
+
+## Summary
+MSc Business Analytics candidate.
+
+## Research Experience
+
+**SME High-Growth Determinants — Predictive Modeling** | Feb 2026 | Group Research
+- Engineered an automated data pipeline for 20,000 firms.
+- Developed 118 features for nonlinear patterns.
+
+**Cross-Linguistic Sentiment Analysis via AWS** | Nov 2025 | Individual Research
+- Built a cloud-native Python pipeline.
+- Identified sentiment variations across 30 multilingual reports.
+
+**Capstone Project — NLP on CRM Sales Data** | Ongoing | Collaborating with Sherpany
+- Operationalising a structured sales-flag framework.
+"""
+
+
+def test_parse_synthetic_block_from_bold_title_with_metadata():
+    """Shape B parsing: 3 `**Title** | metadata` lines under `##` produce
+    3 blocks with the right bullets attached. This is the core issue #19 fix."""
+    doc = parse_resume_markdown(SHAPE_B_RESUME_MD)
+    research = next(s for s in doc.sections if s.heading == "Research Experience")
+
+    assert len(research.blocks) == 3, (
+        f"Expected 3 synthetic blocks, got {len(research.blocks)}"
+    )
+    assert research.raw_bullets == [], (
+        f"Bullets should attach to blocks, not sit at section level. "
+        f"Got raw_bullets: {research.raw_bullets}"
+    )
+    assert research.raw_paragraphs == [], (
+        f"`**Title**` lines should become block titles, not paragraphs. "
+        f"Got raw_paragraphs: {research.raw_paragraphs}"
+    )
+
+    # Block titles preserve the metadata (dates, context).
+    assert research.blocks[0].title.startswith("SME High-Growth")
+    assert "Feb 2026" in research.blocks[0].title
+    assert research.blocks[1].title.startswith("Cross-Linguistic")
+    assert research.blocks[2].title.startswith("Capstone Project")
+
+    # Bullets attached correctly: 2, 2, 1.
+    assert len(research.blocks[0].bullets) == 2
+    assert len(research.blocks[1].bullets) == 2
+    assert len(research.blocks[2].bullets) == 1
+    assert "Engineered" in research.blocks[0].bullets[0]
+    assert "Cloud-native" in research.blocks[1].bullets[0] or "cloud-native" in research.blocks[1].bullets[0]
+    assert "sales-flag" in research.blocks[2].bullets[0]
+
+
+def test_parse_bold_title_without_metadata_stays_as_paragraph():
+    """Option-C edge case: a bold-only line in a section (no trailing
+    metadata) is ambiguous — could be prose or a bare title. Parser
+    treats it as prose to avoid hijacking Summary sections where bold
+    emphasis is legitimate. Only `**Title** + trailing metadata` opens
+    a synthetic block at section level."""
+    md = (
+        "# Test User\n"
+        "test@example.com | +1\n"
+        "\n"
+        "## Summary\n"
+        "**Accomplished data leader.**\n"
+        "Further prose about the candidate.\n"
+    )
+    doc = parse_resume_markdown(md)
+    summary = next(s for s in doc.sections if s.heading == "Summary")
+
+    # No synthetic block — the bold-only line has no trailing metadata.
+    assert summary.blocks == [], (
+        f"Bold-only line (no trailing metadata) should NOT open a synthetic "
+        f"block. Got blocks: {[b.title for b in summary.blocks]}"
+    )
+    # The bold line falls through to raw_paragraphs like any other prose.
+    assert len(summary.raw_paragraphs) == 2
+    assert "**Accomplished data leader.**" in summary.raw_paragraphs
+
+
+def test_parse_three_level_sub_block_shape_still_works():
+    """Regression guard: the existing multi-role tenure shape (`###
+    Company` then `**Role**` as sub-block) must still produce a block
+    with sub_blocks. The fix for shape B must not break shape A."""
+    md = (
+        "# Test User\n"
+        "test@example.com | +1\n"
+        "\n"
+        "## Experience\n"
+        "\n"
+        "### Central European University (December 2017 – Present)\n"
+        "**Professor of Practice** (August 2025 – Present)\n"
+        "- Designed the practical deep learning course.\n"
+        "**Visiting Professor** (December 2017 – July 2025)\n"
+        "- Taught applied analytics.\n"
+    )
+    doc = parse_resume_markdown(md)
+    experience = next(s for s in doc.sections if s.heading == "Experience")
+
+    # One real block (the `### Company` heading).
+    assert len(experience.blocks) == 1
+    ceu = experience.blocks[0]
+    assert ceu.title.startswith("Central European University")
+    # Two sub-blocks (the `**Role**` lines inside the block).
+    assert len(ceu.sub_blocks) == 2
+    assert ceu.sub_blocks[0].title.startswith("Professor of Practice")
+    assert ceu.sub_blocks[1].title.startswith("Visiting Professor")
+    # Bullets attached to the right sub-block.
+    assert any("deep learning" in b for b in ceu.sub_blocks[0].bullets)
+    assert any("applied analytics" in b for b in ceu.sub_blocks[1].bullets)
+    # Block has no DIRECT bullets — they're all on sub-blocks.
+    assert ceu.bullets == []
+
+
+def test_parse_mixed_shape_synthetic_then_real_then_sub():
+    """Mixed shape: `**ProjectA**` (synthetic) then `### CompanyB` (real)
+    then `**RoleB**` (sub-block of CompanyB). This confirms the
+    synthetic_block_active flag toggles correctly on `###`, so a
+    `**Title**` after a real block correctly becomes a sub-block."""
+    md = (
+        "# Test User\n"
+        "test@example.com | +1\n"
+        "\n"
+        "## Experience\n"
+        "\n"
+        "**Project Alpha** | Jan 2025\n"
+        "- Shipped alpha.\n"
+        "\n"
+        "### BigCo Inc. (2023 – Present)\n"
+        "**Senior Role** (2024 – Present)\n"
+        "- Did senior things.\n"
+    )
+    doc = parse_resume_markdown(md)
+    experience = next(s for s in doc.sections if s.heading == "Experience")
+
+    # Two top-level blocks: one synthetic (Project Alpha), one real (BigCo Inc.).
+    assert len(experience.blocks) == 2
+    synthetic, real = experience.blocks
+
+    assert synthetic.title.startswith("Project Alpha")
+    assert len(synthetic.bullets) == 1
+    assert "alpha" in synthetic.bullets[0]
+    assert synthetic.sub_blocks == [], (
+        "Synthetic block should not have sub-blocks from the later `### BigCo` — "
+        "the `###` closes the synthetic and opens a new real block."
+    )
+
+    assert real.title.startswith("BigCo Inc.")
+    # The `**Senior Role**` under `### BigCo` becomes a sub-block, NOT a
+    # sibling synthetic block — because `current_block` is real (not synthetic)
+    # when we see the `**Title**`.
+    assert len(real.sub_blocks) == 1
+    assert real.sub_blocks[0].title.startswith("Senior Role")
+    assert any("senior things" in b for b in real.sub_blocks[0].bullets)
+
+
+def test_parse_bold_inline_in_paragraph_not_hijacked():
+    """Regression guard: bold emphasis inside a paragraph (not a full
+    line of bold) must not trigger block creation. The `_SUB_BLOCK_RE`
+    regex requires the ENTIRE line to start with `**` and have the
+    closing `**` match the opening — inline bold fails this check."""
+    md = (
+        "# Test User\n"
+        "test@example.com | +1\n"
+        "\n"
+        "## Summary\n"
+        "I ran **rigorous A/B testing** on a production pipeline.\n"
+        "Results were **significant** at p < 0.05.\n"
+    )
+    doc = parse_resume_markdown(md)
+    summary = next(s for s in doc.sections if s.heading == "Summary")
+
+    assert summary.blocks == [], "Inline bold in prose should not open blocks"
+    assert summary.raw_bullets == []
+    assert len(summary.raw_paragraphs) == 2
+
+
+def test_render_synthetic_blocks_interleave_bullets_with_titles(tmp_path: Path):
+    """End-to-end: issue #19 shape renders with each bullet appearing
+    BETWEEN its parent title and the next project's title in the PDF.
+    This is the positional assertion that catches the exact regression
+    we're fixing — before the fix, all titles stacked at the top and
+    all bullets dumped at the bottom."""
+    from pdfminer.high_level import extract_text
+
+    out = tmp_path / "shape-b.pdf"
+    render_resume_eu(SHAPE_B_RESUME_MD, out)
+    assert out.exists()
+    extracted = extract_text(str(out))
+
+    def pos(needle: str) -> int:
+        idx = extracted.find(needle)
+        assert idx != -1, f"'{needle}' missing from extracted PDF text"
+        return idx
+
+    # Positional assertions: SME's bullet "Engineered..." must appear AFTER
+    # the SME title AND BEFORE the next project's title. Same for the
+    # Cross-Linguistic bullet and the Capstone bullet.
+    sme_title = pos("SME High-Growth")
+    sme_bullet = pos("Engineered an automated data pipeline")
+    cross_title = pos("Cross-Linguistic")
+    cross_bullet = pos("sentiment variations")
+    capstone_title = pos("Capstone Project")
+    capstone_bullet = pos("sales-flag framework")
+
+    assert sme_title < sme_bullet < cross_title, (
+        f"SME bullet out of place: title={sme_title}, bullet={sme_bullet}, "
+        f"next_title={cross_title}. Before the fix, sme_bullet would appear "
+        f"AFTER cross_title (flat bullet dump)."
+    )
+    assert cross_title < cross_bullet < capstone_title, (
+        f"Cross-Linguistic bullet out of place: title={cross_title}, "
+        f"bullet={cross_bullet}, next_title={capstone_title}."
+    )
+    assert capstone_title < capstone_bullet, (
+        f"Capstone bullet appears before its title: title={capstone_title}, "
+        f"bullet={capstone_bullet}."
+    )

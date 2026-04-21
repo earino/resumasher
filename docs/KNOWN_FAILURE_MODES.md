@@ -65,6 +65,13 @@ test). Full original student-reported pair is kept locally at
 ## #2 — Orphaned bullets (bullets float to end of section)
 
 **Tracked in:** [#19](https://github.com/earino/resumasher/issues/19).
+**Status:** parser now synthesizes a `ResumeBlock` when `**Title** | metadata`
+appears directly under `##` with no `###` wrapper (v0.4 Unreleased). Shape
+is supported end-to-end: each `**Project Title**` becomes a block, bullets
+attach to that block, the rendered PDF shows bullets interleaved under
+their titles. Trailing-metadata check guards against hijacking bold-only
+prose in Summary sections. Regression guard: 7 tests across
+`tests/test_render_pdf.py` and `tests/test_orchestration.py`.
 
 
 **Symptom.** In sections with multiple projects/roles (Research Experience,

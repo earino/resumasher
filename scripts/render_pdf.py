@@ -248,6 +248,12 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
     current_section: Optional[ResumeSection] = None
     current_block: Optional[ResumeBlock] = None
     current_sub: Optional[ResumeSubBlock] = None
+    # True when current_block was created from a `**Title**` line at the
+    # section level (not from a `### Company` heading). Used to decide
+    # whether the NEXT `**Title**` should be a sub-block of the current
+    # block (real `###` parent) or a sibling synthetic block (no `###`
+    # parent — the issue #19 shape). Cleared on every `##` or `###`.
+    synthetic_block_active = False
 
     for raw_line in lines:
         line = raw_line.rstrip()
@@ -264,6 +270,7 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
             doc.sections.append(current_section)
             current_block = None
             current_sub = None
+            synthetic_block_active = False
             continue
 
         if line.startswith("### "):
@@ -273,21 +280,56 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
             current_block = ResumeBlock(title=line[4:].strip())
             current_section.blocks.append(current_block)
             current_sub = None
+            synthetic_block_active = False
             continue
 
-        # Sub-block title: **Title** followed by optional metadata (dates, location).
-        # Only matches when the FULL line is the bold phrase + optional trailing text,
-        # AND we're currently inside a block. Otherwise a bold phrase inside a bullet
-        # or paragraph would hijack the parser.
-        if current_block is not None:
-            sub_match = _SUB_BLOCK_RE.match(line)
-            if sub_match:
-                title_core = sub_match.group(1).strip()
-                trailing = sub_match.group(2).strip()
-                sub_title = f"{title_core} {trailing}".strip() if trailing else title_core
-                current_sub = ResumeSubBlock(title=sub_title)
+        # `**Title**` with optional trailing metadata. Full-line match only,
+        # so bold inline in prose ("a **really** cool thing") never matches.
+        # Three interpretations depending on current parser state:
+        #
+        #  (a) Inside a real `### Company` block (current_block is set AND
+        #      synthetic_block_active is False): open a sub-block for a
+        #      multi-role tenure (Senior Director under a Company heading).
+        #
+        #  (b) At section level with no `###` above, AND trailing metadata
+        #      is non-empty: open a synthetic block. This handles the
+        #      issue #19 shape where the tailor emits `**Project Name** |
+        #      Feb 2026 | Context` directly under `##` without the `###`
+        #      wrapper. The trailing-metadata check is load-bearing —
+        #      it rejects bold-only prose like "**Accomplished leader.**"
+        #      in a Summary section, which should stay as a paragraph.
+        #
+        #  (c) Already inside a synthetic block (synthetic_block_active
+        #      is True): open ANOTHER synthetic block as a sibling,
+        #      because consecutive `**Project A** ... **Project B**` at
+        #      section level are siblings, not parent-child.
+        #
+        # Bold lines without trailing metadata at section level fall
+        # through to raw_paragraphs (existing behavior).
+        sub_match = _SUB_BLOCK_RE.match(line)
+        if sub_match and current_section is not None:
+            title_core = sub_match.group(1).strip()
+            trailing = sub_match.group(2).strip()
+            bolded_title = f"{title_core} {trailing}".strip() if trailing else title_core
+
+            if current_block is not None and not synthetic_block_active:
+                # Shape (a): sub-role under a real `### Company` block.
+                current_sub = ResumeSubBlock(title=bolded_title)
                 current_block.sub_blocks.append(current_sub)
                 continue
+
+            if trailing:
+                # Shape (b) or (c): synthetic block, either first one in
+                # the section or a sibling of a previous synthetic.
+                current_block = ResumeBlock(title=bolded_title)
+                current_section.blocks.append(current_block)
+                current_sub = None
+                synthetic_block_active = True
+                continue
+            # else: bold line with no trailing metadata at section level
+            # with no `###` parent. Fall through to raw_paragraphs so
+            # bold-only prose in a Summary doesn't get hijacked as a
+            # project heading.
 
         bullet_match = re.match(r"^\s*[-*]\s+(.*)$", line)
         if bullet_match:
