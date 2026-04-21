@@ -191,6 +191,13 @@ class ResumeDoc:
     name: str = ""
     contact_line: str = ""
     sections: list[ResumeSection] = field(default_factory=list)
+    # Path to the candidate's photo, extracted from an HTML comment in the
+    # markdown header: `<!-- photo: /path/to/photo.jpg -->`. Populated by
+    # `parse_resume_markdown` when the comment is present. Used by the
+    # renderer as the photo source when no explicit `--photo` flag was
+    # passed (see render_resume_eu / render_resume_us). Enables re-render
+    # after markdown edits without external config state. Tracked: #20.
+    photo_path: str = ""
 
 
 class MissingContactHeaderError(ValueError):
@@ -225,6 +232,13 @@ class MissingContactHeaderError(ValueError):
 
 
 _SUB_BLOCK_RE = re.compile(r"^\*\*(.+?)\*\*\s*(.*)$")
+
+# `<!-- photo: /path/to/photo.jpg -->` — HTML comment the tailor emits at the
+# top of the markdown when a photo is provided. The path can contain spaces,
+# slashes, and extension characters. Whitespace around the path is allowed
+# (and stripped) so the tailor doesn't have to be pixel-perfect. Only the
+# full-line form matches — inline HTML comments in prose don't trigger.
+_PHOTO_COMMENT_RE = re.compile(r"^\s*<!--\s*photo\s*:\s*(.+?)\s*-->\s*$")
 
 
 def parse_resume_markdown(text: str) -> ResumeDoc:
@@ -264,6 +278,16 @@ def parse_resume_markdown(text: str) -> ResumeDoc:
         if line.startswith("# ") and not doc.name:
             doc.name = line[2:].strip()
             continue
+
+        # `<!-- photo: /path -->` HTML comment — captured once (first
+        # occurrence wins; duplicates are probably copy-paste bugs).
+        # Stored verbatim as the student typed it (absolute or relative);
+        # the renderer resolves relative paths when embedding. See #20.
+        if not doc.photo_path:
+            photo_match = _PHOTO_COMMENT_RE.match(line)
+            if photo_match:
+                doc.photo_path = photo_match.group(1).strip()
+                continue
 
         if line.startswith("## "):
             current_section = ResumeSection(heading=line[3:].strip())
@@ -646,21 +670,50 @@ def _assert_contact_header_present(doc: ResumeDoc, source_markdown: str) -> None
         raise MissingContactHeaderError(_first_non_empty_line(source_markdown))
 
 
+def _resolve_photo_path(explicit_flag: Optional[str], doc: ResumeDoc) -> Optional[str]:
+    """Decide which photo (if any) the renderer should embed.
+
+    Precedence, highest to lowest:
+      1. Explicit `--photo <path>` flag (argument to the renderer). Wins
+         over everything — "the caller knows best."
+      2. Markdown comment `<!-- photo: /path -->` in the tailored
+         markdown (exposed via `doc.photo_path`). This makes the markdown
+         self-describing so re-render after manual edits works without
+         external config state. Shipped in #20.
+      3. No photo. Renderer embeds nothing.
+
+    Returns None when no photo should be embedded, or a path string
+    otherwise. Shared by render_resume_eu and render_resume_us (US
+    style discards the result either way, but the precedence logic is
+    the same for API symmetry).
+    """
+    if explicit_flag is not None:
+        return explicit_flag
+    if doc.photo_path:
+        return doc.photo_path
+    return None
+
+
 def render_resume_eu(
     source_markdown: str,
     output_path: str | Path,
     photo: Optional[str] = None,
 ) -> Path:
-    """EU-style single-column resume. Photo optional (DACH convention)."""
+    """EU-style single-column resume. Photo optional (DACH convention).
+
+    Photo source precedence: `photo` argument > markdown `<!-- photo: -->`
+    comment > no photo. See `_resolve_photo_path`.
+    """
     styles = _build_styles()
     doc = parse_resume_markdown(source_markdown)
     _assert_contact_header_present(doc, source_markdown)
+    resolved_photo = _resolve_photo_path(photo, doc)
     flow = _build_resume_flowables(
         doc,
         styles,
         section_order_fn=_section_order_eu,
         center_header=False,
-        photo_path=photo,
+        photo_path=resolved_photo,
     )
     return _write_pdf(flow, output_path, pagesize=A4)
 

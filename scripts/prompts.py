@@ -611,20 +611,32 @@ def format_contact_info(
     phone: str = "",
     linkedin: str = "",
     location: str = "",
+    photo_path: str = "",
 ) -> str:
     """
     Build the pre-formatted header block that the tailor must copy verbatim.
-    Produces exactly two lines:
+    Produces two or three lines depending on whether a photo was provided:
 
         # <Name>
         <email> | <phone> | <linkedin> | <location>
+        <!-- photo: /path/to/photo.jpg -->
 
-    Empty fields are omitted from the second line so you get
+    Empty fields are omitted from the contact line so you get
     ``earino@gmail.com | +1 650 200 7168`` instead of
     ``earino@gmail.com | +1 650 200 7168 |  | Vienna``.
 
-    Name is required because a resume without a name is nonsense. The rest
-    are optional — an empty string skips the field.
+    The photo comment is only emitted when `photo_path` is non-empty.
+    HTML-style comments are invisible in rendered markdown previews (so
+    a student viewing the .md in any tool doesn't see visual noise) but
+    are captured by `parse_resume_markdown` and exposed on `ResumeDoc.
+    photo_path`, where the renderer reads them when no `--photo` flag
+    was explicitly passed. Precedence: `--photo <flag>` > markdown
+    comment > no photo. Closes issue #20 / KNOWN_FAILURE_MODES.md #5
+    (photo path was not persisted to the tailored markdown, so re-render
+    after an edit required external config state).
+
+    Name is required because a resume without a name is nonsense. The
+    rest are optional — an empty string skips the field.
     """
     if not name or not name.strip():
         raise ValueError("format_contact_info: name is required")
@@ -632,9 +644,12 @@ def format_contact_info(
     fields = [f for f in (email, phone, linkedin, location) if f and f.strip()]
     contact_line = " | ".join(fields)
 
+    lines = [f"# {name}"]
     if contact_line:
-        return f"# {name}\n{contact_line}"
-    return f"# {name}"
+        lines.append(contact_line)
+    if photo_path and photo_path.strip():
+        lines.append(f"<!-- photo: {photo_path.strip()} -->")
+    return "\n".join(lines)
 
 
 def build_prompt(

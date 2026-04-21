@@ -249,7 +249,14 @@ def test_discover_resume_prefers_markdown_over_pdf(tmp_path: Path):
 def test_discover_resume_accepts_cv_pdf_variants(tmp_path: Path):
     (tmp_path / "CV.pdf").write_bytes(b"%PDF-1.4\n...")
     result = discover_resume(tmp_path)
-    assert result is not None and result.name == "CV.pdf"
+    # Assertion is case-insensitive because on case-insensitive filesystems
+    # (macOS APFS, Windows NTFS default), `discover_resume` iterates
+    # RESUME_CANDIDATES in order and `(cwd / "cv.pdf").exists()` matches
+    # first, returning a Path whose .name reflects the candidate string
+    # ("cv.pdf"), not the on-disk filename ("CV.pdf"). Functionally
+    # identical (both paths resolve to the same file), but cosmetically
+    # different. The test cares only that a CV.pdf-shaped file was found.
+    assert result is not None and result.name.lower() == "cv.pdf"
 
 
 # ---------------------------------------------------------------------------
