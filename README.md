@@ -3,7 +3,7 @@
 [![CI](https://github.com/earino/resumasher/actions/workflows/ci.yml/badge.svg)](https://github.com/earino/resumasher/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/earino/resumasher/blob/main/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 233 passing](https://img.shields.io/badge/tests-233%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
+[![Tests: 245 passing](https://img.shields.io/badge/tests-245%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
 resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, or **Google Gemini CLI**), reading your actual work to back every claim with concrete evidence.
 
@@ -279,6 +279,12 @@ Every generated PDF passes `pdfminer.six` round-trip extraction. We've also manu
 
 **Before applying through a major ATS** (Workday, Taleo, iCIMS), upload your `resume.pdf` to [jobscan.co](https://www.jobscan.co/) (free preview) with the JD pasted in, and eyeball that sections parse the way you'd expect.
 
+## Something looks wrong?
+
+resumasher runs inside your AI CLI and the agent can investigate its own output. If a PDF looks off — missing content, a stretched photo, sections in a weird order, anything — stay in the same chat and describe what you see in plain English. The agent will read the artifacts, match your symptom against [known failure modes](docs/KNOWN_FAILURE_MODES.md), and draft a bug report you can review and file (with your contact info redacted).
+
+No commands to remember, no `--debug` flag. Just tell your AI CLI what's wrong.
+
 ## Architecture
 
 The skill runs a nine-phase pipeline: first-run setup → intake → folder + GitHub mine → fit analysis → company research → tailor → parallel cover-letter + interview-prep → interactive placeholder fill → PDF render → log and summary.
@@ -329,7 +335,7 @@ resumasher telemetry set-tier anonymous # Change tier
 ## Development
 
 ```bash
-# Run the test suite (233 tests, ~4 seconds)
+# Run the test suite (245 tests, ~4 seconds)
 source .venv/bin/activate
 pytest tests/ -v
 

@@ -26,6 +26,9 @@ from scripts.orchestration import (
     first_run_needed,
     folder_state_hash,
     format_jd,
+    inspect_photo,
+    inspect_pdf,
+    inspect_resume,
     is_failure_sentinel,
     mine_folder_context,
     parse_job_source,
@@ -947,3 +950,286 @@ def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
         f"mine-context should exit 0 even when github fetch fails "
         f"(non-fatal). Got {result.returncode}. Output:\n{combined}"
     )
+
+
+# ---------------------------------------------------------------------------
+# inspect — agent-driven debugging helpers
+#
+# These are the structured introspection helpers the SKILL.md "Debugging
+# this skill" playbook calls when a student reports a bug. Each returns
+# JSON-ready dicts with counts, content previews, and light warnings.
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_resume_happy_path_returns_expected_fields(tmp_path: Path):
+    """A well-formed resume produces no warnings and populates every field."""
+    md = (
+        "# Ana Müller\n"
+        "ana@example.com | +43 123 | linkedin.com/in/ana | Vienna\n"
+        "\n"
+        "## Summary\n"
+        "Business analytics MSc graduate.\n"
+        "\n"
+        "## Experience\n"
+        "### Data Analyst — Raiffeisen (2025)\n"
+        "- Built churn model, F1=0.82.\n"
+        "- Delivered Tableau dashboard.\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    result = inspect_resume(p)
+
+    assert result["name"] == "Ana Müller"
+    assert "ana@example.com" in result["contact_line"]
+    assert result["has_h1"] is True
+    assert result["first_line_raw"] == "# Ana Müller"
+    assert result["section_count"] == 2
+    assert result["section_order"] == ["Summary", "Experience"]
+    assert result["warnings"] == []
+
+
+def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
+    """Regression guard for Jiaqi Pan's bug 1: pipe-separated contact line
+    on line 1 without a `# Name` H1 → parser drops the contact header,
+    PDF ships with no name, ATS can't identify the candidate."""
+    md = (
+        "Jiaqi Pan | +43 664 3018699 | jiaqi@example.com | Vienna | linkedin.com/in/jiaqi\n"
+        "\n"
+        "## Summary\n"
+        "MSc Business Analytics student.\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    result = inspect_resume(p)
+
+    assert result["name"] == ""
+    assert result["contact_line"] == ""
+    assert result["has_h1"] is False
+    assert result["first_line_raw"].startswith("Jiaqi Pan |")
+
+    codes = [w["code"] for w in result["warnings"]]
+    assert "EMPTY_NAME" in codes
+    assert "EMPTY_CONTACT_LINE" in codes
+    empty_name = next(w for w in result["warnings"] if w["code"] == "EMPTY_NAME")
+    assert empty_name["severity"] == "critical"
+
+
+def test_inspect_resume_orphaned_bullets_shape_b_triggers_warning(tmp_path: Path):
+    """Regression guard for Jiaqi Pan's bug 2: `**Title**` directly under
+    `##` with no intervening `###` heading. The parser lands titles in
+    raw_paragraphs and bullets in raw_bullets, so the PDF stacks all
+    titles then dumps all bullets at the end. This is shape B."""
+    md = (
+        "# Ana Müller\n"
+        "ana@example.com | +43 | Vienna\n"
+        "\n"
+        "## Research Experience\n"
+        "\n"
+        "**SME High-Growth — Predictive Modeling** | Feb 2026\n"
+        "- Engineered an automated data pipeline for 20,000 firms.\n"
+        "- Developed 118 features for nonlinear patterns.\n"
+        "\n"
+        "**Cross-Linguistic Sentiment Analysis via AWS** | Nov 2025\n"
+        "- Built a cloud-native Python pipeline.\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    result = inspect_resume(p)
+
+    orphaned = [w for w in result["warnings"] if w["code"] == "ORPHANED_BULLETS"]
+    assert len(orphaned) == 1
+    assert orphaned[0]["section"] == "Research Experience"
+    assert orphaned[0]["shape"] == "B"
+    assert orphaned[0]["severity"] == "critical"
+    # The section's inspection entry shows the bug signature directly:
+    research = next(s for s in result["sections"] if s["heading"] == "Research Experience")
+    assert research["block_count"] == 0
+    assert research["raw_bullet_count"] == 3
+    assert research["raw_paragraph_count"] >= 2  # the two **Title** lines
+
+
+def test_inspect_resume_well_formed_sub_blocks_no_warning(tmp_path: Path):
+    """Control: same Research Experience shape but with `###` wrappers
+    should produce proper blocks and no orphaned-bullets warning."""
+    md = (
+        "# Ana Müller\n"
+        "ana@example.com | +43 | Vienna\n"
+        "\n"
+        "## Research Experience\n"
+        "\n"
+        "### SME High-Growth — Predictive Modeling (Feb 2026)\n"
+        "- Engineered an automated data pipeline.\n"
+        "- Developed 118 features.\n"
+        "\n"
+        "### Cross-Linguistic Sentiment Analysis (Nov 2025)\n"
+        "- Built a cloud-native Python pipeline.\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    result = inspect_resume(p)
+
+    orphaned = [w for w in result["warnings"] if w["code"] == "ORPHANED_BULLETS"]
+    assert orphaned == []
+    research = next(s for s in result["sections"] if s["heading"] == "Research Experience")
+    assert research["block_count"] == 2
+    assert research["block_bullet_counts"] == [2, 1]
+
+
+def test_inspect_resume_preview_fields_truncate_long_content(tmp_path: Path):
+    """Preview fields keep the JSON readable. Long lines get truncated
+    with a trailing ellipsis so the agent can still recognize the shape
+    without wading through kilobytes of text."""
+    long_line = "x" * 500
+    md = (
+        "# Me\nme@example.com | +1 | Earth\n\n"
+        "## Summary\n"
+        f"{long_line}\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    result = inspect_resume(p)
+    summary_section = next(s for s in result["sections"] if s["heading"] == "Summary")
+    assert len(summary_section["raw_paragraph_previews"]) == 1
+    assert summary_section["raw_paragraph_previews"][0].endswith("…")
+    assert len(summary_section["raw_paragraph_previews"][0]) <= 130
+
+
+def test_inspect_pdf_returns_text_and_section_order(tmp_path: Path):
+    """Generate a PDF via the real renderer, then inspect it back. Round-
+    trip check: the section order we wrote should match what inspect finds
+    in the extracted text."""
+    from scripts.render_pdf import render_resume_eu
+
+    md = (
+        "# Test Person\n"
+        "me@example.com | +1 | Earth\n"
+        "\n"
+        "## Summary\nBrief summary.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Company (2024)\n"
+        "- Did a thing.\n"
+        "\n"
+        "## Education\n"
+        "### MSc — University (2024)\n"
+    )
+    resume_md = tmp_path / "resume.md"
+    resume_md.write_text(md, encoding="utf-8")
+    pdf = tmp_path / "resume.pdf"
+    render_resume_eu(md, pdf)
+
+    result = inspect_pdf(pdf)
+
+    assert result["size_bytes"] > 1000
+    assert "Test Person" in result["extracted_text"]
+    # Section order in text should match source (EU preserves order).
+    assert result["section_order_in_text"] == ["Summary", "Experience", "Education"]
+
+
+def test_inspect_photo_square_no_warning(tmp_path: Path):
+    """A 500×500 square photo matches the 3×3cm render box — no stretch
+    warning."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "square.jpg"
+    PILImage.new("RGB", (500, 500), color=(100, 120, 140)).save(photo, "JPEG")
+
+    result = inspect_photo(photo)
+
+    assert result["width"] == 500
+    assert result["height"] == 500
+    assert result["aspect"] == 1.0
+    assert result["warnings"] == []
+
+
+def test_inspect_photo_portrait_triggers_stretch_warning(tmp_path: Path):
+    """Regression guard for Jiaqi's bug 4: portrait photo (3:4 aspect)
+    embedded in a 1:1 render box will stretch horizontally."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "portrait.jpg"
+    # 3:4 aspect — typical phone portrait
+    PILImage.new("RGB", (300, 400), color=(100, 120, 140)).save(photo, "JPEG")
+
+    result = inspect_photo(photo)
+
+    assert result["width"] == 300
+    assert result["height"] == 400
+    assert result["aspect"] == 0.75
+    codes = [w["code"] for w in result["warnings"]]
+    assert "PHOTO_ASPECT_STRETCH" in codes
+    stretch = next(w for w in result["warnings"] if w["code"] == "PHOTO_ASPECT_STRETCH")
+    # Delta is (1.0 - 0.75) / 1.0 * 100 = 25%
+    assert 20 < result["aspect_delta_pct"] < 30
+    assert stretch["severity"] == "notice"
+
+
+# ---------------------------------------------------------------------------
+# inspect CLI subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_cli_inspect_resume_returns_parseable_json(tmp_path: Path):
+    md = (
+        "Jiaqi Pan | +43 | jiaqi@example.com | Vienna\n"
+        "\n"
+        "## Summary\nShort.\n"
+    )
+    p = tmp_path / "resume.md"
+    p.write_text(md, encoding="utf-8")
+
+    r = subprocess.run(
+        ["python", "-m", "scripts.orchestration", "inspect", "--resume", str(p)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    parsed = json.loads(r.stdout)
+    assert parsed["has_h1"] is False
+    assert any(w["code"] == "EMPTY_NAME" for w in parsed["warnings"])
+
+
+def test_cli_inspect_requires_one_of_three_flags():
+    """argparse mutually_exclusive_group(required=True) should reject
+    `inspect` with no flag."""
+    r = subprocess.run(
+        ["python", "-m", "scripts.orchestration", "inspect"],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode != 0
+    assert "required" in r.stderr.lower() or "one of the arguments" in r.stderr.lower()
+
+
+def test_cli_inspect_rejects_multiple_flags(tmp_path: Path):
+    (tmp_path / "a.md").write_text("# X\ne@e.com\n", encoding="utf-8")
+    (tmp_path / "b.md").write_text("# Y\nf@f.com\n", encoding="utf-8")
+    r = subprocess.run(
+        [
+            "python", "-m", "scripts.orchestration", "inspect",
+            "--resume", str(tmp_path / "a.md"),
+            "--pdf", str(tmp_path / "b.md"),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode != 0
+    assert "not allowed" in r.stderr.lower() or "mutually" in r.stderr.lower()
+
+
+def test_cli_inspect_photo_on_real_image(tmp_path: Path):
+    from PIL import Image as PILImage
+    photo = tmp_path / "p.jpg"
+    PILImage.new("RGB", (600, 450), color=(50, 50, 50)).save(photo, "JPEG")
+    r = subprocess.run(
+        ["python", "-m", "scripts.orchestration", "inspect", "--photo", str(photo)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    parsed = json.loads(r.stdout)
+    assert parsed["width"] == 600
+    assert parsed["height"] == 450
+    # 4:3 landscape — aspect 1.33 — stretch warning expected
+    assert any(w["code"] == "PHOTO_ASPECT_STRETCH" for w in parsed["warnings"])
