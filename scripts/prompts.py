@@ -211,6 +211,15 @@ URL; the values below are the ones the candidate configured and confirmed.
 
 {contact_info}
 
+**This is load-bearing.** Line 1 of your output MUST start with `# ` followed
+by the candidate's name. Line 2 MUST be the pipe-separated contact line.
+If you combine them into one line, or pipe-join the name with the contact
+fields, the downstream PDF renderer will refuse to produce a PDF (it would
+ship without a candidate name, which breaks ATS identification — the
+application would be silently filtered out and the student would never hear
+back). The renderer raises `MissingContactHeaderError` on any other shape.
+The only valid line-1 shape is `# <name>`. No exceptions.
+
 If any field above is empty, the header is already formatted correctly — do
 not invent a replacement value. Put a blank line after the header, then
 continue with the rest of the resume per the schema later in this prompt.

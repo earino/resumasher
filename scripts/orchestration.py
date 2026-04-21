@@ -771,7 +771,7 @@ def inspect_resume(path: Path) -> dict:
         #   raw_bullets > 0. Rare — would require `###` headings with
         #   no content under them.
         #
-        # Shape B (parser didn't create blocks at all — Jiaqi's case):
+        # Shape B (parser didn't create blocks at all — the #19 case):
         #   section.blocks is empty, raw_paragraphs contains `**Title**`-
         #   looking lines that a reader would naturally read as sub-block
         #   headings, and raw_bullets > 0. This is the "**Title** directly

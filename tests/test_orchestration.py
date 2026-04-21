@@ -990,11 +990,12 @@ def test_inspect_resume_happy_path_returns_expected_fields(tmp_path: Path):
 
 
 def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
-    """Regression guard for Jiaqi Pan's bug 1: pipe-separated contact line
-    on line 1 without a `# Name` H1 → parser drops the contact header,
-    PDF ships with no name, ATS can't identify the candidate."""
+    """Regression guard for issue #18 (KNOWN_FAILURE_MODES.md #1):
+    pipe-separated contact line on line 1 without a `# Name` H1 → parser
+    drops the contact header, PDF ships with no name, ATS can't identify
+    the candidate."""
     md = (
-        "Jiaqi Pan | +43 664 3018699 | jiaqi@example.com | Vienna | linkedin.com/in/jiaqi\n"
+        "Test Candidate | +43 664 0000000 | test@example.com | Vienna | linkedin.com/in/testcandidate\n"
         "\n"
         "## Summary\n"
         "MSc Business Analytics student.\n"
@@ -1007,7 +1008,7 @@ def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
     assert result["name"] == ""
     assert result["contact_line"] == ""
     assert result["has_h1"] is False
-    assert result["first_line_raw"].startswith("Jiaqi Pan |")
+    assert result["first_line_raw"].startswith("Test Candidate |")
 
     codes = [w["code"] for w in result["warnings"]]
     assert "EMPTY_NAME" in codes
@@ -1017,10 +1018,11 @@ def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
 
 
 def test_inspect_resume_orphaned_bullets_shape_b_triggers_warning(tmp_path: Path):
-    """Regression guard for Jiaqi Pan's bug 2: `**Title**` directly under
-    `##` with no intervening `###` heading. The parser lands titles in
-    raw_paragraphs and bullets in raw_bullets, so the PDF stacks all
-    titles then dumps all bullets at the end. This is shape B."""
+    """Regression guard for issue #19 (KNOWN_FAILURE_MODES.md #2):
+    `**Title**` directly under `##` with no intervening `###` heading.
+    The parser lands titles in raw_paragraphs and bullets in raw_bullets,
+    so the PDF stacks all titles then dumps all bullets at the end. This
+    is shape B."""
     md = (
         "# Ana Müller\n"
         "ana@example.com | +43 | Vienna\n"
@@ -1148,8 +1150,8 @@ def test_inspect_photo_square_no_warning(tmp_path: Path):
 
 
 def test_inspect_photo_portrait_triggers_stretch_warning(tmp_path: Path):
-    """Regression guard for Jiaqi's bug 4: portrait photo (3:4 aspect)
-    embedded in a 1:1 render box will stretch horizontally."""
+    """Regression guard for KNOWN_FAILURE_MODES.md #4: portrait photo
+    (3:4 aspect) embedded in a 1:1 render box will stretch horizontally."""
     from PIL import Image as PILImage
 
     photo = tmp_path / "portrait.jpg"
@@ -1176,7 +1178,7 @@ def test_inspect_photo_portrait_triggers_stretch_warning(tmp_path: Path):
 
 def test_cli_inspect_resume_returns_parseable_json(tmp_path: Path):
     md = (
-        "Jiaqi Pan | +43 | jiaqi@example.com | Vienna\n"
+        "Test Candidate | +43 | test@example.com | Vienna\n"
         "\n"
         "## Summary\nShort.\n"
     )

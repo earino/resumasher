@@ -18,6 +18,11 @@ lives, so you can jump straight to the code.
 ## #1 — Missing contact header (no name on PDF)
 
 **Tracked in:** [#18](https://github.com/earino/resumasher/issues/18).
+**Status:** renderer now fails loudly on this shape (v0.4 Unreleased) — no
+more silent broken PDFs. Tailor-prompt hardening + regression tests shipped
+alongside. Original silent-drop bug cannot recur without removing the gate
+in `scripts/render_pdf.py::_assert_contact_header_present`, which is
+guarded by tests in `tests/test_render_pdf.py`.
 
 
 **Symptom.** The rendered PDF has no name, no email, no phone, no LinkedIn.
@@ -139,9 +144,9 @@ markdown to right after Summary in the PDF).
 **Fix location.** `scripts/render_pdf.py` → `_section_order_eu` if the
 style is EU.
 
-**Reference repro.** `examples/sections_dropped/` (Jiaqi Pan — style was
-reported as `eu` but the PDF shows US-style ordering; worth investigating
-whether the student's config overrode the default).
+**Reference repro.** `examples/sections_dropped/` (issue #18 reporter —
+style was reported as `eu` but the PDF shows US-style ordering; worth
+investigating whether the student's config overrode the default).
 
 ---
 
@@ -178,8 +183,8 @@ else:
 img = Image(photo_source, width=w_cm * cm, height=h_cm * cm)
 ```
 
-**Reference repro.** `examples/sections_dropped/` (Jiaqi Pan — portrait
-photo rendered at 3cm × 3cm, visible horizontal stretch).
+**Reference repro.** `examples/sections_dropped/` (issue #18 reporter —
+portrait photo rendered at 3cm × 3cm, visible horizontal stretch).
 
 ---
 

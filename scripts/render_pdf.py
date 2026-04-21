@@ -193,6 +193,37 @@ class ResumeDoc:
     sections: list[ResumeSection] = field(default_factory=list)
 
 
+class MissingContactHeaderError(ValueError):
+    """
+    Raised by the render functions when `parse_resume_markdown` returns a
+    `ResumeDoc` with no candidate name. Happens when the tailor emits output
+    that doesn't start with `# Name` — we've seen this when the LLM
+    pipe-joins the name and contact info onto a single line-1 string with
+    no `# ` prefix ("Candidate Name | +43 ... | email@example.com").
+
+    Why this is fatal: an ATS parses the PDF and extracts the candidate
+    name from the top of the document. Without `doc.name`, the rendered
+    PDF has no name at all — the ATS cannot associate the application with
+    a candidate, the submission silently filters out, and the student
+    never hears back and assumes the role was competitive. That is the
+    worst possible failure mode for a job-application tool.
+
+    Renderer loudly refuses to produce such a PDF. The caller (SKILL.md
+    Phase 8) catches this exception and surfaces an actionable message to
+    the student, including the `first_line` attribute so they can see
+    what the tailor actually emitted vs what the parser expected.
+
+    Tracked via `docs/KNOWN_FAILURE_MODES.md` #1 and issue #18.
+    """
+
+    def __init__(self, first_line: str) -> None:
+        self.first_line = first_line
+        super().__init__(
+            "Resume markdown is missing the candidate name header. "
+            f"Expected `# Your Name` on line 1, got: {first_line[:100]!r}"
+        )
+
+
 _SUB_BLOCK_RE = re.compile(r"^\*\*(.+?)\*\*\s*(.*)$")
 
 
@@ -545,6 +576,34 @@ def _escape(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _first_non_empty_line(text: str) -> str:
+    """Return the first non-empty line of `text`, or the empty string.
+
+    Used only for diagnostic error messages — tells the student what the
+    parser actually saw on line 1 when the expected `# Name` shape is
+    missing. Kept as a small function so the behavior is unit-testable
+    independent of the renderers.
+    """
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _assert_contact_header_present(doc: ResumeDoc, source_markdown: str) -> None:
+    """
+    Loud gate before any PDF renders. If `doc.name` is empty, the tailored
+    markdown is missing its `# Name` H1 and the rendered PDF would ship with
+    no candidate identification — the worst possible ATS outcome. Raise
+    rather than silently produce a subtly-wrong PDF the student might
+    submit without noticing.
+
+    See `MissingContactHeaderError` docstring for the rationale.
+    """
+    if not doc.name:
+        raise MissingContactHeaderError(_first_non_empty_line(source_markdown))
+
+
 def render_resume_eu(
     source_markdown: str,
     output_path: str | Path,
@@ -553,6 +612,7 @@ def render_resume_eu(
     """EU-style single-column resume. Photo optional (DACH convention)."""
     styles = _build_styles()
     doc = parse_resume_markdown(source_markdown)
+    _assert_contact_header_present(doc, source_markdown)
     flow = _build_resume_flowables(
         doc,
         styles,
@@ -580,6 +640,7 @@ def render_resume_us(
         )
     styles = _build_styles()
     doc = parse_resume_markdown(source_markdown)
+    _assert_contact_header_present(doc, source_markdown)
     flow = _build_resume_flowables(
         doc,
         styles,
@@ -762,15 +823,37 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 2
 
-    if args.kind == "resume":
-        if args.style == "eu":
-            render_resume_eu(source, args.output, photo=args.photo)
-        else:
-            render_resume_us(source, args.output, photo=args.photo)
-    elif args.kind == "cover-letter":
-        render_cover_letter(source, args.output)
-    elif args.kind == "interview-prep":
-        render_interview_prep(source, args.output)
+    try:
+        if args.kind == "resume":
+            if args.style == "eu":
+                render_resume_eu(source, args.output, photo=args.photo)
+            else:
+                render_resume_us(source, args.output, photo=args.photo)
+        elif args.kind == "cover-letter":
+            render_cover_letter(source, args.output)
+        elif args.kind == "interview-prep":
+            render_interview_prep(source, args.output)
+    except MissingContactHeaderError as exc:
+        print(
+            f"ERROR: {args.input} is missing the candidate name header.\n"
+            f"\n"
+            f"Expected on line 1:\n"
+            f"  # Your Name\n"
+            f"  email | phone | linkedin | location\n"
+            f"\n"
+            f"Got:\n"
+            f"  {exc.first_line[:120]}\n"
+            f"\n"
+            f"The tailored markdown ships without a name header, which would\n"
+            f"produce a PDF with no candidate identification — an ATS cannot\n"
+            f"associate the application with you. Refusing to render.\n"
+            f"\n"
+            f"This is almost certainly a tailor prompt failure, not something\n"
+            f"you did wrong. Re-run /resumasher to regenerate the tailored\n"
+            f"markdown. Tracked: KNOWN_FAILURE_MODES.md #1 / issue #18.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(args.output)
     return 0
