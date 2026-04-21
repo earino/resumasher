@@ -1156,3 +1156,268 @@ def test_render_no_photo_anywhere_still_works(tmp_path: Path):
         f"Got delta {delta} bytes — photo may not have been embedded, or "
         f"no-photo render is somehow always-embedding."
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #22 PR D — photo aspect, placement, horizontal rules
+# ---------------------------------------------------------------------------
+#
+# Three related visible fixes shipped as one PR because each one alone is too
+# small to stand on its own. All three are "the code is wrong, here's the
+# right answer" with no taste dimension. The typographic polish (PR E) ships
+# separately because it needs iteration with rendered-PDF options.
+
+
+# ---- Photo aspect ratio (no more stretching to 1:1 square) ----
+
+
+def test_photo_render_size_portrait_preserves_aspect():
+    """3:4 portrait source → renders at aspect 3:4 with longer side clamped
+    to 3cm. Before this fix, the hard-coded 3×3cm stretched portraits
+    horizontally by ~33%."""
+    from scripts.render_pdf import _photo_render_size_cm
+    import io
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (300, 400)).save(buf, "JPEG")
+    buf.seek(0)
+    w_cm, h_cm = _photo_render_size_cm(buf)
+    # Height is the longer side → clamped to 3.0; width proportional.
+    assert h_cm == 3.0
+    assert abs(w_cm - 3.0 * (300 / 400)) < 0.01
+    # Aspect preserved exactly.
+    assert abs((w_cm / h_cm) - (300 / 400)) < 0.01
+
+
+def test_photo_render_size_landscape_preserves_aspect():
+    """4:3 landscape source → renders at aspect 4:3 with longer side
+    (width this time) clamped to 3cm."""
+    from scripts.render_pdf import _photo_render_size_cm
+    import io
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (400, 300)).save(buf, "JPEG")
+    buf.seek(0)
+    w_cm, h_cm = _photo_render_size_cm(buf)
+    assert w_cm == 3.0
+    assert abs(h_cm - 3.0 * (300 / 400)) < 0.01
+
+
+def test_photo_render_size_square_unchanged():
+    """Square source → 3cm × 3cm. Regression guard for the common case."""
+    from scripts.render_pdf import _photo_render_size_cm
+    import io
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (500, 500)).save(buf, "JPEG")
+    buf.seek(0)
+    w_cm, h_cm = _photo_render_size_cm(buf)
+    assert w_cm == 3.0
+    assert h_cm == 3.0
+
+
+def test_photo_render_size_phone_camera_aspect():
+    """Real-world case that triggered this fix: typical phone photo
+    (3024×4032, aspect 3:4). Must render without horizontal stretching."""
+    from scripts.render_pdf import _photo_render_size_cm
+    import io
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    PILImage.new("RGB", (3024, 4032)).save(buf, "JPEG")
+    buf.seek(0)
+    w_cm, h_cm = _photo_render_size_cm(buf)
+    assert h_cm == 3.0
+    assert abs(w_cm - 2.25) < 0.01  # 3 * 3024/4032 = 2.25
+
+
+# ---- Photo placement (hAlign via photo_position parameter) ----
+
+
+def test_render_photo_position_right_is_default(tmp_path: Path):
+    """When neither config nor flag sets photo_position, photo renders
+    on the right (DACH convention)."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "p.jpg"
+    PILImage.new("RGB", (500, 500)).save(photo, "JPEG")
+    md = "# Test\nt@x.com\n\n## Summary\nx.\n"
+
+    out = tmp_path / "right.pdf"
+    # render_resume_eu default is photo_position="right"
+    render_resume_eu(md, out, photo=str(photo))
+    assert out.exists()
+
+
+def test_render_photo_position_left(tmp_path: Path):
+    """photo_position='left' renders photo on the left."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "p.jpg"
+    PILImage.new("RGB", (500, 500)).save(photo, "JPEG")
+    md = "# Test\nt@x.com\n\n## Summary\nx.\n"
+
+    out = tmp_path / "left.pdf"
+    render_resume_eu(md, out, photo=str(photo), photo_position="left")
+    assert out.exists()
+
+
+def test_render_photo_position_center(tmp_path: Path):
+    """photo_position='center' renders photo centered. The old hard-coded
+    behavior, kept supported for unusual formal CVs."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "p.jpg"
+    PILImage.new("RGB", (500, 500)).save(photo, "JPEG")
+    md = "# Test\nt@x.com\n\n## Summary\nx.\n"
+
+    out = tmp_path / "center.pdf"
+    render_resume_eu(md, out, photo=str(photo), photo_position="center")
+    assert out.exists()
+
+
+def test_render_photo_position_invalid_falls_back_to_right(tmp_path: Path):
+    """A config typo ('righht') or unknown value shouldn't crash — fall
+    back to default (right) and continue. The config write path
+    validates upstream; this is a defensive floor."""
+    from PIL import Image as PILImage
+
+    photo = tmp_path / "p.jpg"
+    PILImage.new("RGB", (500, 500)).save(photo, "JPEG")
+    md = "# Test\nt@x.com\n\n## Summary\nx.\n"
+
+    out = tmp_path / "invalid.pdf"
+    render_resume_eu(md, out, photo=str(photo), photo_position="bogus")
+    assert out.exists()
+
+
+# ---- Horizontal rules (markdown --- renders as a hairline) ----
+
+
+def test_parse_horizontal_rule_appends_sentinel_to_section():
+    """`---` on its own line inside a section appends the HR sentinel
+    to the section's raw_paragraphs. Renderer later converts it to
+    an HRFlowable."""
+    from scripts.render_pdf import _HR_SENTINEL
+    md = (
+        "# Test\nt@x.com\n\n"
+        "## Summary\n"
+        "Some prose.\n"
+        "---\n"
+        "More prose.\n"
+    )
+    doc = parse_resume_markdown(md)
+    summary = next(s for s in doc.sections if s.heading == "Summary")
+    # Paragraphs in order: prose, HR sentinel, more prose.
+    assert len(summary.raw_paragraphs) == 3
+    assert summary.raw_paragraphs[0] == "Some prose."
+    assert summary.raw_paragraphs[1] == _HR_SENTINEL
+    assert summary.raw_paragraphs[2] == "More prose."
+
+
+def test_parse_horizontal_rule_variants_all_detected():
+    """Markdown supports `---`, `___`, and `***` as horizontal rule syntax.
+    All three should trigger the sentinel."""
+    from scripts.render_pdf import _HR_SENTINEL
+    for variant in ["---", "___", "***", "----", "*****"]:
+        md = f"# T\ne@x.com\n\n## S\nbefore\n{variant}\nafter\n"
+        doc = parse_resume_markdown(md)
+        section = next(s for s in doc.sections if s.heading == "S")
+        assert _HR_SENTINEL in section.raw_paragraphs, (
+            f"Variant {variant!r} did not produce an HR sentinel"
+        )
+
+
+def test_parse_horizontal_rule_before_any_section_is_dropped():
+    """HR before the first `##` has no home in the parse tree. Dropped
+    silently — it shouldn't crash and it shouldn't accidentally create
+    a phantom section."""
+    md = (
+        "# Test\nt@x.com\n"
+        "---\n"  # before any section
+        "\n## Summary\nContent.\n"
+    )
+    doc = parse_resume_markdown(md)
+    # Only one section created (Summary); no "phantom" rule section.
+    assert len(doc.sections) == 1
+    assert doc.sections[0].heading == "Summary"
+
+
+def test_parse_three_hyphens_inline_not_hijacked():
+    """`---` inside a paragraph (on the same line as other text) must not
+    trigger the rule — only full-line matches count. Guards against
+    em-dash surrogates and similar prose appearing mid-line."""
+    from scripts.render_pdf import _HR_SENTINEL
+    md = (
+        "# Test\nt@x.com\n\n"
+        "## Summary\n"
+        "This sentence has --- inside it, not alone.\n"
+    )
+    doc = parse_resume_markdown(md)
+    summary = next(s for s in doc.sections if s.heading == "Summary")
+    assert _HR_SENTINEL not in summary.raw_paragraphs
+    assert len(summary.raw_paragraphs) == 1
+    assert "---" in summary.raw_paragraphs[0]
+
+
+def test_render_horizontal_rule_does_not_appear_as_literal_text(tmp_path: Path):
+    """End-to-end: a markdown with a `---` rule must NOT render the
+    literal string '---' as text in the PDF. Instead it should render
+    an actual horizontal rule (HRFlowable). If the literal `---` shows
+    up in the extracted text, the sentinel was rendered as prose."""
+    from pdfminer.high_level import extract_text
+
+    md = (
+        "# Test\nt@x.com | +1\n\n"
+        "## Summary\n"
+        "First paragraph of summary.\n"
+        "---\n"
+        "Second paragraph after the rule.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Company (2024)\n"
+        "- Did stuff.\n"
+    )
+    out = tmp_path / "hr.pdf"
+    render_resume_eu(md, out)
+    extracted = extract_text(str(out))
+
+    # Both paragraphs must appear.
+    assert "First paragraph" in extracted
+    assert "Second paragraph" in extracted
+    # The literal `---` must NOT appear as text — it should have been
+    # converted to an HRFlowable.
+    assert "---" not in extracted, (
+        f"Literal '---' found in extracted PDF text — sentinel was "
+        f"rendered as prose instead of a horizontal rule."
+    )
+    # Defensive: the sentinel's internal representation must not leak.
+    assert "\x00HR\x00" not in extracted
+
+
+def test_render_horizontal_rule_produces_non_empty_pdf(tmp_path: Path):
+    """Regression: rendering a markdown with a `---` rule should produce
+    a PDF that's not dramatically smaller than one without the rule
+    (the rule adds a tiny bit of geometry but shouldn't skip sections
+    or crash the render)."""
+    md_with = (
+        "# Test\nt@x.com | +1\n\n"
+        "## Summary\nBefore.\n---\nAfter.\n"
+    )
+    md_without = (
+        "# Test\nt@x.com | +1\n\n"
+        "## Summary\nBefore.\nAfter.\n"
+    )
+    out_with = tmp_path / "with.pdf"
+    out_without = tmp_path / "without.pdf"
+    render_resume_eu(md_with, out_with)
+    render_resume_eu(md_without, out_without)
+    assert out_with.exists()
+    assert out_without.exists()
+    # Both PDFs succeed; with-rule is at least as large as without (rule
+    # adds content). A dramatically smaller with-rule PDF would signal
+    # something got dropped.
+    assert out_with.stat().st_size >= out_without.stat().st_size - 500

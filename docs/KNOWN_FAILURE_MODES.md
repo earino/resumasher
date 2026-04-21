@@ -159,6 +159,13 @@ investigating whether the student's config overrode the default).
 
 ## #4 — Photo aspect ratio stretched
 
+**Tracked in:** [#22](https://github.com/earino/resumasher/issues/22).
+**Status:** fixed (v0.4 Unreleased). The renderer now computes width/height
+from the source image's dimensions, clamping the longer side to 3cm while
+preserving aspect. A 3:4 portrait renders at ~2.25cm × 3cm instead of the
+previous 3cm × 3cm stretch. Regression guard: `_photo_render_size_cm` is
+tested on portrait, landscape, square, and phone-camera (3024×4032) shapes.
+
 **Symptom.** The photo on the EU-style PDF looks distorted. Faces may look
 wider or narrower than in the source image. Students describe it as
 "flattened," "squished," or "stretched."
