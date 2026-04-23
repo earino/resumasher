@@ -22,9 +22,16 @@ cd "$SCRIPT_DIR"
 
 echo "Setting up resumasher at: $SCRIPT_DIR"
 
-# Verify python3 is available.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 is not installed or not on PATH." >&2
+# Find a Python 3.10+ interpreter. Prefer `python3` (standard on macOS/Linux);
+# fall back to `python` (standard on Windows/Git Bash, where `python3` is
+# typically absent). Verify the fallback is actually 3.10+ before trusting it.
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+elif command -v python >/dev/null 2>&1 \
+  && python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  PYTHON=python
+else
+  echo "ERROR: Python 3.10+ is not installed or not on PATH." >&2
   echo "Install Python 3.10+ and retry." >&2
   exit 1
 fi
@@ -33,9 +40,21 @@ fi
 VENV="$SCRIPT_DIR/.venv"
 if [ ! -d "$VENV" ]; then
   echo "Creating venv at $VENV"
-  python3 -m venv "$VENV"
+  "$PYTHON" -m venv "$VENV"
 else
   echo "Reusing existing venv at $VENV"
+fi
+
+# Windows CPython's venv layout uses Scripts/ instead of bin/. Pick whichever
+# exists so the rest of this script and the wrapper in bin/resumasher-exec
+# work on both layouts.
+if [ -d "$VENV/bin" ]; then
+  VENV_BIN="$VENV/bin"
+elif [ -d "$VENV/Scripts" ]; then
+  VENV_BIN="$VENV/Scripts"
+else
+  echo "ERROR: venv created at $VENV but neither bin/ nor Scripts/ subdirectory found." >&2
+  exit 1
 fi
 
 # Install dependencies. Use a generous timeout and retry count so students
@@ -49,7 +68,7 @@ echo "Installing dependencies (this can take ~30s on a fast connection, longer o
 # a raw Python traceback. Catch it instead and print an actionable message.
 _pip_install() {
   local label="$1"; shift
-  if ! "$VENV/bin/pip" install $PIP_OPTS --quiet "$@"; then
+  if ! "$VENV_BIN/pip" install $PIP_OPTS --quiet "$@"; then
     cat >&2 <<EOF
 
 ERROR: pip install for ${label} failed (exit code $?).

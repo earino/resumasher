@@ -25,12 +25,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Locate the venv Python. macOS/Linux use .venv/bin/python; Windows CPython's
+# venv layout uses .venv/Scripts/python.exe. Try both so Git Bash on Windows
+# works without a separate wrapper.
 VENV_PY="$SKILL_ROOT/.venv/bin/python"
+if [ ! -x "$VENV_PY" ]; then
+  VENV_PY="$SKILL_ROOT/.venv/Scripts/python.exe"
+fi
 
 if [ ! -x "$VENV_PY" ]; then
   cat >&2 <<EOF
 ERROR: resumasher venv Python not found at:
-  $VENV_PY
+  $SKILL_ROOT/.venv/bin/python  (or .venv/Scripts/python.exe on Windows)
 
 Run the installer to set up the venv:
   bash $SKILL_ROOT/install.sh

@@ -58,7 +58,7 @@ for c in \
   "$REPO_ROOT/.gemini/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
-  if [ -x "$c/.venv/bin/python" ]; then
+  if [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; then
     SKILL_ROOT="$c"; break
   else
     NEEDS_INSTALL="$c"
@@ -1023,7 +1023,7 @@ for c in \
   "$REPO_ROOT/.gemini/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
-  [ -x "$c/.venv/bin/python" ] && SKILL_ROOT="$c" && break
+  { [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; } && SKILL_ROOT="$c" && break
 done
 RS="$SKILL_ROOT/bin/resumasher-exec"
 TEL="$SKILL_ROOT/bin/resumasher-telemetry-log"
