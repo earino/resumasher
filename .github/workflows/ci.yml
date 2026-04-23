@@ -55,3 +55,62 @@ jobs:
           path: /tmp/resumasher-ci-pdfs/
           if-no-files-found: ignore
           retention-days: 7
+
+  test-windows:
+    # The cohort is ~90% Windows, so the Linux-only matrix above covered
+    # ~10% of our actual users. This job runs under Git Bash (MINGW64) — the
+    # same shell cohort students get when they type `bash install.sh` — and
+    # exercises the full install path end-to-end. See issue #34 for context.
+    name: install.sh + pytest (Windows, Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Force Git Bash on every step. windows-latest defaults to PowerShell;
+        # PowerShell does not reproduce the student install experience and
+        # would hide the venv-layout bug this job is meant to catch.
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Use LF line endings on checkout
+        # Windows Git defaults to converting LF to CRLF on checkout, which
+        # makes text-compare tests (and SKILL.md prologue parsing) nondeterministic.
+        # Configure globally BEFORE actions/checkout runs.
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run install.sh (this is the real test — exercises #32 fix in its natural habitat)
+        # On a fresh Windows runner, `python3` may or may not be present but
+        # `.venv` will always be created under Scripts/, not bin/. Pre-#33
+        # install.sh fails here with "bin/pip: No such file or directory" —
+        # that is the bug, and the red signal is the point.
+        run: bash install.sh
+
+      - name: Verify Windows venv layout
+        # Paranoid assertion: even if install.sh returned 0, confirm the
+        # Scripts/ layout exists. Guards against a future refactor where
+        # install.sh silently degrades to a no-op on Windows.
+        run: |
+          test -x .venv/Scripts/python.exe || { echo "ERROR: .venv/Scripts/python.exe missing after install.sh"; exit 1; }
+          test -x .venv/Scripts/pip.exe || { echo "ERROR: .venv/Scripts/pip.exe missing after install.sh"; exit 1; }
+          echo "Windows venv layout verified: Scripts/python.exe and Scripts/pip.exe both present."
+
+      - name: Install dev dependencies
+        # install.sh only installs runtime deps; dev deps (pytest, etc.) are
+        # installed explicitly so the CI matches the Linux job's coverage.
+        run: .venv/Scripts/pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        # Invoke pytest through the venv Python explicitly (not via PATH) so
+        # we exercise the same path bin/resumasher-exec takes on a real
+        # student's Windows machine.
+        run: .venv/Scripts/python -m pytest -v
