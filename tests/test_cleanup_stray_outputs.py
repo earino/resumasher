@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -30,6 +29,9 @@ from scripts.orchestration import (
     CleanupAction,
     cleanup_stray_outputs,
 )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+RESUMASHER_EXEC = REPO_ROOT / "bin" / "resumasher-exec"
 
 
 def _set_mtime(path: Path, ts: float) -> None:
@@ -271,6 +273,8 @@ def test_returns_empty_when_cwd_is_a_file(tmp_path: Path):
 
 
 def test_cli_emits_valid_json_summary(tmp_path: Path):
+    if not RESUMASHER_EXEC.exists():
+        pytest.skip(f"bin/resumasher-exec not found at {RESUMASHER_EXEC}")
     out_dir = tmp_path / "applications" / "test-run"
     out_dir.mkdir(parents=True)
     (out_dir / "interview-prep.md").write_text("# Real", encoding="utf-8")
@@ -279,9 +283,8 @@ def test_cli_emits_valid_json_summary(tmp_path: Path):
 
     result = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "scripts.orchestration",
+            str(RESUMASHER_EXEC),
+            "orchestration",
             "cleanup-stray-outputs",
             "--cwd",
             str(tmp_path),
@@ -292,7 +295,7 @@ def test_cli_emits_valid_json_summary(tmp_path: Path):
         ],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).resolve().parent.parent,
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
@@ -305,13 +308,14 @@ def test_cli_emits_valid_json_summary(tmp_path: Path):
 
 
 def test_cli_no_crash_on_empty_cwd(tmp_path: Path):
+    if not RESUMASHER_EXEC.exists():
+        pytest.skip(f"bin/resumasher-exec not found at {RESUMASHER_EXEC}")
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     result = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "scripts.orchestration",
+            str(RESUMASHER_EXEC),
+            "orchestration",
             "cleanup-stray-outputs",
             "--cwd",
             str(tmp_path),
@@ -322,7 +326,7 @@ def test_cli_no_crash_on_empty_cwd(tmp_path: Path):
         ],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).resolve().parent.parent,
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)

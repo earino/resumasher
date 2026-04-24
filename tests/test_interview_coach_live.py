@@ -29,13 +29,13 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "interview-coach"
 REPO_ROOT = Path(__file__).resolve().parent.parent
+RESUMASHER_EXEC = REPO_ROOT / "bin" / "resumasher-exec"
 
 pytestmark = [
     pytest.mark.live_llm,
@@ -81,11 +81,19 @@ def _materialize_fixture_workspace(workdir: Path) -> dict[str, Path]:
 
 
 def _build_interview_coach_prompt(workdir: Path, out_dir: Path) -> str:
+    """Build the prompt via bin/resumasher-exec, NOT via [sys.executable, "-m"
+    scripts.orchestration]. The wrapper self-locates the venv python (POSIX
+    .venv/bin/python or Windows .venv/Scripts/python.exe) — sys.executable
+    can resolve to a base python without the project's deps when pytest is
+    invoked through certain venv layouts (e.g., conda + venv where .venv is
+    site-packages-only). Using the wrapper also exercises the same code
+    path the SKILL.md orchestrator runs."""
+    if not RESUMASHER_EXEC.exists():
+        pytest.skip(f"bin/resumasher-exec not found at {RESUMASHER_EXEC}")
     result = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "scripts.orchestration",
+            str(RESUMASHER_EXEC),
+            "orchestration",
             "build-prompt",
             "--kind",
             "interview-coach",
