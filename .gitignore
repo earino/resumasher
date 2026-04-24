@@ -1,4 +1,9 @@
 .venv/
+# Broadened to cover sibling sandbox / per-platform venvs in the project
+# tree. The canonical sandbox venv lives at $HOME/.venv-resumasher-sandbox/
+# (outside the project tree, so not matched by this).
+# See CLAUDE.md "Sandbox vs host venv coordination".
+.venv-*/
 __pycache__/
 *.pyc
 .pytest_cache/
