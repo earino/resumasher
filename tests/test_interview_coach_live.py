@@ -78,6 +78,13 @@ def _build_prompt_in_process() -> str:
 def _run_claude_p_against_haiku(prompt: str, workdir: Path) -> list[dict]:
     """Invoke `claude -p` with Haiku, Read+Write tools allowed (we WANT to
     detect Write calls), permissions bypassed for test-tmpdir isolation.
+
+    Prompt is passed via stdin, NOT as a positional argument. `--allowedTools`
+    is variadic (<tools...>) per `claude -p --help`, so it greedily consumes
+    all subsequent positional args — if the prompt followed `--allowedTools
+    "Read,Write"` on the command line, claude would parse it as a third
+    tool name and then complain that no prompt was provided.
+
     Returns the parsed stream-json events (one dict per line)."""
     proc = subprocess.run(
         [
@@ -92,17 +99,21 @@ def _run_claude_p_against_haiku(prompt: str, workdir: Path) -> list[dict]:
             "bypassPermissions",
             "--allowedTools",
             "Read,Write",
-            prompt,
         ],
+        input=prompt,  # stdin-delivered prompt sidesteps --allowedTools variadic consumption
         cwd=str(workdir),
         capture_output=True,
         text=True,
         timeout=300,  # 5 min ceiling
     )
     if proc.returncode != 0:
-        pytest.skip(
-            f"claude -p exited {proc.returncode}; not a fix regression. "
-            f"stderr={proc.stderr[:500]}"
+        pytest.fail(
+            f"claude -p exited {proc.returncode}.\n"
+            f"stderr:\n{proc.stderr}\n"
+            f"stdout (first 500 chars):\n{proc.stdout[:500]}\n"
+            f"This is an environment/CLI issue, not a prompt-surgery regression. "
+            f"If `claude -p --help` lists different flag names than the test uses, "
+            f"patch tests/test_interview_coach_live.py's argv."
         )
     events = []
     for line in proc.stdout.splitlines():
