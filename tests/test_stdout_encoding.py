@@ -150,6 +150,18 @@ def test_orchestration_build_prompt_emits_utf8_bytes_for_arrow_glyph(tmp_path):
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "The sanity simulation uses a Linux-style minimal PATH "
+        "(/usr/bin:/bin) and relies on PYTHONIOENCODING overriding a "
+        "default that, on Windows, is already CP1252 — the simulation is "
+        "moot there. Windows already exercises the real CP1252 behavior "
+        "on every stdout write in CI, so regressions of the reconfigure "
+        "fix surface in the two tests above. Skip here to avoid a false "
+        "red from env shape alone."
+    ),
+)
 def test_sanity_cp1252_simulation_reproduces_crash_without_fix():
     """Sanity check: PYTHONIOENCODING=cp1252 actually reproduces the crash.
 
