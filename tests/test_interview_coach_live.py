@@ -1,22 +1,36 @@
 """Tier 3: live LLM regression test for issue #29.
 
 Invokes `claude -p` against Haiku 4.5 with the real interview-coach prompt
-(built via `resumasher orchestration build-prompt`) and asserts:
+and asserts:
   1. Haiku does NOT call the Write tool during its response.
   2. Haiku does NOT plant any stray markdown file in the simulated student
      working directory.
 
-Auto-skips when:
-  - the `claude` CLI isn't installed (CI runners, fresh clones)
-  - `RESUMASHER_SKIP_LIVE=1` is set (manual escape hatch)
+## Why this test is venv-independent
 
-The test uses your existing Claude Code subscription via `claude -p`, so
-running it costs nothing beyond a Haiku response on a 10KB prompt.
+`scripts.prompts.build_prompt()` is pure-stdlib (only `dataclasses` and
+`typing`). Calling it in-process avoids subprocessing into the project's
+`.venv`, which would otherwise tie this test to the host platform that
+created the venv. The only subprocess we need is `claude -p` itself.
 
-Companion to:
-  - tests/test_cleanup_stray_outputs.py — proves the BELT (cleanup scan)
-    catches rogue files even if Haiku misbehaves.
-  - tests/test_interview_coach_prompt.py — structural assertions on the
+This decoupling means the test runs on whatever Python pytest itself is
+using — your host's system Python, conda env, sandbox venv, all fine. As
+long as `pytest` and the `claude` CLI are reachable, the test runs.
+
+## Auto-skip conditions
+
+  - `claude` CLI not on PATH (CI runners, fresh clones — typical case)
+  - `RESUMASHER_SKIP_LIVE=1` (manual escape hatch when you don't want to
+    burn token budget on a noisy iteration loop)
+
+Cost: one Haiku response per test. On any paid Claude plan that's
+effectively zero per run. On pay-as-you-go: a couple of cents.
+
+## Companion tests
+
+  - `tests/test_cleanup_stray_outputs.py` — proves the BELT (the post-Phase-6
+    cleanup scan) catches rogue files even if Haiku misbehaves.
+  - `tests/test_interview_coach_prompt.py` — structural assertions on the
     prompt text that gate against future regressions of the framing.
 
 This live test is the one that actually proves the SUSPENDERS — the prompt
@@ -33,9 +47,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.prompts import build_prompt
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "interview-coach"
-REPO_ROOT = Path(__file__).resolve().parent.parent
-RESUMASHER_EXEC = REPO_ROOT / "bin" / "resumasher-exec"
 
 pytestmark = [
     pytest.mark.live_llm,
@@ -50,72 +64,21 @@ pytestmark = [
 ]
 
 
-def _materialize_fixture_workspace(workdir: Path) -> dict[str, Path]:
-    """Lay out the directory shape `build-prompt --kind interview-coach`
-    expects, populated from the synthetic-persona fixtures."""
-    run_dir = workdir / ".resumasher" / "run"
-    out_dir = workdir / "applications" / "test-run"
-    cache_dir = workdir / ".resumasher"
-    run_dir.mkdir(parents=True)
-    out_dir.mkdir(parents=True)
-
-    # Original resume — sits in cwd like a real student's setup
-    (workdir / "resume.md").write_text(
-        (FIXTURES / "resume.md").read_text(encoding="utf-8"), encoding="utf-8"
+def _build_prompt_in_process() -> str:
+    """Build the interview-coach prompt by reading fixtures and calling
+    build_prompt() directly. No subprocess, no venv dependency."""
+    return build_prompt(
+        kind="interview-coach",
+        tailored_resume=(FIXTURES / "tailored-resume.md").read_text(encoding="utf-8"),
+        folder_summary=(FIXTURES / "cache.txt").read_text(encoding="utf-8"),
+        jd_text=(FIXTURES / "jd.txt").read_text(encoding="utf-8"),
     )
-    # JD goes under .resumasher/run/
-    (run_dir / "jd.txt").write_text(
-        (FIXTURES / "jd.txt").read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    # Folder-miner's prose summary
-    (cache_dir / "cache.txt").write_text(
-        (FIXTURES / "cache.txt").read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    # Tailor sub-agent's output
-    (out_dir / "tailored-resume.md").write_text(
-        (FIXTURES / "tailored-resume.md").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-
-    return {"run_dir": run_dir, "out_dir": out_dir, "cache_dir": cache_dir}
-
-
-def _build_interview_coach_prompt(workdir: Path, out_dir: Path) -> str:
-    """Build the prompt via bin/resumasher-exec, NOT via [sys.executable, "-m"
-    scripts.orchestration]. The wrapper self-locates the venv python (POSIX
-    .venv/bin/python or Windows .venv/Scripts/python.exe) — sys.executable
-    can resolve to a base python without the project's deps when pytest is
-    invoked through certain venv layouts (e.g., conda + venv where .venv is
-    site-packages-only). Using the wrapper also exercises the same code
-    path the SKILL.md orchestrator runs."""
-    if not RESUMASHER_EXEC.exists():
-        pytest.skip(f"bin/resumasher-exec not found at {RESUMASHER_EXEC}")
-    result = subprocess.run(
-        [
-            str(RESUMASHER_EXEC),
-            "orchestration",
-            "build-prompt",
-            "--kind",
-            "interview-coach",
-            "--cwd",
-            str(workdir),
-            "--out-dir",
-            str(out_dir),
-        ],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-    )
-    assert result.returncode == 0, (
-        f"build-prompt failed: stderr={result.stderr}"
-    )
-    return result.stdout
 
 
 def _run_claude_p_against_haiku(prompt: str, workdir: Path) -> list[dict]:
     """Invoke `claude -p` with Haiku, Read+Write tools allowed (we WANT to
     detect Write calls), permissions bypassed for test-tmpdir isolation.
-    Returns the parsed stream-json events."""
+    Returns the parsed stream-json events (one dict per line)."""
     proc = subprocess.run(
         [
             "claude",
@@ -169,9 +132,7 @@ def _write_tool_calls(events: list[dict]) -> list[dict]:
 def test_haiku_does_not_call_write_tool_with_new_prompt(tmp_path: Path):
     """The actual Tier 3 check: with the post-#29 prompt, Haiku must
     return the interview-prep document inline, not call Write."""
-    paths = _materialize_fixture_workspace(tmp_path)
-    prompt = _build_interview_coach_prompt(tmp_path, paths["out_dir"])
-
+    prompt = _build_prompt_in_process()
     events = _run_claude_p_against_haiku(prompt, tmp_path)
     write_calls = _write_tool_calls(events)
 
@@ -190,13 +151,11 @@ def test_haiku_does_not_call_write_tool_with_new_prompt(tmp_path: Path):
 
 
 def test_haiku_leaves_student_cwd_clean(tmp_path: Path):
-    """Even if Haiku DID call Write, no stray .md files should appear in
-    the simulated student CWD root (post-bypass-permissions, the file
-    would have been written for real). This is a directory-state check
-    that's complementary to the tool-use check."""
-    paths = _materialize_fixture_workspace(tmp_path)
+    """Even if Haiku DID call Write, no stray .md files should appear in the
+    simulated student CWD root after the run. Directory-state check that's
+    complementary to the tool-use check."""
     pre_existing = {p.name for p in tmp_path.iterdir() if p.is_file()}
-    prompt = _build_interview_coach_prompt(tmp_path, paths["out_dir"])
+    prompt = _build_prompt_in_process()
 
     _run_claude_p_against_haiku(prompt, tmp_path)
 
