@@ -22,9 +22,23 @@ cd "$SCRIPT_DIR"
 
 echo "Setting up resumasher at: $SCRIPT_DIR"
 
-# Verify python3 is available.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 is not installed or not on PATH." >&2
+# Find a Python 3.10+ interpreter. Prefer `python3` (standard on macOS/Linux);
+# fall back to `python` (standard on Windows/Git Bash, where `python3` is
+# typically absent — or is a Microsoft Store App Execution Alias stub that
+# prints "Python was not found" and exits non-zero when invoked). Since
+# `command -v` can't tell a working interpreter from a broken stub, actually
+# invoke each candidate and confirm it runs AND reports 3.10+.
+_is_python_310_plus() {
+  command -v "$1" >/dev/null 2>&1 \
+    && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
+if _is_python_310_plus python3; then
+  PYTHON=python3
+elif _is_python_310_plus python; then
+  PYTHON=python
+else
+  echo "ERROR: Python 3.10+ is not installed or not on PATH." >&2
   echo "Install Python 3.10+ and retry." >&2
   exit 1
 fi
@@ -33,9 +47,21 @@ fi
 VENV="$SCRIPT_DIR/.venv"
 if [ ! -d "$VENV" ]; then
   echo "Creating venv at $VENV"
-  python3 -m venv "$VENV"
+  "$PYTHON" -m venv "$VENV"
 else
   echo "Reusing existing venv at $VENV"
+fi
+
+# Windows CPython's venv layout uses Scripts/ instead of bin/. Pick whichever
+# exists so the rest of this script and the wrapper in bin/resumasher-exec
+# work on both layouts.
+if [ -d "$VENV/bin" ]; then
+  VENV_BIN="$VENV/bin"
+elif [ -d "$VENV/Scripts" ]; then
+  VENV_BIN="$VENV/Scripts"
+else
+  echo "ERROR: venv created at $VENV but neither bin/ nor Scripts/ subdirectory found." >&2
+  exit 1
 fi
 
 # Install dependencies. Use a generous timeout and retry count so students
@@ -47,9 +73,16 @@ echo "Installing dependencies (this can take ~30s on a fast connection, longer o
 
 # Friendly error wrapper around pip. set -e would turn a pip failure into
 # a raw Python traceback. Catch it instead and print an actionable message.
+#
+# Invoke pip via `python -m pip` instead of the pip.exe/pip binary. On
+# Windows, pip.exe can't overwrite itself when a self-upgrade is requested
+# (the file is locked by the running process); pip detects this and refuses,
+# redirecting to `python -m pip install --upgrade pip` — which copies pip
+# to a temp location before replacing. Using `python -m pip` here uniformly
+# sidesteps the issue and behaves identically on POSIX.
 _pip_install() {
   local label="$1"; shift
-  if ! "$VENV/bin/pip" install $PIP_OPTS --quiet "$@"; then
+  if ! "$VENV_BIN/python" -m pip install $PIP_OPTS --quiet "$@"; then
     cat >&2 <<EOF
 
 ERROR: pip install for ${label} failed (exit code $?).
