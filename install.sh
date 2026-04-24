@@ -24,11 +24,18 @@ echo "Setting up resumasher at: $SCRIPT_DIR"
 
 # Find a Python 3.10+ interpreter. Prefer `python3` (standard on macOS/Linux);
 # fall back to `python` (standard on Windows/Git Bash, where `python3` is
-# typically absent). Verify the fallback is actually 3.10+ before trusting it.
-if command -v python3 >/dev/null 2>&1; then
+# typically absent — or is a Microsoft Store App Execution Alias stub that
+# prints "Python was not found" and exits non-zero when invoked). Since
+# `command -v` can't tell a working interpreter from a broken stub, actually
+# invoke each candidate and confirm it runs AND reports 3.10+.
+_is_python_310_plus() {
+  command -v "$1" >/dev/null 2>&1 \
+    && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
+if _is_python_310_plus python3; then
   PYTHON=python3
-elif command -v python >/dev/null 2>&1 \
-  && python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+elif _is_python_310_plus python; then
   PYTHON=python
 else
   echo "ERROR: Python 3.10+ is not installed or not on PATH." >&2
