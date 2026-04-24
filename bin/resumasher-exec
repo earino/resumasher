@@ -26,21 +26,45 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Locate the venv Python. macOS/Linux use .venv/bin/python; Windows CPython's
-# venv layout uses .venv/Scripts/python.exe. Try both so Git Bash on Windows
-# works without a separate wrapper.
-VENV_PY="$SKILL_ROOT/.venv/bin/python"
-if [ ! -x "$VENV_PY" ]; then
-  VENV_PY="$SKILL_ROOT/.venv/Scripts/python.exe"
-fi
+# Locate the venv Python. Search order:
+#   1. $RESUMASHER_VENV/bin/python — explicit override (sandbox / CI / custom)
+#   2. ~/.venv-resumasher-sandbox/bin/python — sandbox-vs-host coordination
+#      convention (a Linux Docker sandbox sharing the FS with a macOS host
+#      cannot reuse the host's .venv; it builds its own venv in HOME instead
+#      so the two never collide).
+#   3. $SKILL_ROOT/.venv/bin/python — POSIX host install (the default
+#      install.sh creates this).
+#   4. $SKILL_ROOT/.venv/Scripts/python.exe — Windows CPython venv layout
+#      (Git Bash / MINGW64 — install.sh detects and uses this on Windows).
+VENV_PY=""
+for CANDIDATE in \
+    "${RESUMASHER_VENV:-}/bin/python" \
+    "${HOME}/.venv-resumasher-sandbox/bin/python" \
+    "$SKILL_ROOT/.venv/bin/python" \
+    "$SKILL_ROOT/.venv/Scripts/python.exe"; do
+  # Skip the empty $RESUMASHER_VENV case (becomes "/bin/python" if unset).
+  case "$CANDIDATE" in
+    /bin/python) continue ;;
+  esac
+  if [ -x "$CANDIDATE" ]; then
+    VENV_PY="$CANDIDATE"
+    break
+  fi
+done
 
-if [ ! -x "$VENV_PY" ]; then
+if [ -z "$VENV_PY" ]; then
   cat >&2 <<EOF
-ERROR: resumasher venv Python not found at:
-  $SKILL_ROOT/.venv/bin/python  (or .venv/Scripts/python.exe on Windows)
+ERROR: resumasher venv Python not found. Searched:
+  \$RESUMASHER_VENV/bin/python   (override; currently: '${RESUMASHER_VENV:-unset}')
+  ~/.venv-resumasher-sandbox/bin/python   (sandbox-vs-host convention)
+  $SKILL_ROOT/.venv/bin/python   (POSIX host install)
+  $SKILL_ROOT/.venv/Scripts/python.exe   (Windows host install)
 
-Run the installer to set up the venv:
+If you are running on the host, run the installer:
   bash $SKILL_ROOT/install.sh
+
+If you are in a sandbox / Docker container, run the bootstrap:
+  bash $SKILL_ROOT/tools/bootstrap-sandbox-venv.sh
 
 EOF
   exit 1

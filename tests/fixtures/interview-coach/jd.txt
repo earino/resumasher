@@ -1,0 +1,49 @@
+Senior Product Analyst — Growth & Retention
+Loyalo (Vienna, Austria) — Hybrid (3 days in-office)
+
+About Loyalo
+
+Loyalo is a Series-B SaaS company building loyalty and retention infrastructure
+for European consumer brands. Our platform processes ~5M end-customer events per
+day across ~400 brand customers. We're a 90-person team headquartered in Vienna.
+
+The role
+
+We're hiring a Senior Product Analyst to own the analytics function for our
+Retention product line. You'll partner with the Retention PM and the head of
+CRM to shape the experimentation roadmap, build the segmentation models that
+target our customers' end-users, and present findings monthly to our exec team.
+
+Day-to-day:
+- Design and analyze A/B tests on our customers' campaign workflows
+- Build and maintain the segmentation pipeline (currently k-means + RFM)
+- Own the weekly retention dashboard for the exec team
+- Partner with data engineering to define the data contracts for the
+  retention data warehouse
+- Mentor one junior analyst (joining in Q3)
+
+You will
+
+- Have 3+ years of experience in product or growth analytics, ideally at a
+  consumer-facing software company
+- Be advanced in SQL — window functions, CTEs, query plan reading
+- Be proficient in at least one of Python or R for analysis and basic ML
+- Have shipped production segmentation or churn models, ideally with a
+  measured business outcome
+- Have run >20 A/B tests with proper statistical rigor (we use frequentist
+  designs, sequential testing, and CUPED variance reduction)
+- Be comfortable presenting findings to a non-technical exec audience
+- Speak fluent English; German is a strong plus given our customer base
+
+Bonus
+
+- dbt experience (we have ~80 models)
+- Experience with causal inference techniques beyond A/B (diff-in-diff,
+  synthetic control)
+- Experience deprecating legacy reporting systems / replacing
+  hard-to-maintain spreadsheets with proper data infrastructure
+
+Compensation
+
+€65k–€80k base, depending on experience. Equity. Generous European-style
+PTO (28 days minimum).
