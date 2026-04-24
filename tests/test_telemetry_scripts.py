@@ -14,9 +14,37 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+
+def _resolve_bash() -> str:
+    """Pick the bash interpreter to invoke under subprocess.
+
+    On Windows GitHub Actions runners, `bash` on Windows PATH often resolves
+    to `C:\\Windows\\System32\\bash.exe` (the Windows Subsystem for Linux
+    launcher) BEFORE Git Bash (`C:\\Program Files\\Git\\bin\\bash.exe`). WSL's
+    bash emits "Windows Subsystem for Linux has no installed distributions"
+    to stdout (in UTF-16, no less) and exits non-zero. That's what we hit
+    on the first Windows CI run after adding the bash prefix to the
+    subprocess call — the prefix fixed WinError 193 but let WSL intercept.
+
+    Resolution order:
+      1. `$BASH` env var — set by GitHub Actions when the job runs under
+         `defaults.run.shell: bash` (points at Git Bash on Windows runners).
+      2. Well-known Git Bash path on Windows, if present.
+      3. Plain `bash` — correct on POSIX, and the last resort on Windows.
+    """
+    env_bash = os.environ.get("BASH")
+    if env_bash:
+        return env_bash
+    if sys.platform == "win32":
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+    return "bash"
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,19 +56,16 @@ SYNC_BIN = REPO_ROOT / "bin" / "resumasher-telemetry-sync"
 def _run(bin_path: Path, args: list[str], env: dict[str, str], cwd: Path | None = None,
          input_text: str | None = None, timeout: int = 15) -> subprocess.CompletedProcess:
     # Invoke through `bash` explicitly rather than letting the OS resolve the
-    # script's shebang. On POSIX this is a no-op — the kernel would honor the
-    # `#!/usr/bin/env bash` shebang anyway. On Windows, Python's CreateProcessW
-    # can only launch PE/EXE files, so `subprocess.run([str(bin_path), ...])`
-    # raises `OSError: [WinError 193] %1 is not a valid Win32 application`.
-    # Git Bash (MINGW64) has its own shebang interpretation layer, but Python
-    # subprocess doesn't use it. Prepending `bash` launches bash.exe (a real
-    # PE binary on Windows, /bin/bash on POSIX) and bash itself handles the
-    # script interpretation. Matches how students actually invoke the scripts
-    # via Git Bash.
+    # script's shebang. On POSIX the kernel would honor `#!/usr/bin/env bash`
+    # directly. On Windows, Python's CreateProcessW can only launch PE/EXE
+    # files — `subprocess.run([str(bin_path), ...])` raises WinError 193.
+    # Git Bash has its own shebang layer but it isn't reached from Python
+    # subprocess. `_resolve_bash()` picks Git Bash explicitly on Windows —
+    # plain `bash` on Windows PATH often resolves to WSL's stub first.
     full_env = os.environ.copy()
     full_env.update(env)
     return subprocess.run(
-        ["bash", str(bin_path), *args],
+        [_resolve_bash(), str(bin_path), *args],
         env=full_env,
         cwd=str(cwd) if cwd else None,
         capture_output=True,

@@ -502,9 +502,23 @@ def skill_tree(tmp_path: Path) -> Path:
 
 
 def _run_build_prompt(*argv: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the orchestration.py CLI as a subprocess."""
+    """Invoke the orchestration.py CLI as a subprocess.
+
+    Pin the decode encoding to UTF-8. The CLI's `if __name__ == "__main__"`
+    block reconfigures stdout/stderr to UTF-8 at write time, so the pipe
+    bytes are always UTF-8. But `subprocess.run(text=True)` on Windows
+    defaults to the system locale (CP1252) when decoding — `ñ` round-trips
+    as `�`, and assertions like `assert "Ana Müller" in r.stdout` fail with
+    mojibake. Force UTF-8 on the read side too.
+    """
     cmd = [sys.executable, "-m", "scripts.orchestration", "build-prompt", *argv]
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        encoding="utf-8",
+    )
 
 
 def test_cli_build_prompt_fit_analyst(skill_tree: Path):
