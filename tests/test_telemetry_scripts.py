@@ -27,10 +27,20 @@ SYNC_BIN = REPO_ROOT / "bin" / "resumasher-telemetry-sync"
 
 def _run(bin_path: Path, args: list[str], env: dict[str, str], cwd: Path | None = None,
          input_text: str | None = None, timeout: int = 15) -> subprocess.CompletedProcess:
+    # Invoke through `bash` explicitly rather than letting the OS resolve the
+    # script's shebang. On POSIX this is a no-op — the kernel would honor the
+    # `#!/usr/bin/env bash` shebang anyway. On Windows, Python's CreateProcessW
+    # can only launch PE/EXE files, so `subprocess.run([str(bin_path), ...])`
+    # raises `OSError: [WinError 193] %1 is not a valid Win32 application`.
+    # Git Bash (MINGW64) has its own shebang interpretation layer, but Python
+    # subprocess doesn't use it. Prepending `bash` launches bash.exe (a real
+    # PE binary on Windows, /bin/bash on POSIX) and bash itself handles the
+    # script interpretation. Matches how students actually invoke the scripts
+    # via Git Bash.
     full_env = os.environ.copy()
     full_env.update(env)
     return subprocess.run(
-        [str(bin_path), *args],
+        ["bash", str(bin_path), *args],
         env=full_env,
         cwd=str(cwd) if cwd else None,
         capture_output=True,

@@ -94,6 +94,18 @@ def fake_env_with_broken_python3():
         tmp.cleanup()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Simulates a Windows-only bug (MS Store python3 stub) on non-Windows "
+        "via fake bash-script shims on PATH. Python's subprocess on Windows "
+        "uses CreateProcessW, which cannot execute bash scripts directly "
+        "(WinError 193: not a valid Win32 application) — the shim approach "
+        "doesn't work natively on Windows. Windows students still catch "
+        "regressions against real MS Store stubs organically; this test "
+        "provides the Linux/macOS-side regression coverage."
+    ),
+)
 def test_install_sh_falls_through_when_python3_is_broken_ms_store_stub(
     fake_env_with_broken_python3,
 ):
