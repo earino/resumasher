@@ -1,0 +1,69 @@
+Ana Müller — folder mining summary (synthetic fixture)
+
+Ana's working directory shows three substantive bodies of project work plus
+a handful of coursework artifacts. Documented here for the interview-coach
+sub-agent so it can ground question answers in actual evidence rather than
+generic claims.
+
+PROJECT: MintPay revenue attribution (mintpay-attribution/)
+
+A two-year project from Ana's product-analyst role. The repo contains 38
+dbt models organized into staging / intermediate / marts layers, a docs/
+directory with the data-contract spec she negotiated with the marketing,
+billing, and product engineering teams, and a runbooks/ directory with
+the on-call playbook for the daily refresh job. Notable artifacts:
+- docs/data-contracts.md — the three signed contracts (one per upstream
+  team). Documents what each team commits to deliver, the SLA, and the
+  escalation path. Ana wrote this and walked it through three rounds
+  of stakeholder review before sign-off.
+- runbooks/late-data.md — the protocol for handling late-arriving billing
+  events. Two paragraphs, three decisions, one decision tree. Used three
+  times in production by other analysts after Ana left.
+- analysis/legacy-spreadsheet-deprecation.md — Ana's writeup of the
+  rollout plan that retired the 2,000-row attribution spreadsheet. The
+  exec team had relied on the spreadsheet for three years; replacing it
+  required a parallel-run period and a sign-off from the CFO.
+
+PROJECT: CEU capstone — SaaS retention segmentation (capstone-retention/)
+
+In-progress capstone project, started January 2026, due May 2026. The
+candidate is partnering with a Vienna-based SaaS company (Loyalo) on a
+real production dataset of 250k users. Notebooks/ has the EDA and feature
+engineering; src/ has the production-shape pipeline. Notable:
+- src/features/engagement_decay.py — a custom feature Ana derived from
+  the literature (modified RFM with logarithmic recency decay) that
+  outperformed the off-the-shelf RFM in cross-validation.
+- experiments/holdout-design.md — the 2-week holdout test design she
+  proposed and Loyalo agreed to run. The treated cohort showed an 18%
+  engagement lift; the holdout was statistically significant at p<0.01.
+- presentations/loyalo-week6.pdf — an interim presentation to Loyalo's
+  CRO. 12 slides, focused on the business case for the segmentation
+  rather than the model internals.
+
+PROJECT: Vienna rent regressor (vienna-rent/)
+
+A side project. Python scrapes immobilienscout24 listings, geocodes them,
+joins to OEBB transit-time data, and predicts a fair rent. ±€80/month
+accuracy on a held-out 2026 sample. Ana used this herself to evaluate
+her current apartment.
+
+COURSEWORK: experimentation/ (course: Causal Inference for Business)
+
+Five A/B-test problem sets. Ana scored top of her cohort on the difference-
+in-differences problem set. Her writeup of the synthetic-control assignment
+(parallel-trends assumption violations) is referenced by the course TA in
+office hours as the canonical solution.
+
+OBSERVATIONS
+
+Ana's work consistently shows three strengths interviewers should probe:
+(1) She owns the stakeholder negotiation, not just the model — the data
+contracts and the spreadsheet deprecation are both organizational artifacts
+as much as technical ones. (2) She tests her own work in production —
+the 2-week holdout on Loyalo is unusual rigor for a capstone. (3) She
+reads the literature and adapts it — the engagement-decay feature is
+derivative work but is genuinely improved over the textbook version.
+
+The weakest area in evidence: deep-learning. She has light PyTorch on her
+resume but no project artifact demonstrates production-scale neural network
+work. If the JD calls for that, push hard on the gap.

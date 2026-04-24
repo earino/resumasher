@@ -700,9 +700,26 @@ PROMPT_PREP=$("$RS" orchestration build-prompt --kind interview-coach --cwd "$ST
 
 The compiled prompt reads `$OUT_DIR/tailored-resume.md`, `.resumasher/cache.txt`, and `$RUN_DIR/jd.txt`, and asks for a SQL + Case Study + Behavioral STAR bundle with answers anchored to the candidate's actual projects and experience. Template: `scripts/prompts.py` `interview-coach` kind.
 
+**Capture a dispatch timestamp before issuing the sub-agent calls** — the post-phase cleanup scan below uses it as the "files newer than this might be rogue" cutoff:
+
+```bash
+DISPATCH_TS=$(date +%s)
+```
+
 **Dispatch cover-letter and interview-coach in parallel** — in one orchestrator turn, issue both sub-agent calls with `$PROMPT_COVER` and `$PROMPT_PREP` respectively. Under Claude Code this is two `Task` calls in the same message; under Gemini two `@generalist` calls; under Codex instruct the model to spawn two sub-agents concurrently.
 
-Save the outputs to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md`.
+**Take each sub-agent's text response — the markdown document it returned in its message — and use the Write tool to save it to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md` respectively.** The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
+
+**Run the post-phase cleanup scan** to remove any rogue interview-prep-shaped files a misbehaving sub-agent may have planted in `$STUDENT_CWD`:
+
+```bash
+"$RS" orchestration cleanup-stray-outputs \
+    --cwd "$STUDENT_CWD" \
+    --out-dir "$OUT_DIR" \
+    --since-timestamp "$DISPATCH_TS"
+```
+
+This is defense-in-depth — the prompt and orchestration changes above should keep sub-agents from writing rogue files in the first place, but a future weaker model could regress. The scan only touches files newer than `$DISPATCH_TS` whose names look like interview-prep output (case-insensitive substring match on `interview`, `prep`, or `bundle`); student-owned content is not at risk.
 
 **Retry budget:** each gets 1 retry. On second failure, write a stub file:
 

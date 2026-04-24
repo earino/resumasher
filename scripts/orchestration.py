@@ -211,6 +211,160 @@ def validate_resume_path(cwd: Path, filename: str) -> tuple[Optional[Path], Opti
 
 
 # ---------------------------------------------------------------------------
+# 2.5 cleanup_stray_outputs: defense-in-depth for misbehaving sub-agents
+# ---------------------------------------------------------------------------
+#
+# Background: weaker models (observed on Haiku 4.5 in issue #29, NOT on Opus
+# 4.7) sometimes ignore the interview-coach prompt's "do not write to disk"
+# constraint and use the Write tool to create a markdown file with a
+# fabricated name (e.g. "Ana_Muller_Interview_Prep_Bundle.md") directly in
+# $STUDENT_CWD. Functionally the content is correct, but it pollutes the
+# student's working directory — a hard contract violation.
+#
+# This scan is the belt; the prompt surgery and SKILL.md Phase 6 wording are
+# the suspenders. Even if a future model regresses against the prompt, the
+# scan removes the rogue file before the student sees it.
+#
+# Anti-footgun rules:
+#   - Top-level only (never recursive). Students may have legitimate
+#     interview-prep notes in subdirectories.
+#   - mtime gate: only files newer than the dispatch timestamp are
+#     candidates. Pre-existing student files are never touched.
+#   - Name match: the file's basename must contain "interview", "prep", or
+#     "bundle" (case-insensitive substring). These are the shapes the issue
+#     observed. Generic names like "notes.md" are never touched.
+#   - Protected names: documented input/output filenames are never touched
+#     even if their name matches the heuristic.
+
+INTERVIEW_PREP_NAME_PATTERNS = ("interview", "prep", "bundle")
+
+PROTECTED_NAMES_LOWER = frozenset(
+    name.lower()
+    for name in (
+        # Documented INPUT names — the student owns these. The cleanup scan
+        # must never touch them even if their name matches the heuristic.
+        # OUTPUT names (interview-prep.md, cover-letter.md) deliberately are
+        # NOT in this set: if a misbehaving sub-agent writes an output-named
+        # file in cwd, it IS the rogue and should be cleaned up. The mtime
+        # gate is what protects pre-existing student files of any name.
+        *RESUME_CANDIDATES,
+        "jd.md",
+        "jd.markdown",
+    )
+)
+
+
+@dataclass(frozen=True)
+class CleanupAction:
+    path: Path  # absolute path to the rogue file (pre-action)
+    action: str  # "moved" | "deleted" | "skipped"
+    reason: str  # human-readable explanation
+    destination: Optional[Path] = None  # only set when action == "moved"
+
+
+def cleanup_stray_outputs(
+    cwd: Path,
+    out_dir: Path,
+    since_timestamp: float,
+) -> list[CleanupAction]:
+    """Scan `cwd` top-level for rogue interview-prep files and clean up.
+
+    For each markdown file in `cwd` (top level, not recursive) whose name
+    matches an interview-prep pattern AND whose mtime is newer than
+    `since_timestamp` AND whose name is not in PROTECTED_NAMES_LOWER:
+      - If `out_dir/interview-prep.md` is missing or empty, MOVE the rogue
+        file there (best-effort recovery — the orchestrator's own write
+        didn't happen, but at least the rogue's content survives).
+      - Otherwise, DELETE the rogue file (orchestrator already wrote the
+        right thing; the rogue is just pollution).
+
+    Never raises on a single bad file — records a `skipped` action and moves on.
+    Returns the full list of CleanupAction records describing what happened.
+    """
+    actions: list[CleanupAction] = []
+    if not cwd.exists() or not cwd.is_dir():
+        return actions
+
+    target = out_dir / "interview-prep.md"
+
+    try:
+        entries = list(cwd.iterdir())
+    except OSError:
+        return actions
+
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() != ".md":
+                continue
+            name_lower = entry.name.lower()
+            if name_lower in PROTECTED_NAMES_LOWER:
+                continue
+            if not any(pat in name_lower for pat in INTERVIEW_PREP_NAME_PATTERNS):
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime <= since_timestamp:
+                continue
+        except OSError:
+            continue
+
+        # Decide MOVE vs DELETE.
+        target_exists_with_content = (
+            target.exists() and target.is_file() and target.stat().st_size > 0
+        )
+        if not target_exists_with_content:
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                entry.replace(target)
+                actions.append(
+                    CleanupAction(
+                        path=entry,
+                        action="moved",
+                        reason=(
+                            "canonical interview-prep.md was missing or empty; "
+                            "recovered rogue file's content"
+                        ),
+                        destination=target,
+                    )
+                )
+            except OSError as exc:
+                actions.append(
+                    CleanupAction(
+                        path=entry,
+                        action="skipped",
+                        reason=f"move failed: {exc}",
+                    )
+                )
+        else:
+            try:
+                entry.unlink()
+                actions.append(
+                    CleanupAction(
+                        path=entry,
+                        action="deleted",
+                        reason=(
+                            "canonical interview-prep.md already exists; "
+                            "rogue file is pollution"
+                        ),
+                    )
+                )
+            except OSError as exc:
+                actions.append(
+                    CleanupAction(
+                        path=entry,
+                        action="skipped",
+                        reason=f"delete failed: {exc}",
+                    )
+                )
+
+    return actions
+
+
+# ---------------------------------------------------------------------------
 # 3. read file with encoding detection (chardet fallback to utf-8-sig / utf-8)
 # ---------------------------------------------------------------------------
 
@@ -1058,6 +1212,27 @@ def _cli() -> int:
     inspect_group.add_argument("--pdf", help="Path to a rendered PDF")
     inspect_group.add_argument("--photo", help="Path to the source photo image")
 
+    p = sub.add_parser(
+        "cleanup-stray-outputs",
+        help=(
+            "Defense-in-depth: scan $STUDENT_CWD for rogue interview-prep "
+            "files a misbehaving sub-agent may have planted (issue #29). "
+            "Files newer than --since-timestamp whose names match interview "
+            "patterns are moved to $OUT_DIR/interview-prep.md (if missing) or "
+            "deleted (if the canonical file already exists). Emits a JSON "
+            "summary of actions on stdout. Always exits 0 — cleanup failures "
+            "are logged but never block the orchestrator."
+        ),
+    )
+    p.add_argument("--cwd", required=True, help="Student working directory to scan (top level only)")
+    p.add_argument("--out-dir", required=True, help="Path where the canonical interview-prep.md should live")
+    p.add_argument(
+        "--since-timestamp",
+        type=float,
+        required=True,
+        help="Epoch seconds; only files with mtime newer than this are candidates",
+    )
+
     p = sub.add_parser("first-run-needed")
     p.add_argument("cwd", nargs="?", default=".")
 
@@ -1317,6 +1492,30 @@ def _cli() -> int:
             print("inspect requires --resume, --pdf, or --photo", file=sys.stderr)
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "cleanup-stray-outputs":
+        actions = cleanup_stray_outputs(
+            cwd=Path(args.cwd),
+            out_dir=Path(args.out_dir),
+            since_timestamp=args.since_timestamp,
+        )
+        summary = {
+            "scanned": str(Path(args.cwd).resolve()),
+            "actions": [
+                {
+                    "path": str(a.path),
+                    "action": a.action,
+                    "reason": a.reason,
+                    "destination": str(a.destination) if a.destination else None,
+                }
+                for a in actions
+            ],
+            "moved": sum(1 for a in actions if a.action == "moved"),
+            "deleted": sum(1 for a in actions if a.action == "deleted"),
+            "skipped": sum(1 for a in actions if a.action == "skipped"),
+        }
+        print(json.dumps(summary))
         return 0
 
     if args.command == "first-run-needed":
