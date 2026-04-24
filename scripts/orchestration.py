@@ -1487,4 +1487,13 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
 
 
 if __name__ == "__main__":
+    # Python on Windows defaults stdout/stderr to the system ANSI code page
+    # (typically CP1252) when not attached to a TTY. Prompts and user-facing
+    # output contain `→`, `…`, curly quotes, and non-ASCII names that CP1252
+    # can't encode, so writes raise UnicodeEncodeError. Force UTF-8 so the
+    # Windows Git Bash path behaves like macOS/Linux.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(_cli())

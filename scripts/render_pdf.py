@@ -1047,4 +1047,11 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    # See orchestration.py for the rationale — Windows defaults stdout/stderr
+    # to CP1252 which crashes on non-ASCII glyphs (→, …, curly quotes, unicode
+    # names). Force UTF-8 at the CLI boundary.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
     sys.exit(main())
