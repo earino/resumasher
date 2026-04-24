@@ -10,17 +10,37 @@
 #
 # Usage:
 #   git clone https://github.com/earino/resumasher.git <target-dir>
-#   bash <target-dir>/install.sh
+#   bash <target-dir>/install.sh          # runtime deps only (for students)
+#   bash <target-dir>/install.sh --dev    # + pytest/jupyter (for contributors)
 #
 # After this runs, restart Claude Code to pick up the skill.
 
 set -euo pipefail
 
+# Parse flags. Only --dev is recognized; anything else is an error.
+INSTALL_DEV=0
+for arg in "$@"; do
+  case "$arg" in
+    --dev)
+      INSTALL_DEV=1
+      ;;
+    *)
+      echo "ERROR: unknown flag: $arg" >&2
+      echo "Usage: bash install.sh [--dev]" >&2
+      exit 2
+      ;;
+  esac
+done
+
 # Resolve the directory this script lives in — that IS the install location.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "Setting up resumasher at: $SCRIPT_DIR"
+if [ "$INSTALL_DEV" = "1" ]; then
+  echo "Setting up resumasher (with dev deps) at: $SCRIPT_DIR"
+else
+  echo "Setting up resumasher at: $SCRIPT_DIR"
+fi
 
 # Find a Python 3.10+ interpreter. Prefer `python3` (standard on macOS/Linux);
 # fall back to `python` (standard on Windows/Git Bash, where `python3` is
@@ -108,7 +128,13 @@ EOF
 }
 
 _pip_install "pip itself" --upgrade pip
-_pip_install "resumasher dependencies" -r "$SCRIPT_DIR/requirements.txt"
+if [ "$INSTALL_DEV" = "1" ]; then
+  # requirements-dev.txt includes `-r requirements.txt` at the top, so this
+  # single install covers both runtime and dev (pytest, jupyter).
+  _pip_install "resumasher dependencies (runtime + dev)" -r "$SCRIPT_DIR/requirements-dev.txt"
+else
+  _pip_install "resumasher dependencies" -r "$SCRIPT_DIR/requirements.txt"
+fi
 
 
 # Ensure the wrapper scripts in bin/ are executable. Git preserves the exec
@@ -124,3 +150,7 @@ echo "Next steps:"
 echo "  1. Restart your AI CLI (Claude Code, Codex, or Gemini) so it picks up the new skill."
 echo "  2. cd to a folder containing resume.md (try GOLDEN_FIXTURES/ for a demo)."
 echo "  3. Run: /resumasher <job-source>"
+if [ "$INSTALL_DEV" = "0" ]; then
+  echo ""
+  echo "  (Contributors: re-run with --dev to add pytest/jupyter for running the test suite.)"
+fi

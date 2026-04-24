@@ -87,11 +87,25 @@ binary on the runner), so this design naturally restricts live tests to
   prompt assertions) ensures regressions are caught even if the live
   test isn't run.
 
+## Running tests on the host
+
+`install.sh` installs runtime deps only — pytest/jupyter are excluded so
+students who only want to use the skill don't have to download them. If
+you're contributing and want to run tests on the host, install with the
+dev flag:
+
+```bash
+bash install.sh --dev   # installs requirements-dev.txt (runtime + pytest + jupyter)
+```
+
+Sandbox installs via `tools/bootstrap-sandbox-venv.sh` always install dev
+deps — test infrastructure is the whole point of a dev sandbox.
+
 ## See also
 
-- `install.sh` — host install (creates `.venv/`)
+- `install.sh` — host install (creates `.venv/`). Use `--dev` to include pytest/jupyter.
 - `tools/bootstrap-sandbox-venv.sh` — sandbox install (creates
-  `~/.venv-resumasher-sandbox/`)
+  `~/.venv-resumasher-sandbox/`, always includes dev deps)
 - `bin/resumasher-exec` — venv-aware Python wrapper
 - `SKILL.md` — the orchestration logic; uses `$RS` (set to
   `bin/resumasher-exec`) for all subprocess work
