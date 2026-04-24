@@ -249,14 +249,19 @@ def test_discover_resume_prefers_markdown_over_pdf(tmp_path: Path):
 def test_discover_resume_accepts_cv_pdf_variants(tmp_path: Path):
     (tmp_path / "CV.pdf").write_bytes(b"%PDF-1.4\n...")
     result = discover_resume(tmp_path)
-    # Assertion is case-insensitive because on case-insensitive filesystems
-    # (macOS APFS, Windows NTFS default), `discover_resume` iterates
-    # RESUME_CANDIDATES in order and `(cwd / "cv.pdf").exists()` matches
-    # first, returning a Path whose .name reflects the candidate string
-    # ("cv.pdf"), not the on-disk filename ("CV.pdf"). Functionally
-    # identical (both paths resolve to the same file), but cosmetically
-    # different. The test cares only that a CV.pdf-shaped file was found.
-    assert result is not None and result.name.lower() == "cv.pdf"
+    # Case-exact: the returned Path must carry the on-disk filename, not a
+    # lowercased approximation. On case-insensitive filesystems (macOS APFS,
+    # Windows NTFS) the previous candidate-probing implementation returned
+    # `cv.pdf` even when the real file was `CV.pdf`. See issue #27.
+    assert result is not None and result.name == "CV.pdf"
+
+
+def test_discover_resume_preserves_on_disk_case_mixed(tmp_path: Path):
+    """A mixed-case name that isn't literally in RESUME_CANDIDATES still
+    matches via case-insensitive comparison, and the on-disk case is kept."""
+    (tmp_path / "Cv.pdf").write_bytes(b"%PDF-1.4\n...")
+    result = discover_resume(tmp_path)
+    assert result is not None and result.name == "Cv.pdf"
 
 
 # ---------------------------------------------------------------------------

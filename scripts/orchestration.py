@@ -128,12 +128,23 @@ RESUME_CANDIDATES = [
 
 
 def discover_resume(cwd: Path) -> Optional[Path]:
-    """Return the first existing resume-like file at the CWD root, or None."""
-    for name in RESUME_CANDIDATES:
-        p = cwd / name
-        if p.exists() and p.is_file():
-            return p
-    return None
+    """Return the highest-priority resume-like file at the CWD root, or None.
+
+    Enumerates the directory and matches on lowercased names, so the returned
+    Path carries the real on-disk filename even on case-insensitive filesystems
+    (macOS APFS, Windows NTFS) — probing `(cwd / "cv.pdf").exists()` there
+    matches a file named `CV.pdf` but returns a Path whose `.name` is the
+    candidate string, not what's on disk. See issue #27.
+    """
+    priority = {name.lower(): i for i, name in enumerate(RESUME_CANDIDATES)}
+    matches = [
+        p for p in cwd.iterdir()
+        if p.is_file() and p.name.lower() in priority
+    ]
+    if not matches:
+        return None
+    matches.sort(key=lambda p: priority[p.name.lower()])
+    return matches[0]
 
 
 ACCEPTED_RESUME_EXTENSIONS = frozenset({".md", ".markdown", ".pdf"})
