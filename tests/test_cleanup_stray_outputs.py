@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -32,6 +33,26 @@ from scripts.orchestration import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESUMASHER_EXEC = REPO_ROOT / "bin" / "resumasher-exec"
+
+
+def _resolve_bash() -> str:
+    """Pick the bash interpreter to invoke under subprocess.
+
+    Mirrors tests/test_telemetry_scripts.py::_resolve_bash() — same reasoning:
+    Python's subprocess on Windows cannot launch bash scripts via CreateProcessW
+    (raises WinError 193), so the script must be invoked as `bash <script>`.
+    On Windows CI the PATH `bash` often resolves to WSL's stub before Git
+    Bash, so we prefer $BASH (set by GitHub Actions' bash shell) or the
+    well-known Git Bash path.
+    """
+    env_bash = os.environ.get("BASH")
+    if env_bash:
+        return env_bash
+    if sys.platform == "win32":
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+    return "bash"
 
 
 def _set_mtime(path: Path, ts: float) -> None:
@@ -283,6 +304,7 @@ def test_cli_emits_valid_json_summary(tmp_path: Path):
 
     result = subprocess.run(
         [
+            _resolve_bash(),
             str(RESUMASHER_EXEC),
             "orchestration",
             "cleanup-stray-outputs",
@@ -314,6 +336,7 @@ def test_cli_no_crash_on_empty_cwd(tmp_path: Path):
     out_dir.mkdir()
     result = subprocess.run(
         [
+            _resolve_bash(),
             str(RESUMASHER_EXEC),
             "orchestration",
             "cleanup-stray-outputs",
