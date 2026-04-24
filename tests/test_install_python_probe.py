@@ -136,3 +136,32 @@ def test_install_sh_falls_through_when_python3_is_broken_ms_store_stub(
         "working `python` on PATH.\n\n"
         f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
     )
+
+
+def test_install_sh_invokes_pip_via_python_module_form():
+    """pip upgrade must go through `python -m pip`, not the pip binary.
+
+    On Windows, pip.exe refuses to self-upgrade because the running .exe
+    can't overwrite itself. Pip detects this and redirects the caller to
+    `python -m pip install --upgrade pip`, which copies pip to a temp
+    location before replacing the binary. @b0glarka surfaced this after
+    recovering from the MS Store stub bug: her fresh `rm -rf .venv` run
+    got past venv creation but died on `pip install --upgrade pip`.
+
+    The bug is Windows-specific file-locking behavior, so we can't
+    reproduce the failure on Linux. Instead, pin the invariant at the
+    source level: install.sh's pip wrapper must use the `python -m pip`
+    form. A future refactor that reverts to invoking the pip binary for
+    upgrades will flag here before shipping.
+    """
+    install_sh_text = (REPO_ROOT / "install.sh").read_text()
+    assert '"$VENV_BIN/python" -m pip install' in install_sh_text, (
+        "install.sh must invoke pip via `python -m pip install`, not the "
+        "pip binary — otherwise pip self-upgrade fails on Windows because "
+        "pip.exe can't overwrite itself. See issue #32 for context."
+    )
+    assert '"$VENV_BIN/pip" install' not in install_sh_text, (
+        "install.sh invokes pip via the binary path (`$VENV_BIN/pip`), "
+        "which breaks pip self-upgrade on Windows. Use "
+        "`$VENV_BIN/python -m pip install` instead."
+    )

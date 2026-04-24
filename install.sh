@@ -73,9 +73,16 @@ echo "Installing dependencies (this can take ~30s on a fast connection, longer o
 
 # Friendly error wrapper around pip. set -e would turn a pip failure into
 # a raw Python traceback. Catch it instead and print an actionable message.
+#
+# Invoke pip via `python -m pip` instead of the pip.exe/pip binary. On
+# Windows, pip.exe can't overwrite itself when a self-upgrade is requested
+# (the file is locked by the running process); pip detects this and refuses,
+# redirecting to `python -m pip install --upgrade pip` — which copies pip
+# to a temp location before replacing. Using `python -m pip` here uniformly
+# sidesteps the issue and behaves identically on POSIX.
 _pip_install() {
   local label="$1"; shift
-  if ! "$VENV_BIN/pip" install $PIP_OPTS --quiet "$@"; then
+  if ! "$VENV_BIN/python" -m pip install $PIP_OPTS --quiet "$@"; then
     cat >&2 <<EOF
 
 ERROR: pip install for ${label} failed (exit code $?).
