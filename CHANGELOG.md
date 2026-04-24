@@ -6,6 +6,10 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows stdout/stderr encoding — CLIs no longer crash on `→`, `…`, or non-ASCII names.** Surfaced by the new Windows CI matrix ([#34](https://github.com/earino/resumasher/issues/34)): `scripts/orchestration.py build-prompt` (and the other CLI entry points) wrote prompt templates containing `→` directly to stdout, but Python on Windows defaults stdout/stderr to the system ANSI code page (typically CP1252) when not attached to a TTY — which is exactly the shape every `resumasher-exec` invocation takes. Writing `→` raised `UnicodeEncodeError: 'charmap' codec can't encode character '→'` and the phase died. Any Windows student running orchestration whose output included a `→`, `…`, curly quotes, or a non-ASCII name hit this — the v0.4.1 install fixes got students past install but not past the first CLI call that produced these glyphs. Fix: call `sys.stdout.reconfigure(encoding="utf-8")` (and the same for stderr) at every `if __name__ == "__main__":` block in `scripts/` — orchestration.py, render_pdf.py, github_mine.py. New `tests/test_stdout_encoding.py` reproduces the Windows behavior on any OS via `PYTHONIOENCODING=cp1252`, pinning both the crash-free invariant AND the byte-level assertion that the arrow glyph makes it through as UTF-8 (not lossily transcoded to `?`).
+
 ## [0.4.1] — 2026-04-24
 
 v0.4.1 is a Windows hotfix release. The cohort is ~90% Windows, and [@b0glarka](https://github.com/b0glarka) reported [#32](https://github.com/earino/resumasher/issues/32) — a fresh Windows 11 + Git Bash install of v0.4.0 failed before the skill could run. Three cascading Windows-specific bugs in `install.sh` were caught across two rounds of verification on her machine; all three are fixed here. Windows students on a fresh clone can now run `bash install.sh` end-to-end.
