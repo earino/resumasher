@@ -372,36 +372,53 @@ def cleanup_stray_outputs(
 
 def _read_text_with_encoding_detection(path: Path) -> str:
     """
-    Read `path` as text, detecting encoding when UTF-8 decode fails.
+    Read `path` as text, detecting encoding when UTF-8 decode fails, AND
+    normalizing line endings to LF (``\\n``) on the way out.
 
-    Handles the Windows-Notepad-UTF-16-BOM footgun called out in the eng review.
-    Strategy: try UTF-8 first (fast path), then chardet, then let chardet's
-    guess fail loudly if the file really is unreadable.
+    Handles two footguns:
+
+    1. The Windows-Notepad-UTF-16-BOM footgun from the eng review — try
+       UTF-8 first (fast path), then chardet, then fail loudly.
+    2. Cross-platform line endings — Windows files commonly carry
+       ``\\r\\n`` endings. When such content travels through a text-mode
+       subprocess pipe, Python's universal-newline behavior applies twice
+       (once on stdout-write because text mode converts ``\\n`` to
+       ``\\r\\n`` on Windows, so the file's existing ``\\r\\n`` becomes
+       ``\\r\\r\\n``; once on the receiving side, where ``\\r\\r\\n``
+       decodes as two newlines), doubling every line break. Normalizing
+       to LF here matches what Python's text-mode read does for
+       ``open(path, 'r')`` and gives every downstream consumer
+       deterministic line endings regardless of host.
     """
     raw = path.read_bytes()
 
     # Fast path: UTF-8 (handles UTF-8, UTF-8-BOM via utf-8-sig retry).
     try:
-        return raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        pass
-    try:
-        return raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        pass
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # Chardet path.
+            detection = chardet.detect(raw)
+            encoding = detection.get("encoding") or "latin-1"
+            confidence = detection.get("confidence") or 0.0
+            if confidence < 0.5:
+                raise UnicodeDecodeError(
+                    encoding, raw, 0, 1,
+                    f"Could not reliably detect encoding of {path} "
+                    f"(best guess: {encoding} with {confidence:.0%} confidence). "
+                    f"Please resave the file as UTF-8."
+                )
+            text = raw.decode(encoding)
 
-    # Chardet path.
-    detection = chardet.detect(raw)
-    encoding = detection.get("encoding") or "latin-1"
-    confidence = detection.get("confidence") or 0.0
-    if confidence < 0.5:
-        raise UnicodeDecodeError(
-            encoding, raw, 0, 1,
-            f"Could not reliably detect encoding of {path} "
-            f"(best guess: {encoding} with {confidence:.0%} confidence). "
-            f"Please resave the file as UTF-8."
-        )
-    return raw.decode(encoding)
+    # Normalize line endings — match Python text-mode read semantics so
+    # every consumer sees ``\n`` regardless of the file's native line
+    # endings. Order: ``\r\n`` first (Windows), then bare ``\r`` (legacy
+    # Classic Mac).
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
 
 
 def read_resume(path: Path) -> str:
