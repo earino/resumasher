@@ -96,11 +96,22 @@ from PIL import Image as PILImage
 _ROOT = Path(__file__).resolve().parent.parent
 _FONT_REG_NAME = "ResumasherSans"
 _FONT_BOLD_NAME = "ResumasherSans-Bold"
+_FONT_OBLIQUE_NAME = "ResumasherSans-Oblique"
+_FONT_BOLD_OBLIQUE_NAME = "ResumasherSans-BoldOblique"
 _FONT_REGISTERED = False
 
 
 def _register_fonts() -> tuple[str, str]:
-    """Register DejaVu Sans under stable names. Returns (regular, bold) names."""
+    """Register DejaVu Sans (regular + bold + oblique + bold-oblique) under
+    stable names. Returns the (regular, bold) names — italic/boldItalic
+    are wired via `registerFontFamily` so reportlab's `<i>` tag in
+    Paragraph picks them up automatically.
+
+    Bundling both oblique files (~1.3MB total in assets/) is the right
+    call: without them, `*italic*` markdown in tailored bullets renders
+    as regular-weight text — visible difference between intent and
+    output. With them, italic actually renders as italic.
+    """
     global _FONT_REGISTERED
     if _FONT_REGISTERED:
         return _FONT_REG_NAME, _FONT_BOLD_NAME
@@ -117,9 +128,23 @@ def _register_fonts() -> tuple[str, str]:
         Path("/Library/Fonts/DejaVuSans-Bold.ttf"),
         Path("/System/Library/Fonts/DejaVuSans-Bold.ttf"),
     ]
+    candidates_oblique = [
+        _ROOT / "assets" / "DejaVuSans-Oblique.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf"),
+        Path("/Library/Fonts/DejaVuSans-Oblique.ttf"),
+        Path("/System/Library/Fonts/DejaVuSans-Oblique.ttf"),
+    ]
+    candidates_bold_oblique = [
+        _ROOT / "assets" / "DejaVuSans-BoldOblique.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf"),
+        Path("/Library/Fonts/DejaVuSans-BoldOblique.ttf"),
+        Path("/System/Library/Fonts/DejaVuSans-BoldOblique.ttf"),
+    ]
 
     regular = next((p for p in candidates_regular if p.exists()), None)
     bold = next((p for p in candidates_bold if p.exists()), None)
+    oblique = next((p for p in candidates_oblique if p.exists()), None)
+    bold_oblique = next((p for p in candidates_bold_oblique if p.exists()), None)
 
     if regular is None:
         # Fall back to Helvetica but warn loudly on stderr so the caller knows
@@ -140,14 +165,29 @@ def _register_fonts() -> tuple[str, str]:
         # Register regular under bold name too so <b> doesn't crash.
         pdfmetrics.registerFont(TTFont(_FONT_BOLD_NAME, str(regular)))
 
-    # Map bold/italic so Paragraph <b>...</b> resolves correctly.
+    # Italic and bold-italic. If the oblique file is missing (someone cloned
+    # without the full assets/ tree), fall back to regular/bold so the <i>
+    # tag still produces text rather than crashing — the asterisks are still
+    # gone, just no slant.
+    if oblique is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_OBLIQUE_NAME, str(oblique)))
+    else:
+        pdfmetrics.registerFont(TTFont(_FONT_OBLIQUE_NAME, str(regular)))
+    if bold_oblique is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(bold_oblique)))
+    elif bold is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(bold)))
+    else:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(regular)))
+
+    # Map bold/italic so Paragraph <b>/<i>/<b><i> resolve correctly.
     from reportlab.pdfbase.pdfmetrics import registerFontFamily
     registerFontFamily(
         _FONT_REG_NAME,
         normal=_FONT_REG_NAME,
         bold=_FONT_BOLD_NAME,
-        italic=_FONT_REG_NAME,
-        boldItalic=_FONT_BOLD_NAME,
+        italic=_FONT_OBLIQUE_NAME,
+        boldItalic=_FONT_BOLD_OBLIQUE_NAME,
     )
     _FONT_REGISTERED = True
     return _FONT_REG_NAME, _FONT_BOLD_NAME
@@ -420,10 +460,14 @@ def _build_styles() -> StyleSheet1:
     ss.add(ParagraphStyle(
         name="Contact",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        # Softer & smaller than body so the contact line recedes into
+        # header territory rather than competing with bullets for
+        # hierarchy attention. 9.5pt + #555555 matches BlockMetadata.
+        fontSize=9.5,
+        leading=12,
         alignment=TA_LEFT,
         spaceAfter=10,
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="SectionHeading",
@@ -431,7 +475,11 @@ def _build_styles() -> StyleSheet1:
         fontSize=12,
         leading=15,
         alignment=TA_LEFT,
-        spaceBefore=10,
+        # spaceBefore bumped 10 → 14 alongside #42's stacked-date layout:
+        # blocks gained a metadata line, so the heading-to-content rhythm
+        # would otherwise feel proportionally compressed. Sections now read
+        # as visually separate.
+        spaceBefore=14,
         spaceAfter=4,
         textColor="#111111",
     ))
@@ -441,7 +489,10 @@ def _build_styles() -> StyleSheet1:
         fontSize=11,
         leading=14,
         alignment=TA_LEFT,
-        spaceBefore=4,
+        # spaceBefore bumped 4 → 6 so consecutive blocks within a section
+        # (Meta → Chief Data Scientist → Volunteer Translator) don't sit
+        # tight against each other. Pure layout — no content change.
+        spaceBefore=6,
         spaceAfter=2,
     ))
     # Sub-block titles (multi-role tenures inside one company). Same face as
@@ -457,6 +508,34 @@ def _build_styles() -> StyleSheet1:
         spaceBefore=3,
         spaceAfter=1,
     ))
+    # Stacked-date metadata line that sits under a block or sub-block title
+    # when the title contains a recognizable date segment. Slightly smaller
+    # and regular-weight (vs bold title) creates real typographic hierarchy
+    # without the ATS risk of 2-column / Table layouts. See issue #42.
+    ss.add(ParagraphStyle(
+        name="BlockMetadata",
+        fontName=regular,
+        fontSize=9.5,
+        leading=12,
+        alignment=TA_LEFT,
+        spaceAfter=2,
+        # Soft gray so the date/location line recedes as metadata. Works
+        # alongside size + position to form a real 3-tier hierarchy
+        # (bold title → soft metadata → regular bullets). The reason
+        # color-as-hierarchy failed in PR #30 was that gray was the only
+        # gesture; here it complements size and position.
+        textColor="#555555",
+    ))
+    ss.add(ParagraphStyle(
+        name="SubBlockMetadata",
+        fontName=regular,
+        fontSize=9.5,
+        leading=12,
+        alignment=TA_LEFT,
+        leftIndent=8,
+        spaceAfter=2,
+        textColor="#555555",
+    ))
     ss.add(ParagraphStyle(
         name="Bullet",
         fontName=regular,
@@ -465,6 +544,25 @@ def _build_styles() -> StyleSheet1:
         alignment=TA_LEFT,
         leftIndent=14,
         bulletIndent=4,
+        spaceAfter=1,
+    ))
+    # Bullets that live under a sub-block title need to indent past the
+    # sub-block's own indent (SubBlockTitle.leftIndent=8), or the bullet
+    # character renders to the LEFT of the sub-block content above it —
+    # which reads as broken hierarchy. Pre-#42 this latent bug was easy
+    # to miss because the sub-block title-with-date occupied a single
+    # dense line; #42's stacked-date layout puts the metadata line
+    # immediately above the bullet, making the misalignment glaring.
+    # leftIndent + 8 / bulletIndent + 8 keeps the bullet visibly indented
+    # past its parent sub-block's content.
+    ss.add(ParagraphStyle(
+        name="SubBlockBullet",
+        fontName=regular,
+        fontSize=10,
+        leading=13,
+        alignment=TA_LEFT,
+        leftIndent=22,
+        bulletIndent=12,
         spaceAfter=1,
     ))
     ss.add(ParagraphStyle(
@@ -478,10 +576,14 @@ def _build_styles() -> StyleSheet1:
     ss.add(ParagraphStyle(
         name="SubheadCenter",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        # Mirror the Contact style sizing/coloring (9.5pt, #555555) so
+        # US-style center-aligned contact lines also recede into
+        # header territory.
+        fontSize=9.5,
+        leading=12,
         alignment=TA_CENTER,
         spaceAfter=10,
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="NameCenter",
@@ -530,6 +632,132 @@ def _ordered_sections(doc: ResumeDoc, preferred: list[str]) -> list[ResumeSectio
 
 _PHOTO_MAX_SIDE_CM = 3.0
 _VALID_PHOTO_POSITIONS = ("left", "right", "center")
+
+
+# Recognize a date segment inside a block/sub-block title. Heuristic: the
+# date is whatever parenthesized expression containing a 4-digit year
+# (1900-2099), or pipe-separated segment containing a year. The
+# parenthesized form matches anywhere in the title, not just at the end —
+# real-run resumes commonly have shapes like
+# `Senior Director (Aug 2022 – Aug 2025) — Zurich` where a location
+# trails the closing paren, and the location must remain in the title
+# while the date moves to its own metadata line.
+#
+# Bare years in prose like "2024 Economic Survey" don't match because
+# they're not in parens or pipes. The rare false positive (e.g.,
+# "(founded 1995)" in a title) is acceptable — splitting it onto its own
+# line is mildly weird, not destructive. See issue #42 for the full ATS
+# rationale.
+_YEAR_PATTERN = r"\b(?:19|20)\d{2}\b"
+_PARENS_DATE_RE = re.compile(rf"\(([^()]*{_YEAR_PATTERN}[^()]*)\)")
+
+
+def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
+    """
+    Try to extract a date segment from a block/sub-block title.
+
+    Returns (title_without_date, date_string) when a date is detected,
+    otherwise (original_title, None).
+
+    Detection looks for either:
+    - a parenthesized expression containing a year, ANYWHERE in the
+      title (start, middle, or end). The text before AND after the
+      matched parens is preserved as the title, joined with a single
+      space, so a city/location trailing the date stays put:
+      "Senior Director (Aug 2022 – Aug 2025) — Zurich"
+        → title="Senior Director — Zurich", date="Aug 2022 – Aug 2025"
+      "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)"
+        → title="Senior Analyst — Deloitte", date="Aug 2022 – Aug 2025"
+      "Project X (Feb 2026)"
+        → title="Project X", date="Feb 2026"
+      "Director (Aug 2022 – Present)"
+        → title="Director", date="Aug 2022 – Present"
+    - a pipe-separated segment containing a year, in which case both
+      surrounding pipes collapse to one:
+      "Senior Analyst | 2022–2025 | Deloitte" → "Senior Analyst | Deloitte"
+
+    Bare years in prose (not in parens/pipes) are NOT matched —
+    "2024 Economic Survey" stays as the title.
+    """
+    m = _PARENS_DATE_RE.search(title)
+    if m:
+        date = m.group(1).strip()
+        before = title[: m.start()].rstrip()
+        after = title[m.end() :].lstrip()
+        if before and after:
+            title_without = f"{before} {after}"
+        else:
+            title_without = before or after
+        return title_without, date
+
+    if "|" in title:
+        parts = [p.strip() for p in title.split("|")]
+        for i, part in enumerate(parts):
+            if re.search(_YEAR_PATTERN, part):
+                date = part
+                remaining = [p for j, p in enumerate(parts) if j != i and p]
+                rebuilt = " | ".join(remaining)
+                return rebuilt, date
+
+    return title, None
+
+
+def _render_titled_block(
+    raw_title: str,
+    title_style: ParagraphStyle,
+    metadata_style: ParagraphStyle,
+) -> list:
+    """
+    Render a block (or sub-block) title.
+
+    If the raw title contains a recognizable date segment, the date moves
+    to a separate metadata paragraph beneath the title. Otherwise the
+    title renders as a single paragraph (current behavior — regression-
+    guarded).
+
+    Single-flow text only — no Tables, no tab stops. The metadata line is
+    a real second paragraph that ATS parsers read in document order, which
+    is what every commercial-ATS guidance recommends. See issue #42.
+
+    The title runs through `_linkify_title` rather than `_linkify_text` so
+    project-title shapes like "Resumasher (github.com/earino/resumasher)"
+    collapse to a single clickable name instead of rendering the explicit
+    URL alongside.
+    """
+    title_without_date, date = _split_title_and_date(raw_title)
+    if date is None:
+        return [Paragraph(_linkify_title(raw_title), title_style)]
+    return [
+        Paragraph(_linkify_title(title_without_date), title_style),
+        # Date metadata is just a date — no URL expected.
+        Paragraph(_escape(date), metadata_style),
+    ]
+
+
+def _section_divider() -> HRFlowable:
+    """
+    Thin horizontal rule that sits directly under a SectionHeading.
+
+    Visual purpose: structural break between major sections (Summary /
+    Experience / Education / Skills / Projects). Whitespace alone wasn't
+    enough — the eye reads stacked sections as one continuous wall when
+    the heading is just a 12pt bold line floating above content.
+
+    Distinct from the in-content `---` markdown rule (`_HR_SENTINEL`,
+    via `HRFlowable(thickness=0.5, color=#888888)`) which is a soft
+    break inside a section. Section dividers are slightly thicker and
+    darker so they read as structural rather than soft.
+
+    No spaceBefore — the rule sits right below the heading text. The
+    spaceAfter gives natural breathing room before the first block.
+    """
+    return HRFlowable(
+        width="100%",
+        thickness=0.75,
+        color=HexColor("#333333"),
+        spaceBefore=0,
+        spaceAfter=6,
+    )
 
 
 def _photo_render_size_cm(photo_source) -> tuple[float, float]:
@@ -597,10 +825,14 @@ def _build_resume_flowables(
     if doc.name:
         flow.append(Paragraph(_escape(doc.name), name_style))
     if doc.contact_line:
-        flow.append(Paragraph(_escape(doc.contact_line), contact_style))
+        # _linkify_contact wraps email + linkedin + github + https URLs
+        # in clickable <a> tags. Non-URL text (phone, location) passes
+        # through _escape unchanged. See _linkify_contact docstring.
+        flow.append(Paragraph(_linkify_contact(doc.contact_line), contact_style))
 
     for section in section_order_fn(doc):
         flow.append(Paragraph(_escape(section.heading), styles["SectionHeading"]))
+        flow.append(_section_divider())
         # Paragraphs directly under the section (summary body). Horizontal-
         # rule sentinels get emitted as HRFlowable instead of text. See
         # `_HR_SENTINEL` for why this shape (issue #22 markdown `---` was
@@ -616,29 +848,219 @@ def _build_resume_flowables(
                     spaceAfter=4,
                 ))
             else:
-                flow.append(Paragraph(_escape(para), styles["Body"]))
-        # Bare bullets (common for Skills).
+                # _linkify_text so URLs in Summary prose become clickable.
+                flow.append(Paragraph(_linkify_text(para), styles["Body"]))
+        # Bare bullets (common for Skills). _linkify_text so URLs embedded
+        # in skills bullets ("see github.com/me/X") are clickable.
         for bullet in section.raw_bullets:
-            flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
+            flow.append(Paragraph(_linkify_text(bullet), styles["Bullet"], bulletText="•"))
         # Blocks (Experience, Education, Projects).
+        #
+        # KeepTogether granularity (issue #42 follow-up): we split each block
+        # into smaller KeepTogether groups instead of one giant group per
+        # block. Why: when an entire block (title + 3 sub-blocks + their
+        # bullets) is bigger than the remaining page space, reportlab
+        # page-breaks BEFORE the whole thing, leaving the bottom of the
+        # page blank. Per-sub-block KeepTogether lets reportlab break
+        # between sub-blocks (the natural typesetting break) while still
+        # gluing each sub-role title to its own bullets.
         for block in section.blocks:
-            group: list = [Paragraph(_escape(block.title), styles["BlockTitle"])]
-            # Direct bullets (single-role blocks).
+            block_group: list = list(_render_titled_block(
+                block.title, styles["BlockTitle"], styles["BlockMetadata"],
+            ))
+            # Direct bullets (single-role blocks) stay glued to the block
+            # title — page-breaking between a job title and its first
+            # bullet would orphan the title at the bottom of a page.
             for bullet in block.bullets:
-                group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
-            # Sub-blocks for multi-role tenures. Each sub-block title stays
-            # glued to its own bullets via the group list, so KeepTogether
-            # prevents a page break from splitting role-title from its bullets.
+                block_group.append(Paragraph(
+                    _linkify_text(bullet), styles["Bullet"], bulletText="•",
+                ))
+            flow.append(KeepTogether(block_group))
+            # Each sub-block (multi-role tenure entry) gets its own
+            # KeepTogether so a sub-role title stays with its bullets, but
+            # adjacent sub-blocks within the same parent block CAN break
+            # across pages — which is the right typesetting boundary.
             for sub in block.sub_blocks:
-                group.append(Paragraph(_escape(sub.title), styles["SubBlockTitle"]))
+                sub_group: list = list(_render_titled_block(
+                    sub.title, styles["SubBlockTitle"], styles["SubBlockMetadata"],
+                ))
                 for bullet in sub.bullets:
-                    group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
-            flow.append(KeepTogether(group))
+                    sub_group.append(Paragraph(
+                        _linkify_text(bullet), styles["SubBlockBullet"], bulletText="•",
+                    ))
+                flow.append(KeepTogether(sub_group))
 
     return flow
 
 
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
+
+
+# Patterns for linkifying URLs and emails anywhere in resume content. Order
+# matters: email is matched before generic URLs (an email contains '@' but no
+# '://'), and specific hosts (linkedin / github) match before the generic
+# https URL pattern so bare-domain forms like "linkedin.com/in/foo" or
+# "github.com/me" (no scheme — the form students typically write in project
+# titles and bullets) get linked too.
+#
+# URL-character exclusion class. Stops at characters that are NEVER part of a
+# URL per RFC 3986 (whitespace, `<>"`{}^|\`), at the pipe-separator that
+# contact lines use, and at closing paren / bracket so paren-balancing works
+# in patterns like "Foo (github.com/me/foo)". Backtick exclusion fixes the
+# specific failure surfaced by real-run testing — the tailor LLM sometimes
+# wraps URLs in markdown code spans (`github.com/foo`), and pre-fix the regex
+# greedily consumed the closing backtick into the URL match, producing a
+# broken href.
+_URL_DISALLOWED = r"\s<>\"`{}^|\\)\]"
+_LINK_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.-]+"
+_LINK_LINKEDIN_RE = rf"linkedin\.com/in/[^{_URL_DISALLOWED}]+"
+_LINK_GITHUB_RE = rf"github\.com/[^{_URL_DISALLOWED}]+"
+_LINK_HTTPS_RE = rf"https?://[^{_URL_DISALLOWED}]+"
+_LINK_PATTERN = re.compile(
+    rf"({_LINK_EMAIL_RE}|{_LINK_HTTPS_RE}|{_LINK_LINKEDIN_RE}|{_LINK_GITHUB_RE})"
+)
+
+
+# Wikipedia-style muted blue. Discoverable as a clickable link in the PDF
+# without screaming 1990s-royal-blue-and-underlined. The earlier design
+# (no color, links inherit paragraph color) was reversed after real-run
+# review showed recruiters skim a resume PDF and need URLs to be obviously
+# discoverable rather than blending with body text.
+_LINK_COLOR = "#0645AD"
+
+
+def _linkify_text(text: str) -> str:
+    """
+    Wrap email + URL substrings in clickable `<a>` tags, HTML-escape
+    everything else (and convert `**bold**` to `<b>bold</b>` via `_escape`).
+
+    Used everywhere resume text is rendered into a Paragraph: contact line,
+    block titles, sub-block titles, bullets, and Summary-style paragraphs.
+    URLs in the body of a project title (`Resumasher (github.com/earino/
+    resumasher)`) or in a bullet description (`see https://...`) are
+    clickable in the PDF, same as the contact line's email and LinkedIn
+    profile.
+
+    Email → `<a href="mailto:..." color="#0645AD">text</a>`.
+    `https://...` URL → `<a href="..." color="#0645AD">text</a>`.
+    Bare-domain `linkedin.com/in/X` / `github.com/X` get an automatic
+    `https://` prefix on the href; displayed text stays bare-domain.
+
+    Link styling: muted Wikipedia-blue (`#0645AD`) on every `<a>` so links
+    are obviously clickable rather than blending with body text. Recruiters
+    skim resume PDFs and need URLs to be visually discoverable. No
+    underline (kept as a minimal style — color alone communicates "link"
+    in modern web convention).
+
+    ATS impact: zero. Link annotations are a PDF metadata layer that does
+    not alter the text stream — pdfminer and other parsers extract identical
+    text whether links are present or not. Color is also irrelevant to ATS.
+    """
+    # Strip markdown code-span backticks BEFORE the URL split. If we split
+    # first, the opening and closing backticks of `github.com/foo` end up
+    # in separate halves of the split (the URL regex matched the middle),
+    # and _escape's per-part code-span strip can't see them as a pair.
+    # Pre-stripping collapses `github.com/foo` to github.com/foo so the
+    # subsequent URL detection works on clean input and the surrounding
+    # decorative backticks don't leak into the rendered output.
+    text = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", text)
+    parts = _LINK_PATTERN.split(text)
+    out: list[str] = []
+    # re.split with a capture group returns alternating non-match / match
+    # / non-match. Even indices are non-link text (HTML-escape via _escape);
+    # odd indices are link candidates we wrap in <a>.
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            out.append(_escape(part))
+            continue
+        if "@" in part and "://" not in part:
+            href = f"mailto:{part}"
+        elif part.startswith("http"):
+            href = part
+        else:
+            href = f"https://{part}"
+        out.append(
+            f'<a href="{href}" color="{_LINK_COLOR}">{_escape(part)}</a>'
+        )
+    return "".join(out)
+
+
+# Backwards-compatible alias. The function previously named _linkify_contact
+# is now the general _linkify_text — same behavior, broader name. Keep the
+# old name for any caller / test that imports it.
+_linkify_contact = _linkify_text
+
+
+# `Name (URL)` shape — a project title where the parens hold ONLY a URL
+# (no extra metadata like star counts or commas). Used by _linkify_title
+# to collapse such titles to a single clickable Name, instead of the
+# default `Name (github.com/...)` with the URL inlined as a separate
+# clickable run. Standard markdown intent — `[Name](URL)` expressed in
+# a parens-form the tailor LLM commonly emits in project titles.
+#
+# The whole-parens-must-be-URL constraint matters: for bullets shaped
+# "...the X repo (github.com/me/x, 23 stars)", the parens content has
+# extra text and we DO want the inline-URL display rather than a
+# collapse. So this transform applies only when the regex matches —
+# which means parens content is exactly one of our URL patterns,
+# nothing more.
+_TITLE_TRAILING_URL_RE = re.compile(
+    rf"^(.+?)\s*\(("
+    rf"{_LINK_EMAIL_RE}"
+    rf"|{_LINK_HTTPS_RE}"
+    rf"|{_LINK_LINKEDIN_RE}"
+    rf"|{_LINK_GITHUB_RE}"
+    rf")\)\s*$"
+)
+
+
+def _linkify_title(title: str) -> str:
+    """
+    Title-only variant of `_linkify_text`. If the title is shaped
+    `Name (URL)` — name followed by parens around exactly a URL with no
+    additional content — collapses to a single clickable Name:
+
+        "Resumasher (github.com/earino/resumasher)"
+            → '<a href="https://github.com/earino/resumasher" color="...">Resumasher</a>'
+        "Project (https://example.com)"
+            → '<a href="https://example.com" color="...">Project</a>'
+
+    Code-span backticks around the URL are stripped before the shape
+    check. Real-run markdown commonly has shapes like ``Name (`URL`)``
+    where the tailor LLM wraps URLs in code spans — those would
+    otherwise fail the regex (the parens content would carry literal
+    backticks, not a bare URL pattern).
+
+    For every other title shape (no parens, parens with non-URL content,
+    parens with URL + extra metadata, etc.) falls through to
+    `_linkify_text` so embedded URLs still get inline link annotations.
+
+    Used only by `_render_titled_block` for block + sub-block titles.
+    Bullets keep the inline-URL display because their parens routinely
+    contain commas and additional metadata ("(github.com/me/x, 23 stars)").
+    """
+    # Strip markdown code-span backticks first — same pre-pass as
+    # `_linkify_text`. The tailor LLM wraps project URLs in code spans
+    # (the markdown shape ``Name (`github.com/me/x`)``), and the
+    # title-collapse regex only matches when the parens contain a bare
+    # URL with no surrounding markup.
+    candidate = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", title).strip()
+    m = _TITLE_TRAILING_URL_RE.match(candidate)
+    if not m:
+        return _linkify_text(title)
+    name = m.group(1).strip()
+    url = m.group(2).strip()
+    if not name:
+        # Edge: bare parens-URL with no name. Fall back to linkify so the
+        # URL itself renders, rather than producing an empty <a> tag.
+        return _linkify_text(title)
+    if "@" in url and "://" not in url:
+        href = f"mailto:{url}"
+    elif url.startswith("http"):
+        href = url
+    else:
+        href = f"https://{url}"
+    return f'<a href="{href}" color="{_LINK_COLOR}">{_escape(name)}</a>'
 
 
 # Max dimension for embedded photos. The photo prints at 3cm × 3cm; at 300 DPI
@@ -687,6 +1109,18 @@ def _downscale_photo_for_embed(path: str) -> object:
         return path
 
 
+_MARKDOWN_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+
+# Italic: `*text*` where content has no asterisks or newlines, AND starts
+# AND ends with a non-whitespace character. Run AFTER bold conversion so
+# `**...**` markers are already <b> tags and don't false-match here. The
+# non-whitespace bound at start/end follows standard markdown — it
+# eliminates math-operator false positives like "5 * 4 * 3" (each `*` has
+# whitespace on both sides) while still catching real italic intent like
+# "*Applied Deep Learning*" (course title, no spaces around the markers).
+_MARKDOWN_ITALIC_RE = re.compile(r"\*([^\s*](?:[^*\n]*?[^\s*])?)\*")
+
+
 def _escape(text: str) -> str:
     """Escape the small HTML-ish subset reportlab Paragraph interprets, and
     convert markdown inline formatting to reportlab's HTML-like tags.
@@ -694,22 +1128,33 @@ def _escape(text: str) -> str:
     reportlab Paragraph accepts an HTML-like subset for <b>, <i>, etc. Any
     literal &, <, > in user content must be escaped or the parser throws.
 
-    After escaping, we translate `**bold**` → `<b>bold</b>` so markdown
-    emphasis from upstream sub-agents (common in interview-prep and cover
-    letters) renders as bold, not as literal asterisks. Italic (`*x*`) is
-    intentionally skipped — too easy to false-match on single asterisks in
-    prose (e.g., "footnote*").
+    After escaping, we translate three markdown forms:
+    - `**bold**` → `<b>bold</b>` for emphasis from upstream sub-agents
+      (common in interview-prep and cover letters).
+    - `*italic*` → `<i>italic</i>` for course titles, book references,
+      foreign words. Bundled obliques (DejaVuSans-Oblique.ttf, registered
+      as italic via `registerFontFamily`) make this render as actual
+      italic, not regular text with markers stripped.
+    - `` `code` `` → bare `code` so markdown code-span backticks (which
+      the tailor LLM commonly wraps URLs in: `` `github.com/foo` ``) don't
+      leak into the rendered output as visible decorative characters.
+      reportlab Paragraph doesn't render code spans natively, and we have
+      no use for them in a resume — strip the markers and keep the text.
 
-    The regex requires at least one non-asterisk, non-newline character
-    inside the pair, and forbids the pair from spanning a line break. This
-    keeps "*" alone, "a ** b", and multi-line content safe.
+    Order matters: code-span strip first, bold convert second, italic
+    convert third. Bold runs before italic so `**foo**` doesn't get
+    half-processed by the italic regex. Both bold and italic regexes
+    forbid pair-spans-newline so a misplaced asterisk can't eat a
+    paragraph break.
     """
     escaped = (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-    return _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
+    escaped = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", escaped)
+    escaped = _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
+    return _MARKDOWN_ITALIC_RE.sub(r"<i>\1</i>", escaped)
 
 
 # ---------------------------------------------------------------------------
@@ -884,6 +1329,7 @@ def render_interview_prep(source_markdown: str, output_path: str | Path) -> Path
                 flow.append(Paragraph(_escape(" ".join(current_para)), styles["Body"]))
                 current_para = []
             flow.append(Paragraph(_escape(line[3:].strip()), styles["SectionHeading"]))
+            flow.append(_section_divider())
             continue
 
         if line.startswith("### "):

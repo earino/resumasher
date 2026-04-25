@@ -24,6 +24,12 @@ import pytest
 
 from scripts.render_pdf import (
     MissingContactHeaderError,
+    _build_styles,
+    _linkify_contact,
+    _linkify_text,
+    _linkify_title,
+    _render_titled_block,
+    _split_title_and_date,
     assert_ats_roundtrip,
     parse_resume_markdown,
     render_cover_letter,
@@ -467,7 +473,11 @@ def test_render_multi_role_sub_blocks_appear_in_order(tmp_path: Path):
     professor = pos("Professor of Practice")
     visiting = pos("Visiting Professor")
     ecbs5200 = pos("ECBS5200")
-    meta = pos("Meta (July 2017")
+    # Pre-#42 this anchored on "Meta (July 2017" — the contiguous form
+    # before block-title-with-date got split into title + metadata
+    # paragraphs. After #42 the parens-segment is on its own line, so we
+    # anchor on bare "Meta" (still unique in the fixture).
+    meta = pos("Meta")
     senior_director = pos("Senior Director")
     # Unique anchors that only appear in the specific sub-block's bullets,
     # so we can verify sub-title → bullet → next-sub-title ordering.
@@ -1421,3 +1431,1314 @@ def test_render_horizontal_rule_produces_non_empty_pdf(tmp_path: Path):
     # adds content). A dramatically smaller with-rule PDF would signal
     # something got dropped.
     assert out_with.stat().st_size >= out_without.stat().st_size - 500
+
+
+# ---------------------------------------------------------------------------
+# Issue #42: stacked dates under block titles.
+#
+# Block / sub-block titles that contain a recognizable date segment now
+# render as two paragraphs (title above, date below in a slightly smaller
+# regular-weight metadata style) instead of one. Single-flow text — no
+# Tables, no tab stops — so commercial ATS parsers (Workday, Greenhouse,
+# Taleo, iCIMS) read the date in document order rather than potentially
+# scrambling a 2-column layout.
+# ---------------------------------------------------------------------------
+
+
+def test_split_parenthesized_month_year_range():
+    title = "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst — Deloitte"
+    assert d == "Aug 2022 – Aug 2025"
+
+
+def test_split_year_range_pipe_separated():
+    title = "Senior Analyst | 2022–2025 | Deloitte"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst | Deloitte"
+    assert d == "2022–2025"
+
+
+def test_split_present():
+    title = "Director (Aug 2022 – Present)"
+    t, d = _split_title_and_date(title)
+    assert t == "Director"
+    assert d == "Aug 2022 – Present"
+
+
+def test_split_isolated_month_year():
+    title = "Project X (Feb 2026)"
+    t, d = _split_title_and_date(title)
+    assert t == "Project X"
+    assert d == "Feb 2026"
+
+
+def test_split_no_date_returns_none():
+    title = "Senior Analyst"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst"
+    assert d is None
+
+
+def test_split_bare_year_in_prose_not_matched():
+    """'2024 Economic Survey' is a publication title, not a date. Bare
+    years in prose (not in parens or pipes) must NOT be hijacked as date
+    segments — that would put nonsense on the metadata line."""
+    title = "2024 Economic Survey — Statistics Austria"
+    t, d = _split_title_and_date(title)
+    assert d is None
+    assert t == title
+
+
+def test_render_titled_block_no_date_returns_single_paragraph():
+    """Regression guard: titles without dates must still render as a
+    single paragraph, identical to pre-#42 behavior. Anything else is a
+    behavior change for existing users."""
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Analyst",
+        styles["BlockTitle"],
+        styles["BlockMetadata"],
+    )
+    assert len(flowables) == 1
+
+
+def test_render_titled_block_with_date_returns_two_paragraphs():
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)",
+        styles["BlockTitle"],
+        styles["BlockMetadata"],
+    )
+    assert len(flowables) == 2
+
+
+def test_sub_block_title_also_gets_split():
+    """Sub-block titles get the same date-split treatment, with the
+    metadata line indented to match the sub-block title's leftIndent
+    so the date sits visually under its title rather than under the
+    parent block."""
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Director (Aug 2022 – Aug 2025)",
+        styles["SubBlockTitle"],
+        styles["SubBlockMetadata"],
+    )
+    assert len(flowables) == 2
+    # The metadata paragraph must use the indented sub-block style so the
+    # date aligns under its title, not under the parent company heading.
+    metadata_para = flowables[1]
+    assert metadata_para.style.leftIndent == 8
+
+
+def test_ats_round_trip_dates_still_extractable_after_split(tmp_path: Path):
+    """The whole point of #42: dates render as single-flow text that ATS
+    parsers extract in document order. If the rendered PDF doesn't
+    contain the date string in extractable form after the split, we've
+    broken ATS safety — which would defeat the entire reason for the
+    stacked-line approach over the Table approach we rejected."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Deloitte (Aug 2022 – Aug 2025)\n"
+        "- Some bullet.\n"
+        "### Teaching Assistant — School (2024-2025)\n"
+        "- Another bullet.\n"
+    )
+    out = tmp_path / "stacked.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Aug 2022 – Aug 2025",
+        "2024-2025",
+        "Senior Analyst",
+        "Deloitte",
+        "Teaching Assistant",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 correctness fixes: sub-block bullet indent + section separation.
+#
+# The stacked-date layout exposed two pre-existing layout issues that made
+# multi-role tenures actively uglier than before-#42:
+#   (1) Bullets under sub-blocks rendered with bullet-character to the LEFT
+#       of the sub-block content above them (Bullet.bulletIndent=4 vs
+#       SubBlockTitle.leftIndent=8). The new metadata line directly above
+#       the bullet made the misalignment impossible to miss.
+#   (2) SectionHeading.spaceBefore=10 was tight before; with blocks
+#       gaining a metadata line, the heading-to-content rhythm felt
+#       proportionally compressed and sections read as one continuous
+#       chunk.
+#
+# Bundled with #42 because shipping the date-split alone would have been
+# a regression. Correctness, not scope creep.
+# ---------------------------------------------------------------------------
+
+
+def test_sub_block_bullet_indent_is_past_sub_block_content():
+    """SubBlockBullet must indent past SubBlockTitle.leftIndent so the
+    bullet character renders to the RIGHT of (or aligned with) the
+    sub-block title and metadata above it, not to the left of them."""
+    styles = _build_styles()
+    sub_title_indent = styles["SubBlockTitle"].leftIndent
+    sub_bullet_left = styles["SubBlockBullet"].leftIndent
+    sub_bullet_char = styles["SubBlockBullet"].bulletIndent
+    # Both the bullet character position and the bullet text position
+    # must be ≥ the sub-block title's indent. Otherwise the visual
+    # hierarchy reads as "bullet outdents past its parent."
+    assert sub_bullet_char >= sub_title_indent, (
+        f"SubBlockBullet.bulletIndent ({sub_bullet_char}) must be ≥ "
+        f"SubBlockTitle.leftIndent ({sub_title_indent}) so the bullet "
+        f"character doesn't render to the left of the sub-block content."
+    )
+    assert sub_bullet_left >= sub_title_indent, (
+        f"SubBlockBullet.leftIndent ({sub_bullet_left}) must be ≥ "
+        f"SubBlockTitle.leftIndent ({sub_title_indent})."
+    )
+
+
+def test_top_level_bullet_indent_unchanged_regression_guard():
+    """Regression guard: bullets at section level or directly under a
+    block (not a sub-block) must still use the original Bullet style.
+    Changing top-level bullet indent would shift every existing resume's
+    layout — out of scope for #42."""
+    styles = _build_styles()
+    assert styles["Bullet"].leftIndent == 14
+    assert styles["Bullet"].bulletIndent == 4
+
+
+def test_section_heading_space_before_visibly_separates_sections():
+    """SectionHeading.spaceBefore must be large enough that sections
+    read as separate. 10pt was OK before #42's metadata lines added
+    vertical density to each block; bumped to 14 to restore the
+    proportional rhythm. Anything below ~12 starts to look cramped on
+    real resumes."""
+    styles = _build_styles()
+    assert styles["SectionHeading"].spaceBefore >= 12, (
+        f"SectionHeading.spaceBefore is {styles['SectionHeading'].spaceBefore}pt; "
+        f"sections need ≥12pt above to read as visually separate after "
+        f"#42's metadata lines added vertical density to blocks."
+    )
+
+
+def test_section_heading_followed_by_divider_in_resume(tmp_path: Path):
+    """Each section heading must be followed by a horizontal rule
+    (`HRFlowable`) so sections read as visually separated structural
+    blocks rather than a wall of stacked text. The rule is the
+    section-divider variant (thicker, darker than the soft in-content
+    `---` markdown rule); `_section_divider` controls the params."""
+    from reportlab.platypus.flowables import HRFlowable
+    from scripts.render_pdf import (
+        _build_resume_flowables,
+        _section_divider,
+        _section_order_eu,
+    )
+    md = (
+        "# Test\n"
+        "t@x.com | +1\n"
+        "\n"
+        "## Summary\n"
+        "One sentence.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Co (2024)\n"
+        "- bullet\n"
+        "\n"
+        "## Education\n"
+        "### Degree — School (2020-2022)\n"
+        "- bullet\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    # Every SectionHeading paragraph must be immediately followed by an
+    # HRFlowable. Walk pairs and assert.
+    section_headings_seen = 0
+    for i, item in enumerate(flow):
+        # SectionHeading paragraphs carry the SectionHeading style.
+        from reportlab.platypus import Paragraph
+        if isinstance(item, Paragraph) and getattr(item.style, "name", None) == "SectionHeading":
+            section_headings_seen += 1
+            assert i + 1 < len(flow), (
+                f"SectionHeading at end of flow with no divider after"
+            )
+            nxt = flow[i + 1]
+            assert isinstance(nxt, HRFlowable), (
+                f"SectionHeading at index {i} not followed by HRFlowable; "
+                f"got {type(nxt).__name__}"
+            )
+    assert section_headings_seen >= 3, (
+        f"Expected ≥3 sections in fixture, saw {section_headings_seen}"
+    )
+
+
+def test_section_divider_distinct_from_in_content_hr_rule():
+    """The section divider (under each heading) and the in-content `---`
+    rule serve different roles and should be visually distinguishable.
+    Section dividers are slightly thicker and darker so they read as
+    structural; in-content rules are softer to read as soft breaks."""
+    from scripts.render_pdf import _section_divider
+    div = _section_divider()
+    # Section divider params: thicker than 0.5 (the in-content default)
+    # and darker than #888888 (also in-content default). Specific values
+    # are taste, but the inequality must hold.
+    assert div.lineWidth >= 0.6, (
+        f"Section divider thickness {div.lineWidth} should be ≥ 0.6 "
+        f"(thicker than the in-content `---` rule)"
+    )
+
+
+def test_section_divider_does_not_break_ats_round_trip(tmp_path: Path):
+    """HRFlowable produces no text in the PDF text layer, so adding a
+    rule under each section heading must not affect ATS extraction.
+    Regression guard: if reportlab ever changes HRFlowable to emit text
+    or alt-text, this catches it."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Summary\n"
+        "Short summary line.\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Deloitte (Aug 2022 – Aug 2025)\n"
+        "- A bullet about impact.\n"
+        "\n"
+        "## Skills\n"
+        "- Python, R, SQL\n"
+    )
+    out = tmp_path / "with_dividers.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Test Person",
+        "Summary",
+        "Short summary line",
+        "Experience",
+        "Senior Analyst",
+        "Aug 2022 – Aug 2025",
+        "A bullet about impact",
+        "Skills",
+        "Python, R, SQL",
+    ])
+
+
+def test_render_sub_block_bullets_extract_in_order(tmp_path: Path):
+    """End-to-end: render a multi-role resume and assert the new bullet
+    indent doesn't break ATS round-trip. Bullet text still appears in
+    document order — just with deeper visual indent."""
+    md = (
+        "# Multi Role\n"
+        "mr@example.com | +1 555 0000 | linkedin.com/in/mr | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- Led the org through hypergrowth.\n"
+        "**Director** (2020 – 2023)\n"
+        "- Built the team from scratch.\n"
+    )
+    out = tmp_path / "multi.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Big Co",
+        "2020 – Present",
+        "Senior Director",
+        "2023 – Present",
+        "Led the org through hypergrowth",
+        "Director",
+        "2020 – 2023",
+        "Built the team from scratch",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 polish tweaks: softer metadata color, block spacing,
+# softer contact line, clickable links in contact line.
+# ---------------------------------------------------------------------------
+
+
+def _hex_to_avg_channel(hex_color: str) -> float:
+    """`#555555` → 0.333 (each channel 0x55=85, 85/255≈0.333). Used to
+    bound textColor values to a readable-but-soft range."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return (r + g + b) / (3 * 255)
+
+
+def test_block_metadata_uses_softer_gray_color():
+    """Date / location lines should recede as metadata. The exact hex
+    is taste, but it must not be body-black or near-black — those
+    compete with body text for hierarchy. reportlab stores textColor
+    as the original string assigned (no Color coercion at style-build
+    time), so we compare hex strings directly."""
+    styles = _build_styles()
+    hex_color = styles["BlockMetadata"].textColor
+    # Must be a hex color string, not body-black.
+    assert isinstance(hex_color, str) and hex_color.startswith("#"), (
+        f"BlockMetadata.textColor expected to be a '#rrggbb' string, "
+        f"got {hex_color!r}"
+    )
+    assert hex_color.lower() not in ("#000000", "#111111", "#222222"), (
+        f"BlockMetadata.textColor is {hex_color}; needs to be lighter "
+        f"than near-black so the metadata line recedes."
+    )
+    # Bound to a readable-but-soft range. Below ~0.2 reads as black;
+    # above ~0.6 reads as nearly invisible on white.
+    avg = _hex_to_avg_channel(hex_color)
+    assert 0.2 < avg < 0.6, (
+        f"BlockMetadata color {hex_color} (avg channel {avg:.2f}) "
+        f"is outside the readable-but-soft range (0.2–0.6)"
+    )
+
+
+def test_sub_block_metadata_matches_block_metadata_color():
+    """SubBlockMetadata should match BlockMetadata's color so the
+    metadata-line treatment is uniform across both depths."""
+    styles = _build_styles()
+    assert styles["SubBlockMetadata"].textColor == \
+           styles["BlockMetadata"].textColor
+
+
+def test_contact_style_softer_and_smaller_than_body():
+    """Contact line should recede into header territory. Smaller
+    fontSize than Body and a softer-than-black color."""
+    styles = _build_styles()
+    assert styles["Contact"].fontSize < styles["Body"].fontSize, (
+        f"Contact ({styles['Contact'].fontSize}pt) should be smaller "
+        f"than Body ({styles['Body'].fontSize}pt)"
+    )
+    color_hex = styles["Contact"].textColor
+    assert color_hex.lower() != "#000000", (
+        f"Contact.textColor is {color_hex}; should be softer than "
+        f"body-black to recede as header"
+    )
+
+
+def test_subhead_center_matches_contact():
+    """SubheadCenter (US-style centered contact line) must match the
+    Contact style's softer treatment so US and EU resumes look
+    consistent at the header level."""
+    styles = _build_styles()
+    assert styles["SubheadCenter"].fontSize == styles["Contact"].fontSize
+    assert styles["SubheadCenter"].textColor == styles["Contact"].textColor
+
+
+def test_block_title_space_before_increased_for_block_separation():
+    """BlockTitle.spaceBefore controls the gap between consecutive
+    blocks within a section (e.g., Meta → Chief Data Scientist →
+    Volunteer Translator). Pre-#42 polish was 4pt, which read tight;
+    bumped to 6+ for natural breathing room between jobs."""
+    styles = _build_styles()
+    assert styles["BlockTitle"].spaceBefore >= 6, (
+        f"BlockTitle.spaceBefore is {styles['BlockTitle'].spaceBefore}pt; "
+        f"needs ≥6pt for blocks-within-a-section to feel separated."
+    )
+
+
+def test_linkify_email_wraps_in_mailto():
+    out = _linkify_contact("ana.muller@example.com")
+    assert '<a href="mailto:ana.muller@example.com"' in out
+    assert "ana.muller@example.com</a>" in out
+
+
+def test_linkify_linkedin_bare_domain_gets_https_prefix():
+    """Students typically write `linkedin.com/in/X` without `https://`.
+    Linkify must add the scheme to the href while keeping the displayed
+    text bare-domain."""
+    out = _linkify_contact("linkedin.com/in/anamuller")
+    assert '<a href="https://linkedin.com/in/anamuller"' in out
+    assert "linkedin.com/in/anamuller</a>" in out
+    # Display text is the bare-domain form; the scheme is href-only.
+    assert "https://linkedin" not in out.split("</a>")[0].split(">")[-1]
+
+
+def test_linkify_github_bare_domain_gets_https_prefix():
+    out = _linkify_contact("github.com/anamuller")
+    assert '<a href="https://github.com/anamuller"' in out
+    assert "github.com/anamuller</a>" in out
+
+
+def test_linkify_explicit_https_url_preserved_verbatim():
+    out = _linkify_contact("https://my-portfolio.example.com")
+    assert '<a href="https://my-portfolio.example.com"' in out
+
+
+def test_linkify_phone_and_location_pass_through_as_text():
+    """Phone numbers and location text must not get linkified — they're
+    not URIs and trying to mailto/tel them would be wrong."""
+    text = "+43 664 1234567 | Vienna, Austria"
+    out = _linkify_contact(text)
+    assert "<a href" not in out, (
+        f"Phone / location should not be wrapped in <a>: {out!r}"
+    )
+    # Text content preserved (HTML escape doesn't change ASCII chars).
+    assert "+43 664 1234567" in out
+    assert "Vienna, Austria" in out
+
+
+def test_linkify_full_contact_line_mixes_links_and_text():
+    """End-to-end: a typical contact line with email + phone + linkedin
+    + location produces wrapped links for the URI parts and plain text
+    for the rest, with pipe separators preserved."""
+    text = "ana@example.com | +43 664 1234567 | linkedin.com/in/anamuller | Vienna, Austria"
+    out = _linkify_contact(text)
+    assert '<a href="mailto:ana@example.com"' in out
+    assert '<a href="https://linkedin.com/in/anamuller"' in out
+    assert "+43 664 1234567" in out  # untouched phone
+    assert "Vienna, Austria" in out  # untouched location
+    assert " | " in out  # separators preserved
+
+
+def test_linkify_links_carry_explicit_blue_color_attribute():
+    """Real-run review: pre-fix links inherited the surrounding paragraph
+    color (subtle, modern-minimalist), but recruiters skimming the PDF
+    couldn't tell what was clickable. The design call was reversed —
+    every `<a>` carries an explicit `color=` attribute set to a muted
+    blue (`#0645AD`, Wikipedia link blue) so URLs are obviously
+    discoverable rather than blending with body text."""
+    out = _linkify_contact("ana@example.com")
+    assert 'color="#0645AD"' in out, (
+        f"Link tag must carry color=\"#0645AD\" so the link is visually "
+        f"discoverable. Got: {out!r}"
+    )
+
+
+def test_rendered_pdf_actually_contains_clickable_link_annotations(tmp_path: Path):
+    """End-to-end load-bearing test: the `<a href="...">` markup we
+    emit must round-trip through reportlab into PDF Link annotations
+    that PDF readers will actually open. If reportlab silently drops
+    the annotation (or pdfminer can no longer find it), the
+    "clickable link" promise quietly stops being true."""
+    md = (
+        "# Linkable Person\n"
+        "test.linker@example.com | +1 555 0000 | linkedin.com/in/linker | github.com/linker | City\n"
+        "\n"
+        "## Summary\n"
+        "Has links.\n"
+    )
+    out = tmp_path / "linked.pdf"
+    render_resume_eu(md, out)
+
+    # Walk the PDF and pull every Link annotation's URI.
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "mailto:test.linker@example.com" in uris, (
+        f"Email link missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://linkedin.com/in/linker" in uris, (
+        f"LinkedIn link missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://github.com/linker" in uris, (
+        f"GitHub link missing from PDF Link annotations. Got: {uris}"
+    )
+
+
+def test_render_resume_eu_with_linked_contact_round_trips_for_ats(tmp_path: Path):
+    """End-to-end ATS guard: even with link annotations in the contact
+    line, pdfminer must extract the email, linkedin URL, and location
+    text in order. PDF link annotations are a metadata layer — they
+    don't replace the underlying text stream."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Summary\n"
+        "Tested.\n"
+    )
+    out = tmp_path / "linked.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Test Person",
+        "test@example.com",
+        "+1 555 0000",
+        "linkedin.com/in/test",
+        "Vienna, Austria",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final fixes: body-wide URL linkification + KeepTogether
+# granularity. Surfaced by real-run testing of the feature branch:
+# (a) URLs in project titles ("Resumasher (github.com/earino/resumasher)")
+#     and bullet text rendered as plain non-clickable text — only the
+#     contact line was linkified.
+# (b) Multi-sub-block tenures wrapped in a single big KeepTogether forced
+#     reportlab to page-break BEFORE the whole block when it didn't fit
+#     in the remaining page space, leaving the bottom of the page blank.
+# ---------------------------------------------------------------------------
+
+
+def test_linkify_text_alias_for_linkify_contact():
+    """`_linkify_text` is the new general-purpose name; `_linkify_contact`
+    is kept as a backwards-compatible alias. They must produce identical
+    output."""
+    text = "ana@example.com | linkedin.com/in/ana"
+    assert _linkify_text(text) == _linkify_contact(text)
+
+
+def test_linkify_text_does_not_swallow_trailing_backtick():
+    """Real-run regression: tailor LLM sometimes wraps URLs in markdown
+    code spans (`github.com/foo`). Two related invariants must hold:
+
+    (1) The URL regex must not greedily consume the closing backtick
+        into the URL match — pre-fix this produced href values like
+        `https://github.com/foo\\`` that PDF readers can't open. Backtick
+        excluded from the URL char class via `_URL_DISALLOWED`.
+    (2) The surrounding decorative backticks should not appear in the
+        rendered output as visible characters either — markdown code-
+        span markers are stripped in `_linkify_text` before URL
+        detection, so the rendered Paragraph is clean.
+    """
+    out = _linkify_text("see `github.com/me/foo`).")
+    # No backtick anywhere in the rendered output.
+    assert "`" not in out, (
+        f"Backtick leaked into rendered output: {out!r}"
+    )
+    # And specifically not in the href attribute.
+    assert 'github.com/me/foo`' not in out
+
+
+def test_linkify_text_handles_url_inside_parens():
+    """Project titles like 'Resumasher (github.com/earino/resumasher)'
+    must linkify the URL but NOT swallow the closing paren — the regex
+    excludes ')' from URL paths so the trailing paren stays as text."""
+    out = _linkify_text("Resumasher (github.com/earino/resumasher)")
+    assert '<a href="https://github.com/earino/resumasher"' in out
+    # Closing paren must NOT be inside the href.
+    assert '<a href="https://github.com/earino/resumasher)"' not in out
+    # And the closing paren must appear in the rendered output (as text).
+    assert "</a>)" in out
+
+
+def test_linkify_text_in_bullet_with_url():
+    """Bullets that mention a URL should produce wrapped output with the
+    URL clickable and the surrounding prose still readable."""
+    out = _linkify_text("Built it; see https://example.com/docs for details")
+    assert '<a href="https://example.com/docs"' in out
+    assert "Built it; see " in out
+    assert " for details" in out
+
+
+def test_linkify_text_preserves_bold_markers():
+    """`_linkify_text` supersets `_escape`, so `**bold**` markdown still
+    becomes `<b>bold</b>` (via _escape on non-link parts)."""
+    out = _linkify_text("**Senior Director** at github.com/me")
+    assert "<b>Senior Director</b>" in out
+    assert '<a href="https://github.com/me"' in out
+
+
+def test_linkify_text_no_url_passes_through_as_escape():
+    """Plain text without URLs round-trips identically to `_escape`."""
+    text = "Just some prose with <html> & ampersand"
+    from scripts.render_pdf import _escape
+    assert _linkify_text(text) == _escape(text)
+
+
+def test_render_resume_with_project_url_in_title_has_clickable_annotation(tmp_path: Path):
+    """End-to-end: a project block titled with a github URL produces a
+    PDF Link annotation that PDF readers actually open. Lock-in test for
+    the body-wide linkification feature."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | linkedin.com/in/test | City\n"
+        "\n"
+        "## Projects\n"
+        "### Resumasher (github.com/earino/resumasher)\n"
+        "- A Claude Code skill for tailoring resumes.\n"
+        "- See https://example.com/docs for the API.\n"
+    )
+    out = tmp_path / "with_project_link.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "https://github.com/earino/resumasher" in uris, (
+        f"Project-title URL missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://example.com/docs" in uris, (
+        f"Bullet URL missing from PDF Link annotations. Got: {uris}"
+    )
+
+
+def test_keep_together_per_sub_block_not_per_block(tmp_path: Path):
+    """A multi-role block must produce MULTIPLE KeepTogether flowables —
+    one for the block title (+ direct bullets) and one for each sub-block
+    — instead of one giant KeepTogether wrapping the whole thing.
+
+    Why this matters: when the entire block doesn't fit in the remaining
+    page space, the giant-KeepTogether shape forces reportlab to page-
+    break BEFORE the block, leaving page 1's bottom half blank. Per-sub-
+    block KeepTogether lets reportlab break between sub-blocks, which is
+    the natural typesetting boundary.
+    """
+    from reportlab.platypus import KeepTogether
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Multi Role\n"
+        "mr@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- Led the org through hypergrowth.\n"
+        "**Director** (2021 – 2023)\n"
+        "- Built the team from scratch.\n"
+        "**Manager** (2020 – 2021)\n"
+        "- Started as the first engineer.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    # Count KeepTogether flowables. Pre-fix: exactly 1 (per block).
+    # Post-fix: 4 (1 block-title group + 3 sub-block groups).
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    assert len(keep_togethers) >= 4, (
+        f"Expected ≥4 KeepTogether flowables (1 per block-title + 1 per "
+        f"sub-block), got {len(keep_togethers)}. Pre-fix shape was 1 big "
+        f"KeepTogether per block, which causes reportlab to leave the "
+        f"bottom of a page blank when the block doesn't fit."
+    )
+
+
+def test_keep_together_block_with_no_sub_blocks_still_emits_one_group(tmp_path: Path):
+    """Regression guard: blocks without sub-blocks (single-role jobs,
+    education entries, projects) still emit exactly one KeepTogether
+    each. The new granularity must not over-fragment."""
+    from reportlab.platypus import KeepTogether
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Single Role\n"
+        "sr@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Foo Co (2022 – 2024)\n"
+        "- Did stuff.\n"
+        "- Did other stuff.\n"
+        "### Junior Analyst — Bar Co (2020 – 2022)\n"
+        "- More stuff.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    # Two blocks → two KeepTogether flowables. (Sub-block-less blocks
+    # don't emit extra KT groups.)
+    assert len(keep_togethers) == 2, (
+        f"Expected 2 KeepTogether flowables (1 per block, no sub-blocks), "
+        f"got {len(keep_togethers)}"
+    )
+
+
+def test_keep_together_sub_block_glues_sub_title_to_its_bullets(tmp_path: Path):
+    """The whole point of KeepTogether is to prevent orphaning a title
+    at the bottom of a page with its content on the next page. After
+    the granularity change, each sub-block's title must still be glued
+    to its own bullets."""
+    from reportlab.platypus import KeepTogether, Paragraph
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Test\n"
+        "t@x.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- First bullet.\n"
+        "- Second bullet.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    # Find the sub-block KT (the second one — the first is the block
+    # title group).
+    assert len(keep_togethers) >= 2
+    sub_kt = keep_togethers[1]
+    contained = sub_kt._content
+    # Sub-block group should have: SubBlockTitle + SubBlockMetadata +
+    # at least one SubBlockBullet paragraph.
+    style_names = [
+        getattr(item.style, "name", None)
+        for item in contained
+        if isinstance(item, Paragraph)
+    ]
+    assert "SubBlockTitle" in style_names
+    assert "SubBlockBullet" in style_names, (
+        f"Sub-block KeepTogether must contain SubBlockBullet paragraphs "
+        f"(otherwise the sub-title can orphan from its bullets at a page "
+        f"break). Got styles: {style_names}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final visual polish: strip markdown code-span backticks and
+# render links in a discoverable blue. Surfaced by real-run review:
+# the tailor LLM commonly wraps URLs in markdown code spans
+# (`github.com/foo`), and pre-fix the surrounding backticks rendered as
+# visible decorative characters. Plus links blended with body text and
+# weren't obviously clickable to a recruiter skimming the PDF.
+# ---------------------------------------------------------------------------
+
+
+def test_escape_strips_markdown_code_spans():
+    """`text` (markdown code span) renders as plain `text` — no visible
+    decorative backticks. reportlab Paragraph doesn't render code spans
+    natively and there's no use for them in a resume; strip the markers."""
+    from scripts.render_pdf import _escape
+    assert _escape("see `github.com/me` for repo") == "see github.com/me for repo"
+
+
+def test_escape_strips_multiple_code_spans_in_one_string():
+    """Bullets often have multiple code-span URLs in a single line."""
+    from scripts.render_pdf import _escape
+    out = _escape("repos: `github.com/me/foo`, `github.com/me/bar`.")
+    assert "`" not in out, f"Backticks leaked: {out!r}"
+    assert "github.com/me/foo" in out
+    assert "github.com/me/bar" in out
+
+
+def test_escape_lone_backtick_left_alone():
+    """A single backtick (no closing pair) must not get touched —
+    forbidding pair-spans-newlines guards against eating a paragraph
+    break, and lone ` could appear in code-related prose."""
+    from scripts.render_pdf import _escape
+    assert _escape("the ` character is grave accent") == "the ` character is grave accent"
+
+
+def test_escape_code_span_does_not_span_newlines():
+    """Pair-must-stay-on-one-line: `\\nfoo\\n` must not strip backticks."""
+    from scripts.render_pdf import _escape
+    out = _escape("first ` line\nsecond ` line")
+    # Both backticks survive because the pair would have to cross a newline.
+    assert out.count("`") == 2
+
+
+def test_escape_preserves_bold_marker_inside_code_span_strip_path():
+    """Both code-span strip and bold convert run on the same input —
+    they must not interfere. **bold** still becomes <b>bold</b> even
+    when code spans are also present in the same string."""
+    from scripts.render_pdf import _escape
+    out = _escape("**Senior** at `github.com/me`")
+    assert "<b>Senior</b>" in out
+    assert "github.com/me" in out
+    assert "`" not in out
+
+
+def test_linkify_text_strips_surrounding_backticks_and_linkifies():
+    """End-to-end: `github.com/foo` renders as a clean clickable URL
+    (blue) with no surrounding decorative backticks."""
+    out = _linkify_text("see `github.com/me/foo` for code")
+    assert "<a href=\"https://github.com/me/foo\"" in out
+    assert "color=\"#0645AD\"" in out
+    # No visible backticks should remain in the rendered output.
+    assert "`" not in out, (
+        f"Code-span backticks leaked through linkify: {out!r}"
+    )
+
+
+def test_linkify_text_strips_backticks_around_url_with_trailing_punctuation():
+    """The actual real-run shape: `github.com/me/foo`)."""
+    out = _linkify_text("Project (`github.com/earino/applied-deep-learning`)")
+    assert "<a href=\"https://github.com/earino/applied-deep-learning\"" in out
+    assert "`" not in out
+    # The closing paren is still rendered text, just not inside the href.
+    assert ")" in out
+    assert "applied-deep-learning)\"" not in out  # paren NOT in href
+
+
+def test_link_color_is_muted_blue_not_bright():
+    """Sanity bound on the chosen link color. The exact hex is taste, but
+    it must be in the muted-blue range (not bright royal blue, not gray
+    body-color, not red/green/etc.)."""
+    from scripts.render_pdf import _LINK_COLOR
+    assert _LINK_COLOR.startswith("#"), f"Color must be hex form: {_LINK_COLOR}"
+    h = _LINK_COLOR.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    # Blue dominant: b >= r and b >= g.
+    assert b > r, f"Link color {_LINK_COLOR}: blue channel ({b}) not dominant over red ({r})"
+    assert b > g, f"Link color {_LINK_COLOR}: blue channel ({b}) not dominant over green ({g})"
+    # Not too bright (avoid 1990s royal-blue).
+    assert b <= 200, f"Link color {_LINK_COLOR}: blue channel {b} is too bright; aim for muted"
+
+
+def test_render_resume_with_code_span_url_produces_clean_clickable_link(tmp_path: Path):
+    """End-to-end real-run shape: the tailor wraps a project URL in
+    markdown backticks, renderer must produce a clickable link with
+    NO trailing backtick in the href (regression for the c478719
+    fix — backtick-in-href was the originally-reported bug)."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | linkedin.com/in/test | City\n"
+        "\n"
+        "## Projects\n"
+        "### Resumasher (`github.com/earino/resumasher`)\n"
+        "- A Claude Code skill for tailoring resumes.\n"
+    )
+    out = tmp_path / "code_span.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(
+                        uri.decode("utf-8") if isinstance(uri, bytes) else uri
+                    )
+
+    # The clean URL must be present.
+    assert "https://github.com/earino/resumasher" in uris, (
+        f"Clean URL missing from PDF Link annotations. Got: {uris}"
+    )
+    # NO URI in the file should contain a trailing backtick — that was the
+    # exact bug from real-run testing that c478719 fixed at the regex
+    # level. This test pins it at the end-to-end level.
+    for uri in uris:
+        assert not uri.endswith("`"), (
+            f"Backtick leaked into PDF Link annotation href: {uri!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 italic markdown handling: `*italic*` → `<i>italic</i>`,
+# rendered with the bundled DejaVu Sans Oblique font (assets/) so it
+# actually visually slants rather than just stripping the markers.
+# ---------------------------------------------------------------------------
+
+
+def test_escape_converts_single_asterisk_pair_to_italic():
+    """`*text*` becomes `<i>text</i>` so course titles like
+    `*Applied Deep Learning*` (in tailored bullets) render as italic
+    rather than leaking the asterisks as visible markers."""
+    from scripts.render_pdf import _escape
+    assert _escape("*Applied Deep Learning*") == "<i>Applied Deep Learning</i>"
+
+
+def test_escape_italic_does_not_match_math_operator_with_spaces():
+    """`5 * 4 * 3` (math expression with spaces around operators) must
+    NOT match the italic regex. Standard markdown rule: italic markers
+    require non-whitespace immediately inside the `*` pair."""
+    from scripts.render_pdf import _escape
+    out = _escape("5 * 4 * 3")
+    assert "<i>" not in out, f"Math operators got false-matched as italic: {out!r}"
+    assert out == "5 * 4 * 3"
+
+
+def test_escape_italic_does_not_match_lone_trailing_asterisk():
+    """`footnote*` (single trailing asterisk, common in academic prose)
+    must not match — the italic regex requires a closing `*`."""
+    from scripts.render_pdf import _escape
+    assert _escape("see footnote*") == "see footnote*"
+
+
+def test_escape_bold_takes_precedence_over_italic():
+    """`**bold**` becomes `<b>bold</b>`, NOT `<i>*bold*</i>`. Bold
+    conversion runs before italic so the `**` markers are gone before
+    italic regex sees the text."""
+    from scripts.render_pdf import _escape
+    out = _escape("**bold**")
+    assert out == "<b>bold</b>"
+
+
+def test_escape_italic_does_not_span_newlines():
+    """Mismatched asterisks across a line break must not eat the
+    paragraph break — same safety as the bold regex."""
+    from scripts.render_pdf import _escape
+    out = _escape("first *line\nsecond* line")
+    # Both asterisks survive because the pair would have to cross a newline.
+    assert out.count("*") == 2
+
+
+def test_escape_italic_handles_multiple_pairs_in_one_string():
+    """A bullet might have several italic phrases. Each pair becomes
+    its own `<i>...</i>`."""
+    from scripts.render_pdf import _escape
+    out = _escape("read *War and Peace* then *Anna Karenina*")
+    assert "<i>War and Peace</i>" in out
+    assert "<i>Anna Karenina</i>" in out
+
+
+def test_escape_italic_combines_with_bold_in_same_string():
+    """Both formats can appear in the same line. Bold must remain bold
+    and italic remain italic — the conversion order ensures they don't
+    interfere."""
+    from scripts.render_pdf import _escape
+    out = _escape("**Senior Director** of *AI Research*")
+    assert "<b>Senior Director</b>" in out
+    assert "<i>AI Research</i>" in out
+
+
+def test_register_fonts_wires_italic_to_oblique_font():
+    """Font family registration must map the `italic` slot to the
+    bundled DejaVu Sans Oblique. Without this wiring, `<i>` tags
+    render in regular text — markers gone but no visible italic.
+    Verified via reportlab's pdfmetrics.getRegisteredFontNames()."""
+    from scripts.render_pdf import _register_fonts
+    from reportlab.pdfbase import pdfmetrics
+    _register_fonts()
+    # The oblique font must be registered under our stable name.
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    assert "ResumasherSans-Oblique" in registered, (
+        f"Oblique font not registered. Got: {sorted(registered)}"
+    )
+    assert "ResumasherSans-BoldOblique" in registered
+
+
+def test_oblique_font_files_bundled_in_assets():
+    """The asset files must exist on disk so a fresh clone has them.
+    Pre-#42 final-polish, only Regular and Bold were bundled — italic
+    rendered as regular. Now Oblique and BoldOblique ship too."""
+    from pathlib import Path
+    assets = Path(__file__).resolve().parent.parent / "assets"
+    assert (assets / "DejaVuSans-Oblique.ttf").exists(), (
+        "DejaVuSans-Oblique.ttf must be bundled in assets/ so italic "
+        "actually renders as italic, not as markers-stripped regular text."
+    )
+    assert (assets / "DejaVuSans-BoldOblique.ttf").exists()
+
+
+def test_render_resume_with_italic_in_bullet_renders_without_asterisks(tmp_path: Path):
+    """End-to-end: a bullet containing markdown italic markers renders
+    a PDF whose extracted text has no `*` characters — the asterisks
+    must have been converted to italic markup, not left as decorations.
+    """
+    md = (
+        "# Italic Test\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Teach (2023 – Present)\n"
+        "- Teach ECBS5200 *Applied Deep Learning* — six weeks of training.\n"
+    )
+    out = tmp_path / "italic.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The italic content must still be present as text.
+    assert "Applied Deep Learning" in text
+    # And the asterisks must NOT appear in the rendered output.
+    assert "*Applied" not in text
+    assert "Learning*" not in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final regression: parens-with-date in the MIDDLE of a title.
+# Real-run testing surfaced sub-block titles shaped like
+#   `Senior Director, Data Science (August 2022 – August 2025) — Zurich`
+# Pre-fix the regex was anchored to end-of-string, so the trailing
+# "— Zurich" caused the regex to miss the parens and the date stayed
+# inline. Result: CEU sub-blocks (no trailing location) split correctly,
+# Meta sub-blocks (with trailing "— Zurich" / "— Menlo Park") didn't.
+# ---------------------------------------------------------------------------
+
+
+def test_split_parens_with_trailing_location_after_close_paren():
+    """The shape that broke real runs: closing paren NOT at end of
+    string — there's a city/location separated by an em-dash after it."""
+    title = "Senior Director, Data Science (August 2022 – August 2025) — Zurich"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Director, Data Science — Zurich", (
+        f"Expected location preserved as title suffix, got: {t!r}"
+    )
+    assert d == "August 2022 – August 2025"
+
+
+def test_split_parens_with_trailing_location_em_dash_menlo_park():
+    """Variant with a different city to make sure the rebuild logic is
+    location-agnostic, not just hard-coded around 'Zurich'."""
+    title = "Data Science Manager (July 2017 – February 2021) — Menlo Park"
+    t, d = _split_title_and_date(title)
+    assert t == "Data Science Manager — Menlo Park"
+    assert d == "July 2017 – February 2021"
+
+
+def test_split_parens_at_end_still_works_no_trailing_text():
+    """Regression guard: the previous shape (no text after parens) must
+    keep working — this is what CEU sub-blocks look like."""
+    title = "Visiting Professor (December 2017 – July 2025)"
+    t, d = _split_title_and_date(title)
+    assert t == "Visiting Professor"
+    assert d == "December 2017 – July 2025"
+
+
+def test_split_parens_at_start_with_trailing_text():
+    """Edge case: parens at the very beginning, content after. Both
+    pieces of the title are preserved (one is empty, the rebuild logic
+    must not insert an awkward leading space)."""
+    title = "(Aug 2022 – Aug 2025) Senior Director"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Director"
+    assert d == "Aug 2022 – Aug 2025"
+
+
+def test_render_meta_subblock_with_trailing_location_splits_date(tmp_path: Path):
+    """End-to-end: the exact shape that was broken in Eduardo's
+    real-run resume PDF. The rendered text must show the title +
+    location on one line and the date on its own metadata line —
+    NOT the date inlined between the title and the location."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Meta (July 2017 – August 2025)\n"
+        "**Senior Director, Data Science** (August 2022 – August 2025) — Zurich\n"
+        "- Did stuff.\n"
+    )
+    out = tmp_path / "trailing_location.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The date must NOT appear inline with the title and location.
+    assert "Senior Director, Data Science (August 2022" not in text, (
+        "Date appears inlined in the sub-block title — the parens-in-"
+        "middle case isn't being split."
+    )
+    # The split shape must appear: title-with-location, then date on
+    # its own line. pdfminer wraps lines so we just verify both pieces
+    # of text are present in the right order.
+    assert "Senior Director, Data Science" in text
+    assert "Zurich" in text
+    assert "August 2022 – August 2025" in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 follow-up: collapse `Name (URL)` titles to a single clickable
+# Name. Real-run feedback: project titles like
+#   `### ci_fixer_bot (github.com/earino/ci_fixer_bot)`
+# pre-fix rendered as "ci_fixer_bot (github.com/earino/ci_fixer_bot)" with
+# only the URL portion clickable in blue. Cleaner shape: just the project
+# name itself becomes the clickable link, with the explicit URL display
+# dropped — that's the standard markdown intent (`[name](url)` in
+# native syntax).
+# ---------------------------------------------------------------------------
+
+
+def test_linkify_title_collapses_name_with_github_url_in_parens():
+    """The exact shape Eduardo flagged. Title becomes a single clickable
+    Name; the explicit URL display is dropped (it's now in the href)."""
+    out = _linkify_title("ci_fixer_bot (github.com/earino/ci_fixer_bot)")
+    assert out == (
+        '<a href="https://github.com/earino/ci_fixer_bot" '
+        'color="#0645AD">ci_fixer_bot</a>'
+    )
+
+
+def test_linkify_title_collapses_name_with_https_url():
+    """Explicit https URL inside parens — same collapse behavior."""
+    out = _linkify_title("Project (https://example.com/foo)")
+    assert out == '<a href="https://example.com/foo" color="#0645AD">Project</a>'
+
+
+def test_linkify_title_does_not_collapse_when_parens_have_extra_metadata():
+    """Parens content must be EXACTLY a URL for the collapse to apply.
+    Bullets / titles like `Foo (github.com/me/x, 23 stars)` have a star
+    count after a comma — that's not a URL-only parens, so we fall
+    through to inline-URL rendering instead of trying to collapse."""
+    out = _linkify_title("Project (github.com/me/x, 23 stars)")
+    # Title text "Project" must remain visible (not collapsed away).
+    assert "Project (" in out
+    # And the closing paren + extra content stays.
+    assert "23 stars)" in out
+
+
+def test_linkify_title_passes_through_when_no_parens_url():
+    """Plain titles (no URL) round-trip identically to _linkify_text —
+    same escape rules, same bold / italic conversion, same color
+    inheritance."""
+    plain = _linkify_title("Senior Director, Data Science — Zurich")
+    via_linkify = _linkify_text("Senior Director, Data Science — Zurich")
+    assert plain == via_linkify
+
+
+def test_linkify_title_falls_through_for_bare_parens_url_no_name():
+    """`(github.com/me/x)` with no leading name shouldn't produce an
+    empty <a> tag. Falls through to _linkify_text so the URL itself
+    renders as a clickable run inside the parens."""
+    out = _linkify_title("(github.com/me/x)")
+    # Must contain a clickable URL — but not as a collapsed single link.
+    assert "<a href=" in out
+    # And the parens are still rendered as text (inline-URL shape).
+    assert out.startswith("(") and out.endswith(")")
+
+
+def test_render_project_title_collapses_to_single_link_in_pdf(tmp_path: Path):
+    """End-to-end: a project block with a `Name (URL)` title produces
+    a PDF whose annotation tree carries a Link annotation pointing at
+    the URL, AND whose extracted text contains 'ci_fixer_bot' once
+    (as the link's display text), NOT 'ci_fixer_bot (github.com/...)'
+    (the pre-fix shape with both name and URL displayed)."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Projects\n"
+        "### ci_fixer_bot (github.com/earino/ci_fixer_bot)\n"
+        "- Python tool that classifies CI failures.\n"
+    )
+    out = tmp_path / "project_collapse.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The collapsed shape: name is present, URL is NOT shown alongside.
+    assert "ci_fixer_bot" in text
+    # The explicit URL must NOT appear in extracted text — it's collapsed
+    # into the href of the clickable Name link.
+    assert "github.com/earino/ci_fixer_bot" not in text, (
+        "Explicit URL still rendered alongside the project name; expected "
+        "the title to collapse to just the Name."
+    )
+
+    # Annotation tree should still carry the Link to the URL.
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        pdf_doc = PDFDocument(PDFParser(fp))
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                ar = action.resolve() if hasattr(action, "resolve") else action
+                uri = ar.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "https://github.com/earino/ci_fixer_bot" in uris, (
+        f"Project URL missing from PDF Link annotations. Got: {uris}"
+    )
+
+
+def test_linkify_title_collapses_when_url_in_code_span_backticks():
+    """Real-run regression: tailor LLM wraps project URLs in markdown
+    code spans like `Name (`URL`)`. Pre-fix the collapse regex didn't
+    match because the parens content was a backtick-wrapped URL, not a
+    bare URL. Code spans must be stripped before the shape check."""
+    out = _linkify_title("ci_fixer_bot (`github.com/earino/ci_fixer_bot`)")
+    assert out == (
+        '<a href="https://github.com/earino/ci_fixer_bot" '
+        'color="#0645AD">ci_fixer_bot</a>'
+    ), f"Code-span-wrapped URL did not collapse: {out!r}"
+
+
+def test_linkify_title_collapses_https_url_in_code_span():
+    out = _linkify_title("Project (`https://example.com/foo`)")
+    assert '<a href="https://example.com/foo"' in out
+    assert "color=\"#0645AD\"" in out
+    assert ">Project</a>" in out
+
+
+def test_linkify_title_does_not_collapse_when_two_urls_in_parens():
+    """Even after stripping code spans, parens content with multiple
+    URLs separated by commas isn't a single-URL parens shape — falls
+    through to inline-URL behavior. Real-run example: a project entry
+    that combined two repos in one heading."""
+    title = "prompt-harness + nonprofit.ai (`github.com/me/a`, `github.com/me/b`)"
+    out = _linkify_title(title)
+    # Title text "prompt-harness + nonprofit.ai" must survive (no collapse).
+    assert "prompt-harness + nonprofit.ai" in out
+    # Both URLs become inline clickable runs.
+    assert '<a href="https://github.com/me/a' in out
+    assert '<a href="https://github.com/me/b' in out
