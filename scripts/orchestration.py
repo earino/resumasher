@@ -9,7 +9,8 @@ These are CLI-callable so SKILL.md can shell out without re-implementing logic
 in a prompt, and importable so tests can exercise every branch.
 
 CLI map:
-    python -m scripts.orchestration parse-job-source <arg>
+    python -m scripts.orchestration parse-job-mode <arg>
+    python -m scripts.orchestration parse-job-content <arg>
     python -m scripts.orchestration discover-resume <cwd>
     python -m scripts.orchestration folder-state-hash <cwd>
     python -m scripts.orchestration mine-context <cwd>
@@ -1147,7 +1148,33 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(prog="scripts.orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("parse-job-source")
+    # parse-job-source as a single command emitted JSON-on-stdout, which
+    # broke when shells (zsh, dash, bash with xpg_echo) interpret backslash
+    # escapes — the JSON's `\n` got rewritten to a real newline before
+    # downstream parsing. See issue #44 for the analysis. Replaced by two
+    # narrow single-purpose commands; orchestrators capture the mode word
+    # in a shell variable and pipe content directly through format-jd
+    # without ever round-tripping JSON through a shell string.
+    p = sub.add_parser(
+        "parse-job-mode",
+        help=(
+            "Resolve <arg> and emit one of: file, url, literal. "
+            "Single word on stdout, safe to capture in a shell variable. "
+            "Pair with parse-job-content for the corresponding payload."
+        ),
+    )
+    p.add_argument("arg")
+    p.add_argument("--cwd", default=".")
+
+    p = sub.add_parser(
+        "parse-job-content",
+        help=(
+            "Resolve <arg> and emit the corresponding payload to stdout: "
+            "for file mode, the file's text; for url mode, the URL; for "
+            "literal mode, the literal text. Raw bytes — no JSON wrap, "
+            "safe to pipe directly through format-jd."
+        ),
+    )
     p.add_argument("arg")
     p.add_argument("--cwd", default=".")
 
@@ -1290,9 +1317,23 @@ def _cli() -> int:
 
     args = parser.parse_args()
 
-    if args.command == "parse-job-source":
+    if args.command == "parse-job-mode":
         res = parse_job_source(args.arg, cwd=Path(args.cwd))
-        print(json.dumps({"mode": res.mode, "path": res.path, "content": res.content}))
+        # Single word, no newline trickery — safe to capture in $(...)
+        # under any shell. End with sys.stdout.write rather than print to
+        # avoid the platform-specific trailing newline that some shells
+        # strip and others preserve in the captured value.
+        sys.stdout.write(res.mode)
+        return 0
+
+    if args.command == "parse-job-content":
+        res = parse_job_source(args.arg, cwd=Path(args.cwd))
+        # Raw bytes on stdout — no JSON wrap, no escaping. The caller
+        # pipes this directly into format-jd. UTF-8 by default; the
+        # stdout reconfigure at the bottom of this file ensures
+        # Windows-CP1252 doesn't crash on non-ASCII content (em-dashes,
+        # curly quotes, em-dashes that LinkedIn copy/paste produces).
+        sys.stdout.write(res.content)
         return 0
 
     if args.command == "format-jd":
@@ -1562,7 +1603,7 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
     The file paths are conventional:
       - $RUN_DIR/resume.txt   — read-resume output
       - $RUN_DIR/context.txt  — mine-context output (raw folder+github)
-      - $RUN_DIR/jd.txt       — JD text extracted from parse-job-source
+      - $RUN_DIR/jd.txt       — JD text from parse-job-content piped through format-jd
       - $CWD/.resumasher/cache.txt — folder-miner sub-agent's prose summary
       - $OUT_DIR/company-research.md — company-researcher sub-agent output
       - $OUT_DIR/tailored-resume.md  — tailor sub-agent output
@@ -1617,7 +1658,7 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
         elif var == "jd_text":
             content = _read_if_exists(run_dir / "jd.txt")
             if content is None:
-                return _missing(var, run_dir / "jd.txt", "orchestration parse-job-source in Phase 1")
+                return _missing(var, run_dir / "jd.txt", "orchestration parse-job-content piped through format-jd in Phase 1")
             kwargs[var] = content
         elif var == "company":
             if not args.company:

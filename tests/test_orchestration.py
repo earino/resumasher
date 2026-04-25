@@ -76,6 +76,179 @@ def test_parse_job_source_handles_utf16_file(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# parse-job-mode + parse-job-content CLI subcommands (issue #44)
+#
+# Replaced the earlier `parse-job-source` JSON-on-stdout command, which
+# broke when shells (zsh, dash, bash with xpg_echo) interpret backslash
+# escapes — JSON's `\n` got rewritten to a real newline before downstream
+# parsing, producing tracebacks on every macOS resumasher run.
+#
+# The two narrow commands eliminate the bug class structurally:
+#   parse-job-mode    → single word on stdout (file/url/literal)
+#   parse-job-content → raw bytes on stdout (file text / URL / literal)
+# Neither needs a shell-side JSON parse, so echo-interprets-backslash
+# can't corrupt anything.
+# ---------------------------------------------------------------------------
+
+
+def _run_orchestration_cli(args: list[str], cwd: Path) -> "subprocess.CompletedProcess":
+    """Invoke `python -m scripts.orchestration <args>` in a subprocess and
+    return the CompletedProcess. Uses sys.executable so the venv resolves
+    correctly on every host (issue #24's PATH-resolution fix). The
+    subprocess runs from the repo root so the `scripts` package resolves
+    on the import path; the resolution-against-cwd argument is preserved
+    for any subcommand that takes a `--cwd` flag (caller passes that
+    explicitly via args)."""
+    import subprocess
+    repo_root = Path(__file__).resolve().parent.parent
+    return subprocess.run(
+        [sys.executable, "-m", "scripts.orchestration", *args],
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+        check=False,
+    )
+
+
+def test_parse_job_mode_emits_file_word_for_existing_file(tmp_path: Path):
+    """File mode: parse-job-mode prints exactly the word `file` on stdout
+    with no trailing newline — safe to capture in $(...) under any shell."""
+    (tmp_path / "jd.txt").write_text("any JD text", encoding="utf-8")
+    r = _run_orchestration_cli(["parse-job-mode", "jd.txt", "--cwd", str(tmp_path)], tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "file", f"Expected 'file' (no trailing newline), got {r.stdout!r}"
+
+
+def test_parse_job_mode_emits_url_word_for_https_arg(tmp_path: Path):
+    r = _run_orchestration_cli(
+        ["parse-job-mode", "https://careers.example.com/job/1"], tmp_path,
+    )
+    assert r.returncode == 0
+    assert r.stdout == "url"
+
+
+def test_parse_job_mode_emits_literal_word_for_plain_text(tmp_path: Path):
+    r = _run_orchestration_cli(
+        ["parse-job-mode", "Senior Data Analyst at Acme. SQL Python."], tmp_path,
+    )
+    assert r.returncode == 0
+    assert r.stdout == "literal"
+
+
+def test_parse_job_content_emits_raw_file_text_no_json_wrap(tmp_path: Path):
+    """Content mode for file: raw bytes, no JSON wrapping. The whole point
+    of issue #44 — no JSON parser involved on the consumer side."""
+    payload = "Line one.\nLine two with curly quote’.\nLine three."
+    (tmp_path / "jd.txt").write_text(payload, encoding="utf-8")
+    r = _run_orchestration_cli(
+        ["parse-job-content", "jd.txt", "--cwd", str(tmp_path)], tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == payload, (
+        f"Content output must be raw file bytes (UTF-8), no JSON wrap. "
+        f"Expected {payload!r}, got {r.stdout!r}"
+    )
+
+
+def test_parse_job_content_for_url_emits_url_string(tmp_path: Path):
+    """For url mode, content is the URL itself (the agent uses this to
+    drive WebFetch). The URL has no internal newlines, so even capture-
+    via-shell-string is safe — but the consumer should pipe through
+    format-jd directly anyway."""
+    r = _run_orchestration_cli(
+        ["parse-job-content", "https://example.com/job/1"], tmp_path,
+    )
+    assert r.returncode == 0
+    assert r.stdout == "https://example.com/job/1"
+
+
+def test_parse_job_content_for_literal_emits_literal_text(tmp_path: Path):
+    payload = "Junior Data Scientist at Acme Corp. Python, SQL, occasional ML."
+    r = _run_orchestration_cli(["parse-job-content", payload], tmp_path)
+    assert r.returncode == 0
+    assert r.stdout == payload
+
+
+def test_parse_job_content_does_not_crash_on_curly_quotes_or_em_dashes(tmp_path: Path):
+    """The original bug surfaced on a real LinkedIn-pasted JD with curly
+    quotes (’), em-dashes (—), and ligatures (ﬁ in 'office').
+    Pin that those characters survive parse-job-content via UTF-8 stdout
+    without crashing — Windows-CP1252 compatibility matters."""
+    payload = (
+        "Disclaimer: This role is for an elite, cutting-edge AI architect.\n"
+        "We’re looking for builders who code, design, and execute — "
+        "the family ofﬁce uses Claude and Cursor as core tools.\n"
+    )
+    (tmp_path / "jd.txt").write_text(payload, encoding="utf-8")
+    r = _run_orchestration_cli(
+        ["parse-job-content", "jd.txt", "--cwd", str(tmp_path)], tmp_path,
+    )
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == payload
+
+
+def test_parse_job_mode_and_content_pair_safely_in_a_real_pipeline(tmp_path: Path):
+    """End-to-end shape: simulate the SKILL.md Phase 1 idiom — capture
+    mode in a shell var, pipe content through format-jd. Run via bash so
+    we exercise the same path the agent uses, not a Python subprocess.
+    This is the load-bearing regression test for issue #44 — if the
+    earlier echo-interprets-backslash bug ever returns, this fails.
+    """
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if bash is None:
+        import pytest
+        pytest.skip("bash not available; this test exercises the SKILL.md shell idiom")
+
+    payload = (
+        "About the job\n"
+        "Disclaimer: This role is for an elite, cutting-edge AI architect.\n"
+        "We’re looking for builders who code, design, and execute — "
+        "the family ofﬁce uses Claude and Cursor as core tools.\n"
+    )
+    jd_path = tmp_path / "jd.txt"
+    jd_path.write_text(payload, encoding="utf-8")
+    out_path = tmp_path / "out.txt"
+
+    repo_root = Path(__file__).resolve().parent.parent
+    py = sys.executable
+    # Mirror the SKILL.md Phase 1 recipe exactly. If any of the new
+    # commands emit JSON, or if mode capture introduces shell-escaped
+    # newlines, this script breaks — pinning the behavior at the
+    # bash-pipeline level.
+    script = (
+        f'set -euo pipefail\n'
+        f'cd "{repo_root}"\n'
+        f'JD_MODE=$("{py}" -m scripts.orchestration parse-job-mode "{jd_path}")\n'
+        f'echo "MODE=[$JD_MODE]" >&2\n'
+        f'"{py}" -m scripts.orchestration parse-job-content "{jd_path}" \\\n'
+        f'  | "{py}" -m scripts.orchestration format-jd --mode "$JD_MODE" \\\n'
+        f'  > "{out_path}"\n'
+        f'echo "OUT_BYTES=$(wc -c < "{out_path}")" >&2\n'
+    )
+    r = subprocess.run(
+        [bash, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0, (
+        f"Bash pipeline failed (exit {r.returncode}). stderr:\n{r.stderr}"
+    )
+    # Mode captured correctly.
+    assert "MODE=[file]" in r.stderr
+    # Content survived the pipeline byte-perfect — including curly quote,
+    # em-dash, and ligature.
+    written = out_path.read_text(encoding="utf-8")
+    assert written == payload, (
+        f"Content drift through the bash pipeline. "
+        f"Expected {payload!r}, got {written!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # format_jd — persists JD to $RUN_DIR/jd.txt (and onward to $OUT_DIR/jd.md)
 #
 # Issue #15: students running resumasher against multiple postings were losing
