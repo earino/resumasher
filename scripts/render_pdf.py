@@ -718,18 +718,18 @@ def _render_titled_block(
     Single-flow text only — no Tables, no tab stops. The metadata line is
     a real second paragraph that ATS parsers read in document order, which
     is what every commercial-ATS guidance recommends. See issue #42.
+
+    The title runs through `_linkify_title` rather than `_linkify_text` so
+    project-title shapes like "Resumasher (github.com/earino/resumasher)"
+    collapse to a single clickable name instead of rendering the explicit
+    URL alongside.
     """
     title_without_date, date = _split_title_and_date(raw_title)
     if date is None:
-        # Run the title through _linkify_text so URLs in titles like
-        # "Resumasher (github.com/earino/resumasher)" become clickable.
-        # _linkify_text supersets _escape (HTML-escape + bold conversion +
-        # link wrapping). Titles without URLs round-trip identically.
-        return [Paragraph(_linkify_text(raw_title), title_style)]
+        return [Paragraph(_linkify_title(raw_title), title_style)]
     return [
-        Paragraph(_linkify_text(title_without_date), title_style),
-        # Date metadata is just a date — no URL expected. Still safe to
-        # run through _linkify_text in case (yet ATS-irrelevant for dates).
+        Paragraph(_linkify_title(title_without_date), title_style),
+        # Date metadata is just a date — no URL expected.
         Paragraph(_escape(date), metadata_style),
     ]
 
@@ -989,6 +989,66 @@ def _linkify_text(text: str) -> str:
 # is now the general _linkify_text — same behavior, broader name. Keep the
 # old name for any caller / test that imports it.
 _linkify_contact = _linkify_text
+
+
+# `Name (URL)` shape — a project title where the parens hold ONLY a URL
+# (no extra metadata like star counts or commas). Used by _linkify_title
+# to collapse such titles to a single clickable Name, instead of the
+# default `Name (github.com/...)` with the URL inlined as a separate
+# clickable run. Standard markdown intent — `[Name](URL)` expressed in
+# a parens-form the tailor LLM commonly emits in project titles.
+#
+# The whole-parens-must-be-URL constraint matters: for bullets shaped
+# "...the X repo (github.com/me/x, 23 stars)", the parens content has
+# extra text and we DO want the inline-URL display rather than a
+# collapse. So this transform applies only when the regex matches —
+# which means parens content is exactly one of our URL patterns,
+# nothing more.
+_TITLE_TRAILING_URL_RE = re.compile(
+    rf"^(.+?)\s*\(("
+    rf"{_LINK_EMAIL_RE}"
+    rf"|{_LINK_HTTPS_RE}"
+    rf"|{_LINK_LINKEDIN_RE}"
+    rf"|{_LINK_GITHUB_RE}"
+    rf")\)\s*$"
+)
+
+
+def _linkify_title(title: str) -> str:
+    """
+    Title-only variant of `_linkify_text`. If the title is shaped
+    `Name (URL)` — name followed by parens around exactly a URL with no
+    additional content — collapses to a single clickable Name:
+
+        "Resumasher (github.com/earino/resumasher)"
+            → '<a href="https://github.com/earino/resumasher" color="...">Resumasher</a>'
+        "Project (https://example.com)"
+            → '<a href="https://example.com" color="...">Project</a>'
+
+    For every other title shape (no parens, parens with non-URL content,
+    parens with URL + extra metadata, etc.) falls through to
+    `_linkify_text` so embedded URLs still get inline link annotations.
+
+    Used only by `_render_titled_block` for block + sub-block titles.
+    Bullets keep the inline-URL display because their parens routinely
+    contain commas and additional metadata ("(github.com/me/x, 23 stars)").
+    """
+    m = _TITLE_TRAILING_URL_RE.match(title.strip())
+    if not m:
+        return _linkify_text(title)
+    name = m.group(1).strip()
+    url = m.group(2).strip()
+    if not name:
+        # Edge: bare parens-URL with no name. Fall back to linkify so the
+        # URL itself renders, rather than producing an empty <a> tag.
+        return _linkify_text(title)
+    if "@" in url and "://" not in url:
+        href = f"mailto:{url}"
+    elif url.startswith("http"):
+        href = url
+    else:
+        href = f"https://{url}"
+    return f'<a href="{href}" color="{_LINK_COLOR}">{_escape(name)}</a>'
 
 
 # Max dimension for embedded photos. The photo prints at 3cm × 3cm; at 300 DPI

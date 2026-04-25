@@ -27,6 +27,7 @@ from scripts.render_pdf import (
     _build_styles,
     _linkify_contact,
     _linkify_text,
+    _linkify_title,
     _render_titled_block,
     _split_title_and_date,
     assert_ats_roundtrip,
@@ -2591,3 +2592,120 @@ def test_render_meta_subblock_with_trailing_location_splits_date(tmp_path: Path)
     assert "Senior Director, Data Science" in text
     assert "Zurich" in text
     assert "August 2022 – August 2025" in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 follow-up: collapse `Name (URL)` titles to a single clickable
+# Name. Real-run feedback: project titles like
+#   `### ci_fixer_bot (github.com/earino/ci_fixer_bot)`
+# pre-fix rendered as "ci_fixer_bot (github.com/earino/ci_fixer_bot)" with
+# only the URL portion clickable in blue. Cleaner shape: just the project
+# name itself becomes the clickable link, with the explicit URL display
+# dropped — that's the standard markdown intent (`[name](url)` in
+# native syntax).
+# ---------------------------------------------------------------------------
+
+
+def test_linkify_title_collapses_name_with_github_url_in_parens():
+    """The exact shape Eduardo flagged. Title becomes a single clickable
+    Name; the explicit URL display is dropped (it's now in the href)."""
+    out = _linkify_title("ci_fixer_bot (github.com/earino/ci_fixer_bot)")
+    assert out == (
+        '<a href="https://github.com/earino/ci_fixer_bot" '
+        'color="#0645AD">ci_fixer_bot</a>'
+    )
+
+
+def test_linkify_title_collapses_name_with_https_url():
+    """Explicit https URL inside parens — same collapse behavior."""
+    out = _linkify_title("Project (https://example.com/foo)")
+    assert out == '<a href="https://example.com/foo" color="#0645AD">Project</a>'
+
+
+def test_linkify_title_does_not_collapse_when_parens_have_extra_metadata():
+    """Parens content must be EXACTLY a URL for the collapse to apply.
+    Bullets / titles like `Foo (github.com/me/x, 23 stars)` have a star
+    count after a comma — that's not a URL-only parens, so we fall
+    through to inline-URL rendering instead of trying to collapse."""
+    out = _linkify_title("Project (github.com/me/x, 23 stars)")
+    # Title text "Project" must remain visible (not collapsed away).
+    assert "Project (" in out
+    # And the closing paren + extra content stays.
+    assert "23 stars)" in out
+
+
+def test_linkify_title_passes_through_when_no_parens_url():
+    """Plain titles (no URL) round-trip identically to _linkify_text —
+    same escape rules, same bold / italic conversion, same color
+    inheritance."""
+    plain = _linkify_title("Senior Director, Data Science — Zurich")
+    via_linkify = _linkify_text("Senior Director, Data Science — Zurich")
+    assert plain == via_linkify
+
+
+def test_linkify_title_falls_through_for_bare_parens_url_no_name():
+    """`(github.com/me/x)` with no leading name shouldn't produce an
+    empty <a> tag. Falls through to _linkify_text so the URL itself
+    renders as a clickable run inside the parens."""
+    out = _linkify_title("(github.com/me/x)")
+    # Must contain a clickable URL — but not as a collapsed single link.
+    assert "<a href=" in out
+    # And the parens are still rendered as text (inline-URL shape).
+    assert out.startswith("(") and out.endswith(")")
+
+
+def test_render_project_title_collapses_to_single_link_in_pdf(tmp_path: Path):
+    """End-to-end: a project block with a `Name (URL)` title produces
+    a PDF whose annotation tree carries a Link annotation pointing at
+    the URL, AND whose extracted text contains 'ci_fixer_bot' once
+    (as the link's display text), NOT 'ci_fixer_bot (github.com/...)'
+    (the pre-fix shape with both name and URL displayed)."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Projects\n"
+        "### ci_fixer_bot (github.com/earino/ci_fixer_bot)\n"
+        "- Python tool that classifies CI failures.\n"
+    )
+    out = tmp_path / "project_collapse.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The collapsed shape: name is present, URL is NOT shown alongside.
+    assert "ci_fixer_bot" in text
+    # The explicit URL must NOT appear in extracted text — it's collapsed
+    # into the href of the clickable Name link.
+    assert "github.com/earino/ci_fixer_bot" not in text, (
+        "Explicit URL still rendered alongside the project name; expected "
+        "the title to collapse to just the Name."
+    )
+
+    # Annotation tree should still carry the Link to the URL.
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        pdf_doc = PDFDocument(PDFParser(fp))
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                ar = action.resolve() if hasattr(action, "resolve") else action
+                uri = ar.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "https://github.com/earino/ci_fixer_bot" in uris, (
+        f"Project URL missing from PDF Link annotations. Got: {uris}"
+    )
