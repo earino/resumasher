@@ -1,5 +1,5 @@
 """
-Tests for scripts/orchestration.py — every deterministic helper, every edge
+Tests for scripts/orchestration.py \u2014 every deterministic helper, every edge
 case traced from the test review diagram.
 """
 
@@ -76,7 +76,7 @@ def test_parse_job_source_handles_utf16_file(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# format_jd — persists JD to $RUN_DIR/jd.txt (and onward to $OUT_DIR/jd.md)
+# format_jd \u2014 persists JD to $RUN_DIR/jd.txt (and onward to $OUT_DIR/jd.md)
 #
 # Issue #15: students running resumasher against multiple postings were losing
 # the JD between runs (it only lived at $RUN_DIR/jd.txt, which gets wiped).
@@ -131,7 +131,7 @@ def test_format_jd_url_mode_with_empty_url_defensive_fallback():
 def test_format_jd_preserves_unicode_content():
     """JD text may contain unicode (company names, German/French descriptions,
     em dashes from copy-paste). Don't corrupt it."""
-    content = "Stellenbeschreibung: Senior Data Analyst — München. Gehalt €65k–€80k."
+    content = "Stellenbeschreibung: Senior Data Analyst \u2014 München. Gehalt €65k–€80k."
     out = format_jd("literal", content)
     assert out == content
     # And with a URL:
@@ -140,7 +140,7 @@ def test_format_jd_preserves_unicode_content():
 
 
 def test_format_jd_preserves_trailing_newlines():
-    """Don't trim content — the student may rely on a trailing newline for
+    """Don't trim content \u2014 the student may rely on a trailing newline for
     clean markdown rendering of jd.md."""
     content = "Line one.\nLine two.\n"
     out = format_jd("file", content)
@@ -275,7 +275,7 @@ def test_discover_resume_preserves_on_disk_case_mixed(tmp_path: Path):
 
 def test_discover_resume_unchanged_behavior_non_english(tmp_path: Path):
     """Documentary: discover_resume still returns None for non-English names.
-    This is intentional — the fallback-and-ask logic lives in SKILL.md."""
+    This is intentional \u2014 the fallback-and-ask logic lives in SKILL.md."""
     (tmp_path / "Lebenslauf.md").write_text("# Bewerbung", encoding="utf-8")
     assert discover_resume(tmp_path) is None
 
@@ -364,7 +364,7 @@ def test_validate_resume_path_accepts_markdown_extension(tmp_path: Path):
 
 
 def test_validate_resume_path_accepts_uppercase_extension(tmp_path: Path):
-    """Extension matching is case-insensitive — `RESUME.PDF` is fine."""
+    """Extension matching is case-insensitive \u2014 `RESUME.PDF` is fine."""
     (tmp_path / "RESUME.PDF").write_bytes(b"%PDF-1.4\n...")
     path, err = validate_resume_path(tmp_path, "RESUME.PDF")
     assert err is None
@@ -419,7 +419,7 @@ bjorn@example.com | linkedin.com/in/bjorn | Berlin
 Data scientist with a focus on forecasting and anomaly detection.
 
 ## Experience
-### Senior Analyst — Example Corp (2022-2024)
+### Senior Analyst \u2014 Example Corp (2022-2024)
 - Built a churn model on 1.5M records, F1=0.78.
 """
     pdf_path = tmp_path / "resume.pdf"
@@ -514,7 +514,7 @@ def test_folder_state_hash_ignores_claude_skills_dir(tmp_path: Path):
     hash_after = folder_state_hash(tmp_path)
 
     assert hash_before == hash_after, (
-        "folder_state_hash changed when .claude/ was added — .claude must "
+        "folder_state_hash changed when .claude/ was added \u2014 .claude must "
         "be in DEFAULT_IGNORE_DIRS so the skill doesn't mine itself."
     )
 
@@ -540,7 +540,7 @@ def test_folder_state_hash_ignores_other_ai_cli_dirs(tmp_path: Path, ai_dir: str
     Regression for the Codex/Gemini port: project-scope installs live at
     .codex/skills/resumasher/ and .gemini/skills/resumasher/ (plus .agents/
     as Gemini's documented alias). These must be ignored by the folder
-    miner the same way .claude/ is — same self-mining risk.
+    miner the same way .claude/ is \u2014 same self-mining risk.
     """
     (tmp_path / "resume.md").write_text("# Me", encoding="utf-8")
     hash_before = folder_state_hash(tmp_path)
@@ -551,7 +551,7 @@ def test_folder_state_hash_ignores_other_ai_cli_dirs(tmp_path: Path, ai_dir: str
     hash_after = folder_state_hash(tmp_path)
 
     assert hash_before == hash_after, (
-        f"folder_state_hash changed when {ai_dir}/ was added — "
+        f"folder_state_hash changed when {ai_dir}/ was added \u2014 "
         f"{ai_dir} must be in DEFAULT_IGNORE_DIRS."
     )
 
@@ -932,7 +932,7 @@ def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
     This test runs the CLI exactly the way SKILL.md drives it (not via
     `python -m scripts.orchestration`) and verifies no import error. Uses a
     username guaranteed to NotFound so no network fetch succeeds, but the
-    orchestrator must get far enough to emit the warning — which means the
+    orchestrator must get far enough to emit the warning \u2014 which means the
     github_mine module imported cleanly.
     """
     repo_root = Path(__file__).resolve().parent.parent
@@ -947,7 +947,7 @@ def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
         ],
         capture_output=True,
         text=True,
-        cwd=str(tmp_path),  # NOT the repo root — simulates student's CWD
+        cwd=str(tmp_path),  # NOT the repo root \u2014 simulates student's CWD
         timeout=30,
     )
     combined = result.stdout + "\n" + result.stderr
@@ -965,7 +965,7 @@ def test_cli_mine_context_with_github_does_not_moduleerror(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# inspect — agent-driven debugging helpers
+# inspect \u2014 agent-driven debugging helpers
 #
 # These are the structured introspection helpers the SKILL.md "Debugging
 # this skill" playbook calls when a student reports a bug. Each returns
@@ -983,7 +983,7 @@ def test_inspect_resume_happy_path_returns_expected_fields(tmp_path: Path):
         "Business analytics MSc graduate.\n"
         "\n"
         "## Experience\n"
-        "### Data Analyst — Raiffeisen (2025)\n"
+        "### Data Analyst \u2014 Raiffeisen (2025)\n"
         "- Built churn model, F1=0.82.\n"
         "- Delivered Tableau dashboard.\n"
     )
@@ -1032,7 +1032,7 @@ def test_inspect_resume_empty_name_triggers_warning(tmp_path: Path):
 def test_inspect_resume_shape_b_no_longer_orphans_bullets(tmp_path: Path):
     """Inverted from a previous test that asserted the ORPHANED_BULLETS
     warning fires for the issue #19 shape. After the parser fix, the
-    same shape produces correctly-attached blocks — no warning fires,
+    same shape produces correctly-attached blocks \u2014 no warning fires,
     bullets sit under their titles in the parse tree.
 
     Input markdown is identical to the pre-fix test so the before/after
@@ -1043,7 +1043,7 @@ def test_inspect_resume_shape_b_no_longer_orphans_bullets(tmp_path: Path):
         "\n"
         "## Research Experience\n"
         "\n"
-        "**SME High-Growth — Predictive Modeling** | Feb 2026\n"
+        "**SME High-Growth \u2014 Predictive Modeling** | Feb 2026\n"
         "- Engineered an automated data pipeline for 20,000 firms.\n"
         "- Developed 118 features for nonlinear patterns.\n"
         "\n"
@@ -1055,7 +1055,7 @@ def test_inspect_resume_shape_b_no_longer_orphans_bullets(tmp_path: Path):
 
     result = inspect_resume(p)
 
-    # No ORPHANED_BULLETS warning — the shape is now parsed correctly.
+    # No ORPHANED_BULLETS warning \u2014 the shape is now parsed correctly.
     orphaned = [w for w in result["warnings"] if w["code"] == "ORPHANED_BULLETS"]
     assert orphaned == [], (
         f"Expected no ORPHANED_BULLETS warning after parser fix, got: {orphaned}"
@@ -1083,7 +1083,7 @@ def test_inspect_resume_well_formed_sub_blocks_no_warning(tmp_path: Path):
         "\n"
         "## Research Experience\n"
         "\n"
-        "### SME High-Growth — Predictive Modeling (Feb 2026)\n"
+        "### SME High-Growth \u2014 Predictive Modeling (Feb 2026)\n"
         "- Engineered an automated data pipeline.\n"
         "- Developed 118 features.\n"
         "\n"
@@ -1135,11 +1135,11 @@ def test_inspect_pdf_returns_text_and_section_order(tmp_path: Path):
         "## Summary\nBrief summary.\n"
         "\n"
         "## Experience\n"
-        "### Role — Company (2024)\n"
+        "### Role \u2014 Company (2024)\n"
         "- Did a thing.\n"
         "\n"
         "## Education\n"
-        "### MSc — University (2024)\n"
+        "### MSc \u2014 University (2024)\n"
     )
     resume_md = tmp_path / "resume.md"
     resume_md.write_text(md, encoding="utf-8")
@@ -1155,7 +1155,7 @@ def test_inspect_pdf_returns_text_and_section_order(tmp_path: Path):
 
 
 def test_inspect_photo_square_no_warning(tmp_path: Path):
-    """A 500×500 square photo matches the 3×3cm render box — no stretch
+    """A 500×500 square photo matches the 3×3cm render box \u2014 no stretch
     warning."""
     from PIL import Image as PILImage
 
@@ -1176,7 +1176,7 @@ def test_inspect_photo_portrait_triggers_stretch_warning(tmp_path: Path):
     from PIL import Image as PILImage
 
     photo = tmp_path / "portrait.jpg"
-    # 3:4 aspect — typical phone portrait
+    # 3:4 aspect \u2014 typical phone portrait
     PILImage.new("RGB", (300, 400), color=(100, 120, 140)).save(photo, "JPEG")
 
     result = inspect_photo(photo)
@@ -1254,12 +1254,12 @@ def test_cli_inspect_photo_on_real_image(tmp_path: Path):
     parsed = json.loads(r.stdout)
     assert parsed["width"] == 600
     assert parsed["height"] == 450
-    # 4:3 landscape — aspect 1.33 — stretch warning expected
+    # 4:3 landscape \u2014 aspect 1.33 \u2014 stretch warning expected
     assert any(w["code"] == "PHOTO_ASPECT_STRETCH" for w in parsed["warnings"])
 
 
 # ---------------------------------------------------------------------------
-# Issue #50: extract-fit-fields — per-field files instead of env-source.
+# Issue #50: extract-fit-fields \u2014 per-field files instead of env-source.
 # ---------------------------------------------------------------------------
 
 
@@ -1354,7 +1354,7 @@ def test_extract_fit_fields_handles_unknown_or_missing_values(tmp_path: Path):
 
 
 def test_extract_fit_fields_emits_summary_on_stdout(tmp_path: Path):
-    """Flat key=value summary, one per line. No JSON — avoids the
+    """Flat key=value summary, one per line. No JSON \u2014 avoids the
     shell-eats-JSON repeat of issue #44."""
     out = tmp_path / "fit"
     r = _run_extract_fit_fields(out, SAMPLE_FIT_OUTPUT)
@@ -1368,7 +1368,7 @@ def test_per_field_round_trip_with_multi_word_values_via_real_bash(tmp_path: Pat
     """Load-bearing regression test for issue #50. Runs the SKILL.md
     Phase 3 + Phase 9 idiom in a real `bash -c` subprocess. Asserts
     multi-word company / role survive write+read round-trip
-    byte-perfect — no shell-source corruption."""
+    byte-perfect \u2014 no shell-source corruption."""
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash not available; this test exercises the SKILL.md shell idiom")
@@ -1416,7 +1416,7 @@ def test_per_field_round_trip_survives_single_quotes_and_dollar_signs(tmp_path: 
         "Prose...\n"
         "FIT_SCORE: 6\n"
         "COMPANY: Macy's & $hop\n"
-        "ROLE: VP, Engineering — Tech & Tools\n"
+        "ROLE: VP, Engineering \u2014 Tech & Tools\n"
         "SENIORITY: vp\n"
         "STRENGTHS_COUNT: 5\n"
         "GAPS_COUNT: 3\n"
@@ -1441,7 +1441,7 @@ def test_per_field_round_trip_survives_single_quotes_and_dollar_signs(tmp_path: 
     )
     assert proc.returncode == 0, proc.stderr
     assert "COMPANY=[Macy's & $hop]" in proc.stdout
-    assert "ROLE=[VP, Engineering — Tech & Tools]" in proc.stdout
+    assert "ROLE=[VP, Engineering \u2014 Tech & Tools]" in proc.stdout
 
 
 def test_skill_md_prescribes_per_field_files_for_fit_extraction():
