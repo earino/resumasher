@@ -9,7 +9,8 @@ These are CLI-callable so SKILL.md can shell out without re-implementing logic
 in a prompt, and importable so tests can exercise every branch.
 
 CLI map:
-    python -m scripts.orchestration parse-job-source <arg>
+    python -m scripts.orchestration parse-job-mode <arg>
+    python -m scripts.orchestration parse-job-content <arg>
     python -m scripts.orchestration discover-resume <cwd>
     python -m scripts.orchestration folder-state-hash <cwd>
     python -m scripts.orchestration mine-context <cwd>
@@ -371,36 +372,53 @@ def cleanup_stray_outputs(
 
 def _read_text_with_encoding_detection(path: Path) -> str:
     """
-    Read `path` as text, detecting encoding when UTF-8 decode fails.
+    Read `path` as text, detecting encoding when UTF-8 decode fails, AND
+    normalizing line endings to LF (``\\n``) on the way out.
 
-    Handles the Windows-Notepad-UTF-16-BOM footgun called out in the eng review.
-    Strategy: try UTF-8 first (fast path), then chardet, then let chardet's
-    guess fail loudly if the file really is unreadable.
+    Handles two footguns:
+
+    1. The Windows-Notepad-UTF-16-BOM footgun from the eng review — try
+       UTF-8 first (fast path), then chardet, then fail loudly.
+    2. Cross-platform line endings — Windows files commonly carry
+       ``\\r\\n`` endings. When such content travels through a text-mode
+       subprocess pipe, Python's universal-newline behavior applies twice
+       (once on stdout-write because text mode converts ``\\n`` to
+       ``\\r\\n`` on Windows, so the file's existing ``\\r\\n`` becomes
+       ``\\r\\r\\n``; once on the receiving side, where ``\\r\\r\\n``
+       decodes as two newlines), doubling every line break. Normalizing
+       to LF here matches what Python's text-mode read does for
+       ``open(path, 'r')`` and gives every downstream consumer
+       deterministic line endings regardless of host.
     """
     raw = path.read_bytes()
 
     # Fast path: UTF-8 (handles UTF-8, UTF-8-BOM via utf-8-sig retry).
     try:
-        return raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        pass
-    try:
-        return raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        pass
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # Chardet path.
+            detection = chardet.detect(raw)
+            encoding = detection.get("encoding") or "latin-1"
+            confidence = detection.get("confidence") or 0.0
+            if confidence < 0.5:
+                raise UnicodeDecodeError(
+                    encoding, raw, 0, 1,
+                    f"Could not reliably detect encoding of {path} "
+                    f"(best guess: {encoding} with {confidence:.0%} confidence). "
+                    f"Please resave the file as UTF-8."
+                )
+            text = raw.decode(encoding)
 
-    # Chardet path.
-    detection = chardet.detect(raw)
-    encoding = detection.get("encoding") or "latin-1"
-    confidence = detection.get("confidence") or 0.0
-    if confidence < 0.5:
-        raise UnicodeDecodeError(
-            encoding, raw, 0, 1,
-            f"Could not reliably detect encoding of {path} "
-            f"(best guess: {encoding} with {confidence:.0%} confidence). "
-            f"Please resave the file as UTF-8."
-        )
-    return raw.decode(encoding)
+    # Normalize line endings — match Python text-mode read semantics so
+    # every consumer sees ``\n`` regardless of the file's native line
+    # endings. Order: ``\r\n`` first (Windows), then bare ``\r`` (legacy
+    # Classic Mac).
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
 
 
 def read_resume(path: Path) -> str:
@@ -1147,7 +1165,33 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(prog="scripts.orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("parse-job-source")
+    # parse-job-source as a single command emitted JSON-on-stdout, which
+    # broke when shells (zsh, dash, bash with xpg_echo) interpret backslash
+    # escapes — the JSON's `\n` got rewritten to a real newline before
+    # downstream parsing. See issue #44 for the analysis. Replaced by two
+    # narrow single-purpose commands; orchestrators capture the mode word
+    # in a shell variable and pipe content directly through format-jd
+    # without ever round-tripping JSON through a shell string.
+    p = sub.add_parser(
+        "parse-job-mode",
+        help=(
+            "Resolve <arg> and emit one of: file, url, literal. "
+            "Single word on stdout, safe to capture in a shell variable. "
+            "Pair with parse-job-content for the corresponding payload."
+        ),
+    )
+    p.add_argument("arg")
+    p.add_argument("--cwd", default=".")
+
+    p = sub.add_parser(
+        "parse-job-content",
+        help=(
+            "Resolve <arg> and emit the corresponding payload to stdout: "
+            "for file mode, the file's text; for url mode, the URL; for "
+            "literal mode, the literal text. Raw bytes — no JSON wrap, "
+            "safe to pipe directly through format-jd."
+        ),
+    )
     p.add_argument("arg")
     p.add_argument("--cwd", default=".")
 
@@ -1290,9 +1334,23 @@ def _cli() -> int:
 
     args = parser.parse_args()
 
-    if args.command == "parse-job-source":
+    if args.command == "parse-job-mode":
         res = parse_job_source(args.arg, cwd=Path(args.cwd))
-        print(json.dumps({"mode": res.mode, "path": res.path, "content": res.content}))
+        # Single word, no newline trickery — safe to capture in $(...)
+        # under any shell. End with sys.stdout.write rather than print to
+        # avoid the platform-specific trailing newline that some shells
+        # strip and others preserve in the captured value.
+        sys.stdout.write(res.mode)
+        return 0
+
+    if args.command == "parse-job-content":
+        res = parse_job_source(args.arg, cwd=Path(args.cwd))
+        # Raw bytes on stdout — no JSON wrap, no escaping. The caller
+        # pipes this directly into format-jd. UTF-8 by default; the
+        # stdout reconfigure at the bottom of this file ensures
+        # Windows-CP1252 doesn't crash on non-ASCII content (em-dashes,
+        # curly quotes, em-dashes that LinkedIn copy/paste produces).
+        sys.stdout.write(res.content)
         return 0
 
     if args.command == "format-jd":
@@ -1562,7 +1620,7 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
     The file paths are conventional:
       - $RUN_DIR/resume.txt   — read-resume output
       - $RUN_DIR/context.txt  — mine-context output (raw folder+github)
-      - $RUN_DIR/jd.txt       — JD text extracted from parse-job-source
+      - $RUN_DIR/jd.txt       — JD text from parse-job-content piped through format-jd
       - $CWD/.resumasher/cache.txt — folder-miner sub-agent's prose summary
       - $OUT_DIR/company-research.md — company-researcher sub-agent output
       - $OUT_DIR/tailored-resume.md  — tailor sub-agent output
@@ -1617,7 +1675,7 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
         elif var == "jd_text":
             content = _read_if_exists(run_dir / "jd.txt")
             if content is None:
-                return _missing(var, run_dir / "jd.txt", "orchestration parse-job-source in Phase 1")
+                return _missing(var, run_dir / "jd.txt", "orchestration parse-job-content piped through format-jd in Phase 1")
             kwargs[var] = content
         elif var == "company":
             if not args.company:
@@ -1697,11 +1755,22 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
 
 
 if __name__ == "__main__":
-    # Python on Windows defaults stdout/stderr to the system ANSI code page
-    # (typically CP1252) when not attached to a TTY. Prompts and user-facing
-    # output contain `→`, `…`, curly quotes, and non-ASCII names that CP1252
-    # can't encode, so writes raise UnicodeEncodeError. Force UTF-8 so the
-    # Windows Git Bash path behaves like macOS/Linux.
+    # Python on Windows defaults stdin/stdout/stderr to the system ANSI code
+    # page (typically CP1252) when not attached to a TTY. Prompts and JD
+    # content contain `→`, `…`, curly quotes (U+2019), em-dashes (U+2014),
+    # ligatures (ﬁ in 'office'), and non-ASCII names that CP1252 can't
+    # represent. Without this reconfigure, three failure modes hit Windows
+    # students:
+    #  - stdout writes raise UnicodeEncodeError
+    #  - stdin reads decode bytes via CP1252 with surrogateescape error
+    #    handler, producing low-surrogates that can't later round-trip
+    #    back to UTF-8 (this is the failure surfaced by issue #44's bash-
+    #    pipeline test on the Windows CI matrix)
+    #  - stderr writes corrupt diagnostics
+    # Force UTF-8 on all three streams so the Windows Git Bash path
+    # behaves identically to macOS/Linux.
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
