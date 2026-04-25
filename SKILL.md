@@ -579,17 +579,25 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-Parse the output (the fit-analyst emits more than just fit_score/company — ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION — extract them all for telemetry and downstream phases):
+Parse the output (the fit-analyst emits more than just fit_score/company — ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION — extract them all for telemetry and downstream phases). **Persist each field to its own file under `$RUN_DIR/fit/`** so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
 
 ```bash
-FIT_SCORE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-score)
-COMPANY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-company)
-ROLE=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-role)
-SENIORITY=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-seniority)
-STRENGTHS_COUNT=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-strengths-count)
-GAPS_COUNT=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-gaps-count)
-RECOMMENDATION=$(echo "$FIT_OUTPUT" | "$RS" orchestration extract-recommendation)
+mkdir -p "$RUN_DIR/fit"
+echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-fields --output-dir "$RUN_DIR/fit"
+
+# Capture into shell variables for inline use within this Phase 3 block.
+# Phase 9 will re-read from the per-field files via $(cat ...) — never
+# from a heredoc env file, never via shell-source. See issue #50 for why.
+FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
+COMPANY=$(cat "$RUN_DIR/fit/company.txt")
+ROLE=$(cat "$RUN_DIR/fit/role.txt")
+SENIORITY=$(cat "$RUN_DIR/fit/seniority.txt")
+STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
+GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
+RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 ```
+
+**Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** That shape was the original bug in issue #50: `COMPANY=Elevation Capital` (unquoted) on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command, leaves COMPANY empty. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect. Same belt-and-suspenders shape as the rest of `$RUN_DIR/`'s scratch state (`run-id.txt`, `start-ts.txt`, `dispatch-ts.txt`, `out-dir.txt`).
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
 
@@ -608,13 +616,14 @@ RUN_ID=$(cat "$RUN_DIR/run-id.txt")
   --fit-recommendation "$RECOMMENDATION"
 ```
 
-Compute the output directory:
+Compute the output directory and persist the path so Phase 9 can read it back without re-deriving:
 
 ```bash
 SLUG=$("$RS" orchestration company-slug "$COMPANY")
 DATE=$(date +%Y%m%d)
 OUT_DIR="$STUDENT_CWD/applications/$SLUG-$DATE"
 mkdir -p "$OUT_DIR"
+echo "$OUT_DIR" > "$RUN_DIR/out-dir.txt"  # Phase 9 reads via $(cat ...)
 cp "$RUN_DIR/jd.txt" "$OUT_DIR/jd.md"
 ```
 
@@ -855,6 +864,21 @@ If a markdown input was a stub (cover letter or interview prep generation failed
 ---
 
 ### Phase 9 — Log + Summary
+
+Phase 9 runs in a separate Bash tool call, so shell variables from earlier phases are gone. Re-read the fit fields from `$RUN_DIR/fit/` (issue #50 — never `source` an env file, never improvise a heredoc), and re-derive `$RUN_ID` / `$START_TS` / `$OUT_DIR` from their per-field files:
+
+```bash
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
+START_TS=$(cat "$RUN_DIR/start-ts.txt")
+OUT_DIR=$(cat "$RUN_DIR/out-dir.txt")  # written in Phase 3 alongside the slug compute
+COMPANY=$(cat "$RUN_DIR/fit/company.txt")
+ROLE=$(cat "$RUN_DIR/fit/role.txt")
+SENIORITY=$(cat "$RUN_DIR/fit/seniority.txt")
+FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
+STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
+GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
+RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
+```
 
 Append the history record:
 
@@ -1233,16 +1257,14 @@ or `literal`). `$RESUME_FORMAT` is one of `resume_md`, `resume_pdf`, `cv_md`,
 `cv_pdf` based on the `discover-resume` filename.
 
 **Phase 3 (end) — fit_computed.** Fired after fit-assessment.md is written
-and the extract-* commands have pulled the structured fields:
+and `extract-fit-fields` has persisted the structured fields to
+`$RUN_DIR/fit/`:
 
 ```bash
-FIT_SCORE=$("$RS" orchestration extract-fit-score < "$OUT_DIR/fit-assessment.md")
-COMPANY=$("$RS" orchestration extract-company < "$OUT_DIR/fit-assessment.md")
-ROLE=$("$RS" orchestration extract-role < "$OUT_DIR/fit-assessment.md")
-SENIORITY=$("$RS" orchestration extract-seniority < "$OUT_DIR/fit-assessment.md")
-STRENGTHS_COUNT=$("$RS" orchestration extract-strengths-count < "$OUT_DIR/fit-assessment.md")
-GAPS_COUNT=$("$RS" orchestration extract-gaps-count < "$OUT_DIR/fit-assessment.md")
-RECOMMENDATION=$("$RS" orchestration extract-recommendation < "$OUT_DIR/fit-assessment.md")
+FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
+STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
+GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
+RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 
 "$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
   --host "$HOST" \
@@ -1283,10 +1305,28 @@ placeholder is resolved (once per student answer):
 `$CHOICE` is one of `specifics`, `soften`, `drop`.
 
 **Phase 9 (end) — run_completed.** Fired after all PDFs render and history
-is appended. Include all the fields from the fit event plus configuration:
+is appended. Include all the fields from the fit event plus configuration.
+
+Phase 9 runs in a different Bash tool call than Phase 3 — shell variables
+do NOT persist across calls. Read each fit field by `cat`-ing the
+corresponding file under `$RUN_DIR/fit/` (written by Phase 3's
+`extract-fit-fields`). **Never** improvise a heredoc env file +
+`source` step here — see issue #50 for why that shape silently empties
+`COMPANY` when the company name has a space.
 
 ```bash
-DURATION=$(( $(date +%s) - $START_TS ))
+RUN_ID=$(cat "$RUN_DIR/run-id.txt")
+START_TS=$(cat "$RUN_DIR/start-ts.txt")
+DURATION=$(( $(date +%s) - START_TS ))
+
+# Re-read fit fields from per-field files (issue #50 — no shell-source).
+FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
+COMPANY=$(cat "$RUN_DIR/fit/company.txt")
+ROLE=$(cat "$RUN_DIR/fit/role.txt")
+SENIORITY=$(cat "$RUN_DIR/fit/seniority.txt")
+STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
+GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
+RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 
 "$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
   --host "$HOST" \
@@ -1312,6 +1352,8 @@ DURATION=$(( $(date +%s) - $START_TS ))
   --folder-files-count "$FOLDER_FILES_COUNT" \
   --all-pdfs-rendered "$ALL_PDFS_RENDERED"
 ```
+
+Use the same `$(cat "$RUN_DIR/fit/company.txt")` pattern when constructing the `history.jsonl` record (Phase 9's `append-history` call). Pre-fix, the agent that improvised an env-file shell-source pattern shipped a `"company": ""` to `history.jsonl` whenever the company name had a space — `$(cat file)` makes that impossible.
 
 **Any phase (failure) — run_failed.** Fired from the hard-stop path of any
 phase. Include whatever fields are already known at that point:

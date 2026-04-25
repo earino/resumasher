@@ -1194,6 +1194,27 @@ def _cli() -> int:
     p = sub.add_parser("extract-strengths-count")
     p = sub.add_parser("extract-gaps-count")
     p = sub.add_parser("extract-recommendation")
+
+    p = sub.add_parser(
+        "extract-fit-fields",
+        help=(
+            "Read fit-assessment text on stdin, extract all 7 structured "
+            "fields (score, company, role, seniority, strengths-count, "
+            "gaps-count, recommendation), and write each to its own file "
+            "under --output-dir. Replaces the heredoc env-file pattern "
+            "that breaks when company / role contain spaces (issue #50)."
+        ),
+    )
+    p.add_argument(
+        "--output-dir",
+        required=True,
+        help=(
+            "Directory to write per-field files into. Created if missing. "
+            "Files written: score.txt, company.txt, role.txt, seniority.txt, "
+            "strengths.txt, gaps.txt, recommendation.txt"
+        ),
+    )
+
     p = sub.add_parser("is-failure")
 
     p = sub.add_parser("append-history")
@@ -1469,6 +1490,45 @@ def _cli() -> int:
             print("")
             return 1
         print(rec)
+        return 0
+
+    if args.command == "extract-fit-fields":
+        # Read the fit-assessment text once, run every extractor, and
+        # persist each value to its own file under --output-dir. The
+        # per-field-file shape replaces the previous SKILL.md pattern of
+        # writing key=value lines to fit-extracted.env and shell-sourcing
+        # them in Phase 9 — that pattern breaks when company / role
+        # contain spaces (e.g. "Elevation Capital" → bash parses
+        # "Capital" as a command). See issue #50.
+        text = sys.stdin.read()
+        out_dir = Path(args.output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Each value is written as raw text — `$(cat file)` in the
+        # consuming shell strips the trailing newline but preserves all
+        # interior chars (spaces, ampersands, single quotes, backticks),
+        # so the values round-trip byte-perfect regardless of contents.
+        # Missing values render as empty files; the agent decides how to
+        # handle "" downstream (the existing UNKNOWN sentinel handling).
+        fields = {
+            "score.txt": extract_fit_score(text),
+            "company.txt": extract_company(text),
+            "role.txt": extract_role(text),
+            "seniority.txt": extract_seniority(text),
+            "strengths.txt": extract_strengths_count(text),
+            "gaps.txt": extract_gaps_count(text),
+            "recommendation.txt": extract_recommendation(text),
+        }
+        for filename, value in fields.items():
+            target = out_dir / filename
+            target.write_text(
+                "" if value is None else str(value), encoding="utf-8"
+            )
+        # Stdout summary so the caller can sanity-check at the bash
+        # level without re-cat-ing every file. JSON-ish but flat so
+        # there's no shell-eats-JSON repeat of issue #44.
+        for key in ("score", "company", "role", "seniority"):
+            v = fields[f"{key}.txt"]
+            sys.stdout.write(f"{key}={'' if v is None else v}\n")
         return 0
 
     if args.command == "is-failure":

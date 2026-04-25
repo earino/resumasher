@@ -1256,3 +1256,226 @@ def test_cli_inspect_photo_on_real_image(tmp_path: Path):
     assert parsed["height"] == 450
     # 4:3 landscape — aspect 1.33 — stretch warning expected
     assert any(w["code"] == "PHOTO_ASPECT_STRETCH" for w in parsed["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Issue #50: extract-fit-fields — per-field files instead of env-source.
+# ---------------------------------------------------------------------------
+
+
+SAMPLE_FIT_OUTPUT = (
+    "Detailed prose fit assessment with strengths and gaps...\n"
+    "\n"
+    "FIT_SCORE: 7\n"
+    "COMPANY: Elevation Capital\n"
+    "ROLE: Head of AI & Product\n"
+    "SENIORITY: director\n"
+    "STRENGTHS_COUNT: 8\n"
+    "GAPS_COUNT: 7\n"
+    "RECOMMENDATION: yes_with_caveats\n"
+)
+
+
+def _run_extract_fit_fields(
+    output_dir: Path, fit_text: str
+) -> "subprocess.CompletedProcess":
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.orchestration",
+            "extract-fit-fields",
+            "--output-dir",
+            str(output_dir),
+        ],
+        input=fit_text,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(Path(__file__).resolve().parent.parent),
+        check=False,
+    )
+
+
+def test_extract_fit_fields_writes_seven_per_field_files(tmp_path: Path):
+    out = tmp_path / "fit"
+    r = _run_extract_fit_fields(out, SAMPLE_FIT_OUTPUT)
+    assert r.returncode == 0, r.stderr
+    expected = {
+        "score.txt": "7",
+        "company.txt": "Elevation Capital",
+        "role.txt": "Head of AI & Product",
+        "seniority.txt": "director",
+        "strengths.txt": "8",
+        "gaps.txt": "7",
+        "recommendation.txt": "yes_with_caveats",
+    }
+    for filename, expected_value in expected.items():
+        f = out / filename
+        assert f.exists(), f"{filename} not created"
+        assert f.read_text(encoding="utf-8").strip() == expected_value, (
+            f"{filename}: expected {expected_value!r}, "
+            f"got {f.read_text(encoding='utf-8')!r}"
+        )
+
+
+def test_extract_fit_fields_creates_output_dir_if_missing(tmp_path: Path):
+    out = tmp_path / "deeply" / "nested" / "fit"
+    assert not out.exists()
+    r = _run_extract_fit_fields(out, SAMPLE_FIT_OUTPUT)
+    assert r.returncode == 0
+    assert out.exists() and out.is_dir()
+    assert (out / "company.txt").exists()
+
+
+def test_extract_fit_fields_handles_unknown_or_missing_values(tmp_path: Path):
+    """If the fit-analyst couldn't identify the company (returns
+    `COMPANY: UNKNOWN`), or an extractor returns None, the per-field
+    file is created but empty. The agent decides what to do with the
+    empty value downstream."""
+    fit_with_unknown = (
+        "Prose...\n"
+        "FIT_SCORE: 5\n"
+        "COMPANY: UNKNOWN\n"
+        "SENIORITY: unknown\n"
+        "STRENGTHS_COUNT: 3\n"
+        "GAPS_COUNT: 4\n"
+        "RECOMMENDATION: no\n"
+    )
+    out = tmp_path / "fit"
+    r = _run_extract_fit_fields(out, fit_with_unknown)
+    assert r.returncode == 0
+    for fn in (
+        "score.txt", "company.txt", "role.txt", "seniority.txt",
+        "strengths.txt", "gaps.txt", "recommendation.txt",
+    ):
+        assert (out / fn).exists()
+    assert (out / "role.txt").read_text(encoding="utf-8") == ""
+
+
+def test_extract_fit_fields_emits_summary_on_stdout(tmp_path: Path):
+    """Flat key=value summary, one per line. No JSON — avoids the
+    shell-eats-JSON repeat of issue #44."""
+    out = tmp_path / "fit"
+    r = _run_extract_fit_fields(out, SAMPLE_FIT_OUTPUT)
+    assert r.returncode == 0
+    lines = r.stdout.strip().splitlines()
+    company_line = next(L for L in lines if L.startswith("company="))
+    assert company_line == "company=Elevation Capital"
+
+
+def test_per_field_round_trip_with_multi_word_values_via_real_bash(tmp_path: Path):
+    """Load-bearing regression test for issue #50. Runs the SKILL.md
+    Phase 3 + Phase 9 idiom in a real `bash -c` subprocess. Asserts
+    multi-word company / role survive write+read round-trip
+    byte-perfect — no shell-source corruption."""
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available; this test exercises the SKILL.md shell idiom")
+
+    out = tmp_path / "fit"
+    r = _run_extract_fit_fields(out, SAMPLE_FIT_OUTPUT)
+    assert r.returncode == 0
+
+    script = (
+        f'set -euo pipefail\n'
+        f'COMPANY=$(cat "{out}/company.txt")\n'
+        f'ROLE=$(cat "{out}/role.txt")\n'
+        f'SENIORITY=$(cat "{out}/seniority.txt")\n'
+        f'echo "COMPANY=[$COMPANY]"\n'
+        f'echo "ROLE=[$ROLE]"\n'
+        f'echo "SENIORITY=[$SENIORITY]"\n'
+    )
+    proc = subprocess.run(
+        [bash, "-c", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 0, (
+        f"bash round-trip failed (exit {proc.returncode}). stderr:\n{proc.stderr}"
+    )
+    assert "COMPANY=[Elevation Capital]" in proc.stdout, (
+        f"COMPANY value lost in round-trip. stdout:\n{proc.stdout}"
+    )
+    assert "ROLE=[Head of AI & Product]" in proc.stdout, (
+        f"ROLE value lost in round-trip. stdout:\n{proc.stdout}"
+    )
+
+
+def test_per_field_round_trip_survives_single_quotes_and_dollar_signs(tmp_path: Path):
+    """Company names with apostrophes (`Macy's`), ampersands, and
+    dollar signs MUST survive the round-trip. Option A (heredoc with
+    quoted values) would break; Option B (per-field files + $(cat))
+    is immune."""
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash not available")
+    weird_fit = (
+        "Prose...\n"
+        "FIT_SCORE: 6\n"
+        "COMPANY: Macy's & $hop\n"
+        "ROLE: VP, Engineering — Tech & Tools\n"
+        "SENIORITY: vp\n"
+        "STRENGTHS_COUNT: 5\n"
+        "GAPS_COUNT: 3\n"
+        "RECOMMENDATION: yes_with_caveats\n"
+    )
+    out = tmp_path / "fit"
+    r = _run_extract_fit_fields(out, weird_fit)
+    assert r.returncode == 0
+    script = (
+        f'set -euo pipefail\n'
+        f'COMPANY=$(cat "{out}/company.txt")\n'
+        f'ROLE=$(cat "{out}/role.txt")\n'
+        f'echo "COMPANY=[$COMPANY]"\n'
+        f'echo "ROLE=[$ROLE]"\n'
+    )
+    proc = subprocess.run(
+        [bash, "-c", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "COMPANY=[Macy's & $hop]" in proc.stdout
+    assert "ROLE=[VP, Engineering — Tech & Tools]" in proc.stdout
+
+
+def test_skill_md_prescribes_per_field_files_for_fit_extraction():
+    """SKILL.md must explicitly prescribe `extract-fit-fields` and the
+    per-field files under `$RUN_DIR/fit/`. Future edits that drop the
+    rule (and let agents re-improvise the env-source pattern) get
+    caught here before the bug ships."""
+    skill_md = Path(__file__).resolve().parent.parent / "SKILL.md"
+    text = skill_md.read_text(encoding="utf-8")
+    assert "extract-fit-fields" in text, (
+        "SKILL.md must invoke `extract-fit-fields`. See issue #50."
+    )
+    assert "$RUN_DIR/fit/" in text or '$RUN_DIR/fit"' in text, (
+        "SKILL.md must reference the $RUN_DIR/fit/ directory. See issue #50."
+    )
+    assert 'cat "$RUN_DIR/fit/company.txt"' in text, (
+        "SKILL.md must show the cat-pattern for reading the company field "
+        "back in Phase 9. See issue #50."
+    )
+
+
+def test_skill_md_does_not_prescribe_fit_extracted_env_heredoc():
+    """Negative assertion: the previously-improvised
+    `fit-extracted.env` heredoc + source pattern must not appear in
+    SKILL.md as prescribed code."""
+    skill_md = Path(__file__).resolve().parent.parent / "SKILL.md"
+    text = skill_md.read_text(encoding="utf-8")
+    bad_shapes = (
+        'cat > "$RUN_DIR/fit-extracted.env"',
+        '. "$RUN_DIR/fit-extracted.env"',
+        'source "$RUN_DIR/fit-extracted.env"',
+    )
+    for bad in bad_shapes:
+        assert bad not in text, (
+            f"SKILL.md contains the prohibited shell-source pattern {bad!r}. "
+            f"Use per-field files in $RUN_DIR/fit/ instead. See issue #50."
+        )
