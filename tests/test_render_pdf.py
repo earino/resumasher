@@ -1843,7 +1843,7 @@ def test_block_title_space_before_increased_for_block_separation():
 
 def test_linkify_email_wraps_in_mailto():
     out = _linkify_contact("ana.muller@example.com")
-    assert '<a href="mailto:ana.muller@example.com">' in out
+    assert '<a href="mailto:ana.muller@example.com"' in out
     assert "ana.muller@example.com</a>" in out
 
 
@@ -1852,7 +1852,7 @@ def test_linkify_linkedin_bare_domain_gets_https_prefix():
     Linkify must add the scheme to the href while keeping the displayed
     text bare-domain."""
     out = _linkify_contact("linkedin.com/in/anamuller")
-    assert '<a href="https://linkedin.com/in/anamuller">' in out
+    assert '<a href="https://linkedin.com/in/anamuller"' in out
     assert "linkedin.com/in/anamuller</a>" in out
     # Display text is the bare-domain form; the scheme is href-only.
     assert "https://linkedin" not in out.split("</a>")[0].split(">")[-1]
@@ -1860,13 +1860,13 @@ def test_linkify_linkedin_bare_domain_gets_https_prefix():
 
 def test_linkify_github_bare_domain_gets_https_prefix():
     out = _linkify_contact("github.com/anamuller")
-    assert '<a href="https://github.com/anamuller">' in out
+    assert '<a href="https://github.com/anamuller"' in out
     assert "github.com/anamuller</a>" in out
 
 
 def test_linkify_explicit_https_url_preserved_verbatim():
     out = _linkify_contact("https://my-portfolio.example.com")
-    assert '<a href="https://my-portfolio.example.com">' in out
+    assert '<a href="https://my-portfolio.example.com"' in out
 
 
 def test_linkify_phone_and_location_pass_through_as_text():
@@ -1888,23 +1888,24 @@ def test_linkify_full_contact_line_mixes_links_and_text():
     for the rest, with pipe separators preserved."""
     text = "ana@example.com | +43 664 1234567 | linkedin.com/in/anamuller | Vienna, Austria"
     out = _linkify_contact(text)
-    assert '<a href="mailto:ana@example.com">' in out
-    assert '<a href="https://linkedin.com/in/anamuller">' in out
+    assert '<a href="mailto:ana@example.com"' in out
+    assert '<a href="https://linkedin.com/in/anamuller"' in out
     assert "+43 664 1234567" in out  # untouched phone
     assert "Vienna, Austria" in out  # untouched location
     assert " | " in out  # separators preserved
 
 
-def test_linkify_no_link_color_attribute_inherits_paragraph_color():
-    """Modern resume convention: links inherit the surrounding text
-    color rather than rendering as 1990s-blue underlined. The link
-    annotation makes them clickable in the PDF; visual styling stays
-    subtle. So our `<a>` tags must NOT carry an explicit `color="...".`"""
+def test_linkify_links_carry_explicit_blue_color_attribute():
+    """Real-run review: pre-fix links inherited the surrounding paragraph
+    color (subtle, modern-minimalist), but recruiters skimming the PDF
+    couldn't tell what was clickable. The design call was reversed —
+    every `<a>` carries an explicit `color=` attribute set to a muted
+    blue (`#0645AD`, Wikipedia link blue) so URLs are obviously
+    discoverable rather than blending with body text."""
     out = _linkify_contact("ana@example.com")
-    # `<a href="mailto:..."` only — no color attribute.
-    assert 'color=' not in out, (
-        f"Link tag should not carry an explicit color attribute (so it "
-        f"inherits the paragraph's textColor); got: {out!r}"
+    assert 'color="#0645AD"' in out, (
+        f"Link tag must carry color=\"#0645AD\" so the link is visually "
+        f"discoverable. Got: {out!r}"
     )
 
 
@@ -2007,17 +2008,24 @@ def test_linkify_text_alias_for_linkify_contact():
 
 def test_linkify_text_does_not_swallow_trailing_backtick():
     """Real-run regression: tailor LLM sometimes wraps URLs in markdown
-    code spans (`github.com/foo`). Pre-fix the regex greedily consumed
-    the closing backtick into the URL match, producing href values like
-    `https://github.com/foo\\`` that PDF readers can't open. Backtick
-    must stay as non-link text after the closing `</a>`."""
+    code spans (`github.com/foo`). Two related invariants must hold:
+
+    (1) The URL regex must not greedily consume the closing backtick
+        into the URL match — pre-fix this produced href values like
+        `https://github.com/foo\\`` that PDF readers can't open. Backtick
+        excluded from the URL char class via `_URL_DISALLOWED`.
+    (2) The surrounding decorative backticks should not appear in the
+        rendered output as visible characters either — markdown code-
+        span markers are stripped in `_linkify_text` before URL
+        detection, so the rendered Paragraph is clean.
+    """
     out = _linkify_text("see `github.com/me/foo`).")
-    # The href must not contain a backtick.
-    assert "github.com/me/foo`" not in out.split('"')[1], (
-        f"Backtick leaked into href attribute: {out!r}"
+    # No backtick anywhere in the rendered output.
+    assert "`" not in out, (
+        f"Backtick leaked into rendered output: {out!r}"
     )
-    # The closing backtick must appear in the rendered output as text.
-    assert "</a>`)" in out
+    # And specifically not in the href attribute.
+    assert 'github.com/me/foo`' not in out
 
 
 def test_linkify_text_handles_url_inside_parens():
@@ -2025,9 +2033,9 @@ def test_linkify_text_handles_url_inside_parens():
     must linkify the URL but NOT swallow the closing paren — the regex
     excludes ')' from URL paths so the trailing paren stays as text."""
     out = _linkify_text("Resumasher (github.com/earino/resumasher)")
-    assert '<a href="https://github.com/earino/resumasher">' in out
+    assert '<a href="https://github.com/earino/resumasher"' in out
     # Closing paren must NOT be inside the href.
-    assert '<a href="https://github.com/earino/resumasher)">' not in out
+    assert '<a href="https://github.com/earino/resumasher)"' not in out
     # And the closing paren must appear in the rendered output (as text).
     assert "</a>)" in out
 
@@ -2036,7 +2044,7 @@ def test_linkify_text_in_bullet_with_url():
     """Bullets that mention a URL should produce wrapped output with the
     URL clickable and the surrounding prose still readable."""
     out = _linkify_text("Built it; see https://example.com/docs for details")
-    assert '<a href="https://example.com/docs">' in out
+    assert '<a href="https://example.com/docs"' in out
     assert "Built it; see " in out
     assert " for details" in out
 
@@ -2046,7 +2054,7 @@ def test_linkify_text_preserves_bold_markers():
     becomes `<b>bold</b>` (via _escape on non-link parts)."""
     out = _linkify_text("**Senior Director** at github.com/me")
     assert "<b>Senior Director</b>" in out
-    assert '<a href="https://github.com/me">' in out
+    assert '<a href="https://github.com/me"' in out
 
 
 def test_linkify_text_no_url_passes_through_as_escape():
@@ -2232,3 +2240,151 @@ def test_keep_together_sub_block_glues_sub_title_to_its_bullets(tmp_path: Path):
         f"(otherwise the sub-title can orphan from its bullets at a page "
         f"break). Got styles: {style_names}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final visual polish: strip markdown code-span backticks and
+# render links in a discoverable blue. Surfaced by real-run review:
+# the tailor LLM commonly wraps URLs in markdown code spans
+# (`github.com/foo`), and pre-fix the surrounding backticks rendered as
+# visible decorative characters. Plus links blended with body text and
+# weren't obviously clickable to a recruiter skimming the PDF.
+# ---------------------------------------------------------------------------
+
+
+def test_escape_strips_markdown_code_spans():
+    """`text` (markdown code span) renders as plain `text` — no visible
+    decorative backticks. reportlab Paragraph doesn't render code spans
+    natively and there's no use for them in a resume; strip the markers."""
+    from scripts.render_pdf import _escape
+    assert _escape("see `github.com/me` for repo") == "see github.com/me for repo"
+
+
+def test_escape_strips_multiple_code_spans_in_one_string():
+    """Bullets often have multiple code-span URLs in a single line."""
+    from scripts.render_pdf import _escape
+    out = _escape("repos: `github.com/me/foo`, `github.com/me/bar`.")
+    assert "`" not in out, f"Backticks leaked: {out!r}"
+    assert "github.com/me/foo" in out
+    assert "github.com/me/bar" in out
+
+
+def test_escape_lone_backtick_left_alone():
+    """A single backtick (no closing pair) must not get touched —
+    forbidding pair-spans-newlines guards against eating a paragraph
+    break, and lone ` could appear in code-related prose."""
+    from scripts.render_pdf import _escape
+    assert _escape("the ` character is grave accent") == "the ` character is grave accent"
+
+
+def test_escape_code_span_does_not_span_newlines():
+    """Pair-must-stay-on-one-line: `\\nfoo\\n` must not strip backticks."""
+    from scripts.render_pdf import _escape
+    out = _escape("first ` line\nsecond ` line")
+    # Both backticks survive because the pair would have to cross a newline.
+    assert out.count("`") == 2
+
+
+def test_escape_preserves_bold_marker_inside_code_span_strip_path():
+    """Both code-span strip and bold convert run on the same input —
+    they must not interfere. **bold** still becomes <b>bold</b> even
+    when code spans are also present in the same string."""
+    from scripts.render_pdf import _escape
+    out = _escape("**Senior** at `github.com/me`")
+    assert "<b>Senior</b>" in out
+    assert "github.com/me" in out
+    assert "`" not in out
+
+
+def test_linkify_text_strips_surrounding_backticks_and_linkifies():
+    """End-to-end: `github.com/foo` renders as a clean clickable URL
+    (blue) with no surrounding decorative backticks."""
+    out = _linkify_text("see `github.com/me/foo` for code")
+    assert "<a href=\"https://github.com/me/foo\"" in out
+    assert "color=\"#0645AD\"" in out
+    # No visible backticks should remain in the rendered output.
+    assert "`" not in out, (
+        f"Code-span backticks leaked through linkify: {out!r}"
+    )
+
+
+def test_linkify_text_strips_backticks_around_url_with_trailing_punctuation():
+    """The actual real-run shape: `github.com/me/foo`)."""
+    out = _linkify_text("Project (`github.com/earino/applied-deep-learning`)")
+    assert "<a href=\"https://github.com/earino/applied-deep-learning\"" in out
+    assert "`" not in out
+    # The closing paren is still rendered text, just not inside the href.
+    assert ")" in out
+    assert "applied-deep-learning)\"" not in out  # paren NOT in href
+
+
+def test_link_color_is_muted_blue_not_bright():
+    """Sanity bound on the chosen link color. The exact hex is taste, but
+    it must be in the muted-blue range (not bright royal blue, not gray
+    body-color, not red/green/etc.)."""
+    from scripts.render_pdf import _LINK_COLOR
+    assert _LINK_COLOR.startswith("#"), f"Color must be hex form: {_LINK_COLOR}"
+    h = _LINK_COLOR.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    # Blue dominant: b >= r and b >= g.
+    assert b > r, f"Link color {_LINK_COLOR}: blue channel ({b}) not dominant over red ({r})"
+    assert b > g, f"Link color {_LINK_COLOR}: blue channel ({b}) not dominant over green ({g})"
+    # Not too bright (avoid 1990s royal-blue).
+    assert b <= 200, f"Link color {_LINK_COLOR}: blue channel {b} is too bright; aim for muted"
+
+
+def test_render_resume_with_code_span_url_produces_clean_clickable_link(tmp_path: Path):
+    """End-to-end real-run shape: the tailor wraps a project URL in
+    markdown backticks, renderer must produce a clickable link with
+    NO trailing backtick in the href (regression for the c478719
+    fix — backtick-in-href was the originally-reported bug)."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | linkedin.com/in/test | City\n"
+        "\n"
+        "## Projects\n"
+        "### Resumasher (`github.com/earino/resumasher`)\n"
+        "- A Claude Code skill for tailoring resumes.\n"
+    )
+    out = tmp_path / "code_span.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(
+                        uri.decode("utf-8") if isinstance(uri, bytes) else uri
+                    )
+
+    # The clean URL must be present.
+    assert "https://github.com/earino/resumasher" in uris, (
+        f"Clean URL missing from PDF Link annotations. Got: {uris}"
+    )
+    # NO URI in the file should contain a trailing backtick — that was the
+    # exact bug from real-run testing that c478719 fixed at the regex
+    # level. This test pins it at the end-to-end level.
+    for uri in uris:
+        assert not uri.endswith("`"), (
+            f"Backtick leaked into PDF Link annotation href: {uri!r}"
+        )

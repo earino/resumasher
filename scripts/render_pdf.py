@@ -861,6 +861,14 @@ _LINK_PATTERN = re.compile(
 )
 
 
+# Wikipedia-style muted blue. Discoverable as a clickable link in the PDF
+# without screaming 1990s-royal-blue-and-underlined. The earlier design
+# (no color, links inherit paragraph color) was reversed after real-run
+# review showed recruiters skim a resume PDF and need URLs to be obviously
+# discoverable rather than blending with body text.
+_LINK_COLOR = "#0645AD"
+
+
 def _linkify_text(text: str) -> str:
     """
     Wrap email + URL substrings in clickable `<a>` tags, HTML-escape
@@ -869,24 +877,33 @@ def _linkify_text(text: str) -> str:
     Used everywhere resume text is rendered into a Paragraph: contact line,
     block titles, sub-block titles, bullets, and Summary-style paragraphs.
     URLs in the body of a project title (`Resumasher (github.com/earino/
-    resumasher)`) or in a bullet description (`see https://...`) are now
+    resumasher)`) or in a bullet description (`see https://...`) are
     clickable in the PDF, same as the contact line's email and LinkedIn
     profile.
 
-    Email → `<a href="mailto:...">text</a>`.
-    `https://...` URL → `<a href="...">text</a>`.
+    Email → `<a href="mailto:..." color="#0645AD">text</a>`.
+    `https://...` URL → `<a href="..." color="#0645AD">text</a>`.
     Bare-domain `linkedin.com/in/X` / `github.com/X` get an automatic
     `https://` prefix on the href; displayed text stays bare-domain.
 
-    Link styling: no `color=` attribute on the `<a>` tag, so links inherit
-    the surrounding paragraph color. The clickable behavior is communicated
-    by the PDF reader's cursor change, not by 1990s-blue-underline. Modern
-    resume convention.
+    Link styling: muted Wikipedia-blue (`#0645AD`) on every `<a>` so links
+    are obviously clickable rather than blending with body text. Recruiters
+    skim resume PDFs and need URLs to be visually discoverable. No
+    underline (kept as a minimal style — color alone communicates "link"
+    in modern web convention).
 
     ATS impact: zero. Link annotations are a PDF metadata layer that does
     not alter the text stream — pdfminer and other parsers extract identical
-    text whether links are present or not.
+    text whether links are present or not. Color is also irrelevant to ATS.
     """
+    # Strip markdown code-span backticks BEFORE the URL split. If we split
+    # first, the opening and closing backticks of `github.com/foo` end up
+    # in separate halves of the split (the URL regex matched the middle),
+    # and _escape's per-part code-span strip can't see them as a pair.
+    # Pre-stripping collapses `github.com/foo` to github.com/foo so the
+    # subsequent URL detection works on clean input and the surrounding
+    # decorative backticks don't leak into the rendered output.
+    text = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", text)
     parts = _LINK_PATTERN.split(text)
     out: list[str] = []
     # re.split with a capture group returns alternating non-match / match
@@ -902,7 +919,9 @@ def _linkify_text(text: str) -> str:
             href = part
         else:
             href = f"https://{part}"
-        out.append(f'<a href="{href}">{_escape(part)}</a>')
+        out.append(
+            f'<a href="{href}" color="{_LINK_COLOR}">{_escape(part)}</a>'
+        )
     return "".join(out)
 
 
@@ -958,6 +977,9 @@ def _downscale_photo_for_embed(path: str) -> object:
         return path
 
 
+_MARKDOWN_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+
+
 def _escape(text: str) -> str:
     """Escape the small HTML-ish subset reportlab Paragraph interprets, and
     convert markdown inline formatting to reportlab's HTML-like tags.
@@ -965,21 +987,28 @@ def _escape(text: str) -> str:
     reportlab Paragraph accepts an HTML-like subset for <b>, <i>, etc. Any
     literal &, <, > in user content must be escaped or the parser throws.
 
-    After escaping, we translate `**bold**` → `<b>bold</b>` so markdown
-    emphasis from upstream sub-agents (common in interview-prep and cover
-    letters) renders as bold, not as literal asterisks. Italic (`*x*`) is
-    intentionally skipped — too easy to false-match on single asterisks in
-    prose (e.g., "footnote*").
+    After escaping, we translate two markdown forms:
+    - `**bold**` → `<b>bold</b>` so markdown emphasis from upstream
+      sub-agents (common in interview-prep and cover letters) renders as
+      bold rather than literal asterisks. Italic (`*x*`) is intentionally
+      skipped — too easy to false-match on single asterisks in prose.
+    - `` `code` `` → bare `code` so markdown code-span backticks (which
+      the tailor LLM commonly wraps URLs in: `` `github.com/foo` ``) don't
+      leak into the rendered output as visible decorative characters.
+      reportlab Paragraph doesn't render code spans natively, and we have
+      no use for them in a resume — strip the markers and keep the text.
 
-    The regex requires at least one non-asterisk, non-newline character
-    inside the pair, and forbids the pair from spanning a line break. This
-    keeps "*" alone, "a ** b", and multi-line content safe.
+    The bold regex requires at least one non-asterisk, non-newline character
+    inside the pair, and forbids the pair from spanning a line break. The
+    code-span regex requires at least one non-backtick, non-newline char.
+    Both keep "*" / "`" alone, doubled markers, and multi-line content safe.
     """
     escaped = (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+    escaped = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", escaped)
     return _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
 
 
