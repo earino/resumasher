@@ -843,14 +843,19 @@ _MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
 # "github.com/me" (no scheme — the form students typically write in project
 # titles and bullets) get linked too.
 #
-# Character classes use [^\s|<>)] so the regex stops at whitespace, the
-# pipe-separator that contact lines use, HTML tags (already-escaped output),
-# and closing parens (so a project title like "Foo (github.com/me/foo)"
-# matches just the URL, not the trailing paren).
+# URL-character exclusion class. Stops at characters that are NEVER part of a
+# URL per RFC 3986 (whitespace, `<>"`{}^|\`), at the pipe-separator that
+# contact lines use, and at closing paren / bracket so paren-balancing works
+# in patterns like "Foo (github.com/me/foo)". Backtick exclusion fixes the
+# specific failure surfaced by real-run testing — the tailor LLM sometimes
+# wraps URLs in markdown code spans (`github.com/foo`), and pre-fix the regex
+# greedily consumed the closing backtick into the URL match, producing a
+# broken href.
+_URL_DISALLOWED = r"\s<>\"`{}^|\\)\]"
 _LINK_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.-]+"
-_LINK_LINKEDIN_RE = r"linkedin\.com/in/[^\s|<>)]+"
-_LINK_GITHUB_RE = r"github\.com/[^\s|<>)]+"
-_LINK_HTTPS_RE = r"https?://[^\s|<>)]+"
+_LINK_LINKEDIN_RE = rf"linkedin\.com/in/[^{_URL_DISALLOWED}]+"
+_LINK_GITHUB_RE = rf"github\.com/[^{_URL_DISALLOWED}]+"
+_LINK_HTTPS_RE = rf"https?://[^{_URL_DISALLOWED}]+"
 _LINK_PATTERN = re.compile(
     rf"({_LINK_EMAIL_RE}|{_LINK_HTTPS_RE}|{_LINK_LINKEDIN_RE}|{_LINK_GITHUB_RE})"
 )

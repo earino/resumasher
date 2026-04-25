@@ -2005,6 +2005,21 @@ def test_linkify_text_alias_for_linkify_contact():
     assert _linkify_text(text) == _linkify_contact(text)
 
 
+def test_linkify_text_does_not_swallow_trailing_backtick():
+    """Real-run regression: tailor LLM sometimes wraps URLs in markdown
+    code spans (`github.com/foo`). Pre-fix the regex greedily consumed
+    the closing backtick into the URL match, producing href values like
+    `https://github.com/foo\\`` that PDF readers can't open. Backtick
+    must stay as non-link text after the closing `</a>`."""
+    out = _linkify_text("see `github.com/me/foo`).")
+    # The href must not contain a backtick.
+    assert "github.com/me/foo`" not in out.split('"')[1], (
+        f"Backtick leaked into href attribute: {out!r}"
+    )
+    # The closing backtick must appear in the rendered output as text.
+    assert "</a>`)" in out
+
+
 def test_linkify_text_handles_url_inside_parens():
     """Project titles like 'Resumasher (github.com/earino/resumasher)'
     must linkify the URL but NOT swallow the closing paren — the regex
