@@ -420,10 +420,14 @@ def _build_styles() -> StyleSheet1:
     ss.add(ParagraphStyle(
         name="Contact",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        # Softer & smaller than body so the contact line recedes into
+        # header territory rather than competing with bullets for
+        # hierarchy attention. 9.5pt + #555555 matches BlockMetadata.
+        fontSize=9.5,
+        leading=12,
         alignment=TA_LEFT,
         spaceAfter=10,
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="SectionHeading",
@@ -445,7 +449,10 @@ def _build_styles() -> StyleSheet1:
         fontSize=11,
         leading=14,
         alignment=TA_LEFT,
-        spaceBefore=4,
+        # spaceBefore bumped 4 → 6 so consecutive blocks within a section
+        # (Meta → Chief Data Scientist → Volunteer Translator) don't sit
+        # tight against each other. Pure layout — no content change.
+        spaceBefore=6,
         spaceAfter=2,
     ))
     # Sub-block titles (multi-role tenures inside one company). Same face as
@@ -472,6 +479,12 @@ def _build_styles() -> StyleSheet1:
         leading=12,
         alignment=TA_LEFT,
         spaceAfter=2,
+        # Soft gray so the date/location line recedes as metadata. Works
+        # alongside size + position to form a real 3-tier hierarchy
+        # (bold title → soft metadata → regular bullets). The reason
+        # color-as-hierarchy failed in PR #30 was that gray was the only
+        # gesture; here it complements size and position.
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="SubBlockMetadata",
@@ -481,6 +494,7 @@ def _build_styles() -> StyleSheet1:
         alignment=TA_LEFT,
         leftIndent=8,
         spaceAfter=2,
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="Bullet",
@@ -522,10 +536,14 @@ def _build_styles() -> StyleSheet1:
     ss.add(ParagraphStyle(
         name="SubheadCenter",
         fontName=regular,
-        fontSize=10,
-        leading=13,
+        # Mirror the Contact style sizing/coloring (9.5pt, #555555) so
+        # US-style center-aligned contact lines also recede into
+        # header territory.
+        fontSize=9.5,
+        leading=12,
         alignment=TA_CENTER,
         spaceAfter=10,
+        textColor="#555555",
     ))
     ss.add(ParagraphStyle(
         name="NameCenter",
@@ -741,7 +759,10 @@ def _build_resume_flowables(
     if doc.name:
         flow.append(Paragraph(_escape(doc.name), name_style))
     if doc.contact_line:
-        flow.append(Paragraph(_escape(doc.contact_line), contact_style))
+        # _linkify_contact wraps email + linkedin + github + https URLs
+        # in clickable <a> tags. Non-URL text (phone, location) passes
+        # through _escape unchanged. See _linkify_contact docstring.
+        flow.append(Paragraph(_linkify_contact(doc.contact_line), contact_style))
 
     for section in section_order_fn(doc):
         flow.append(Paragraph(_escape(section.heading), styles["SectionHeading"]))
@@ -788,6 +809,66 @@ def _build_resume_flowables(
 
 
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
+
+
+# Patterns for linkifying the contact line. Order matters: email is matched
+# before generic URLs (an email contains '@' but no '://'), and specific
+# hosts (linkedin / github) match before the generic https URL pattern so
+# bare-domain forms like "linkedin.com/in/foo" (no scheme) get linked too.
+#
+# Character classes use [^\s|] for URL paths so the regex stops at the
+# pipe-separator that contact lines typically use ("email | phone | linkedin
+# | location"), and at whitespace.
+_CONTACT_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.-]+"
+_CONTACT_LINKEDIN_RE = r"linkedin\.com/in/[^\s|<>]+"
+_CONTACT_GITHUB_RE = r"github\.com/[^\s|<>]+"
+_CONTACT_HTTPS_RE = r"https?://[^\s|<>]+"
+_CONTACT_LINK_PATTERN = re.compile(
+    rf"({_CONTACT_EMAIL_RE}|{_CONTACT_HTTPS_RE}|{_CONTACT_LINKEDIN_RE}|{_CONTACT_GITHUB_RE})"
+)
+
+
+def _linkify_contact(text: str) -> str:
+    """
+    Render the contact line with email and profile URLs as clickable
+    links inside the PDF.
+
+    Email matches → `<a href="mailto:...">text</a>`.
+    `https://...` URLs → `<a href="...">text</a>`.
+    Bare-domain `linkedin.com/in/X` and `github.com/X` (the form
+    students typically write — without an explicit `https://` prefix)
+    → `<a href="https://...">text</a>`.
+
+    Phone numbers, locations, and any other text pass through to
+    `_escape` unchanged.
+
+    Link styling: no `color` attribute on the `<a>` tag, so the
+    rendered link inherits the surrounding paragraph color (currently
+    the soft gray of the `Contact` / `SubheadCenter` style). The
+    clickable behavior is communicated by the PDF reader's cursor
+    change, not by 1990s-blue-underline. Modern resume convention.
+
+    ATS impact: zero. The link annotation is a PDF metadata layer that
+    does not alter the text stream — pdfminer and other parsers extract
+    the link text identically to the pre-link version.
+    """
+    parts = _CONTACT_LINK_PATTERN.split(text)
+    out: list[str] = []
+    # re.split with a capture group returns alternating non-match / match
+    # / non-match. Even indices are non-link text; odd indices are link
+    # candidates we wrap in <a>.
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            out.append(_escape(part))
+            continue
+        if "@" in part and "://" not in part:
+            href = f"mailto:{part}"
+        elif part.startswith("http"):
+            href = part
+        else:
+            href = f"https://{part}"
+        out.append(f'<a href="{href}">{_escape(part)}</a>')
+    return "".join(out)
 
 
 # Max dimension for embedded photos. The photo prints at 3cm × 3cm; at 300 DPI

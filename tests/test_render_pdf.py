@@ -25,6 +25,7 @@ import pytest
 from scripts.render_pdf import (
     MissingContactHeaderError,
     _build_styles,
+    _linkify_contact,
     _render_titled_block,
     _split_title_and_date,
     assert_ats_roundtrip,
@@ -1752,4 +1753,232 @@ def test_render_sub_block_bullets_extract_in_order(tmp_path: Path):
         "Director",
         "2020 – 2023",
         "Built the team from scratch",
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 polish tweaks: softer metadata color, block spacing,
+# softer contact line, clickable links in contact line.
+# ---------------------------------------------------------------------------
+
+
+def _hex_to_avg_channel(hex_color: str) -> float:
+    """`#555555` → 0.333 (each channel 0x55=85, 85/255≈0.333). Used to
+    bound textColor values to a readable-but-soft range."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
+    return (r + g + b) / (3 * 255)
+
+
+def test_block_metadata_uses_softer_gray_color():
+    """Date / location lines should recede as metadata. The exact hex
+    is taste, but it must not be body-black or near-black — those
+    compete with body text for hierarchy. reportlab stores textColor
+    as the original string assigned (no Color coercion at style-build
+    time), so we compare hex strings directly."""
+    styles = _build_styles()
+    hex_color = styles["BlockMetadata"].textColor
+    # Must be a hex color string, not body-black.
+    assert isinstance(hex_color, str) and hex_color.startswith("#"), (
+        f"BlockMetadata.textColor expected to be a '#rrggbb' string, "
+        f"got {hex_color!r}"
+    )
+    assert hex_color.lower() not in ("#000000", "#111111", "#222222"), (
+        f"BlockMetadata.textColor is {hex_color}; needs to be lighter "
+        f"than near-black so the metadata line recedes."
+    )
+    # Bound to a readable-but-soft range. Below ~0.2 reads as black;
+    # above ~0.6 reads as nearly invisible on white.
+    avg = _hex_to_avg_channel(hex_color)
+    assert 0.2 < avg < 0.6, (
+        f"BlockMetadata color {hex_color} (avg channel {avg:.2f}) "
+        f"is outside the readable-but-soft range (0.2–0.6)"
+    )
+
+
+def test_sub_block_metadata_matches_block_metadata_color():
+    """SubBlockMetadata should match BlockMetadata's color so the
+    metadata-line treatment is uniform across both depths."""
+    styles = _build_styles()
+    assert styles["SubBlockMetadata"].textColor == \
+           styles["BlockMetadata"].textColor
+
+
+def test_contact_style_softer_and_smaller_than_body():
+    """Contact line should recede into header territory. Smaller
+    fontSize than Body and a softer-than-black color."""
+    styles = _build_styles()
+    assert styles["Contact"].fontSize < styles["Body"].fontSize, (
+        f"Contact ({styles['Contact'].fontSize}pt) should be smaller "
+        f"than Body ({styles['Body'].fontSize}pt)"
+    )
+    color_hex = styles["Contact"].textColor
+    assert color_hex.lower() != "#000000", (
+        f"Contact.textColor is {color_hex}; should be softer than "
+        f"body-black to recede as header"
+    )
+
+
+def test_subhead_center_matches_contact():
+    """SubheadCenter (US-style centered contact line) must match the
+    Contact style's softer treatment so US and EU resumes look
+    consistent at the header level."""
+    styles = _build_styles()
+    assert styles["SubheadCenter"].fontSize == styles["Contact"].fontSize
+    assert styles["SubheadCenter"].textColor == styles["Contact"].textColor
+
+
+def test_block_title_space_before_increased_for_block_separation():
+    """BlockTitle.spaceBefore controls the gap between consecutive
+    blocks within a section (e.g., Meta → Chief Data Scientist →
+    Volunteer Translator). Pre-#42 polish was 4pt, which read tight;
+    bumped to 6+ for natural breathing room between jobs."""
+    styles = _build_styles()
+    assert styles["BlockTitle"].spaceBefore >= 6, (
+        f"BlockTitle.spaceBefore is {styles['BlockTitle'].spaceBefore}pt; "
+        f"needs ≥6pt for blocks-within-a-section to feel separated."
+    )
+
+
+def test_linkify_email_wraps_in_mailto():
+    out = _linkify_contact("ana.muller@example.com")
+    assert '<a href="mailto:ana.muller@example.com">' in out
+    assert "ana.muller@example.com</a>" in out
+
+
+def test_linkify_linkedin_bare_domain_gets_https_prefix():
+    """Students typically write `linkedin.com/in/X` without `https://`.
+    Linkify must add the scheme to the href while keeping the displayed
+    text bare-domain."""
+    out = _linkify_contact("linkedin.com/in/anamuller")
+    assert '<a href="https://linkedin.com/in/anamuller">' in out
+    assert "linkedin.com/in/anamuller</a>" in out
+    # Display text is the bare-domain form; the scheme is href-only.
+    assert "https://linkedin" not in out.split("</a>")[0].split(">")[-1]
+
+
+def test_linkify_github_bare_domain_gets_https_prefix():
+    out = _linkify_contact("github.com/anamuller")
+    assert '<a href="https://github.com/anamuller">' in out
+    assert "github.com/anamuller</a>" in out
+
+
+def test_linkify_explicit_https_url_preserved_verbatim():
+    out = _linkify_contact("https://my-portfolio.example.com")
+    assert '<a href="https://my-portfolio.example.com">' in out
+
+
+def test_linkify_phone_and_location_pass_through_as_text():
+    """Phone numbers and location text must not get linkified — they're
+    not URIs and trying to mailto/tel them would be wrong."""
+    text = "+43 664 1234567 | Vienna, Austria"
+    out = _linkify_contact(text)
+    assert "<a href" not in out, (
+        f"Phone / location should not be wrapped in <a>: {out!r}"
+    )
+    # Text content preserved (HTML escape doesn't change ASCII chars).
+    assert "+43 664 1234567" in out
+    assert "Vienna, Austria" in out
+
+
+def test_linkify_full_contact_line_mixes_links_and_text():
+    """End-to-end: a typical contact line with email + phone + linkedin
+    + location produces wrapped links for the URI parts and plain text
+    for the rest, with pipe separators preserved."""
+    text = "ana@example.com | +43 664 1234567 | linkedin.com/in/anamuller | Vienna, Austria"
+    out = _linkify_contact(text)
+    assert '<a href="mailto:ana@example.com">' in out
+    assert '<a href="https://linkedin.com/in/anamuller">' in out
+    assert "+43 664 1234567" in out  # untouched phone
+    assert "Vienna, Austria" in out  # untouched location
+    assert " | " in out  # separators preserved
+
+
+def test_linkify_no_link_color_attribute_inherits_paragraph_color():
+    """Modern resume convention: links inherit the surrounding text
+    color rather than rendering as 1990s-blue underlined. The link
+    annotation makes them clickable in the PDF; visual styling stays
+    subtle. So our `<a>` tags must NOT carry an explicit `color="...".`"""
+    out = _linkify_contact("ana@example.com")
+    # `<a href="mailto:..."` only — no color attribute.
+    assert 'color=' not in out, (
+        f"Link tag should not carry an explicit color attribute (so it "
+        f"inherits the paragraph's textColor); got: {out!r}"
+    )
+
+
+def test_rendered_pdf_actually_contains_clickable_link_annotations(tmp_path: Path):
+    """End-to-end load-bearing test: the `<a href="...">` markup we
+    emit must round-trip through reportlab into PDF Link annotations
+    that PDF readers will actually open. If reportlab silently drops
+    the annotation (or pdfminer can no longer find it), the
+    "clickable link" promise quietly stops being true."""
+    md = (
+        "# Linkable Person\n"
+        "test.linker@example.com | +1 555 0000 | linkedin.com/in/linker | github.com/linker | City\n"
+        "\n"
+        "## Summary\n"
+        "Has links.\n"
+    )
+    out = tmp_path / "linked.pdf"
+    render_resume_eu(md, out)
+
+    # Walk the PDF and pull every Link annotation's URI.
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "mailto:test.linker@example.com" in uris, (
+        f"Email link missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://linkedin.com/in/linker" in uris, (
+        f"LinkedIn link missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://github.com/linker" in uris, (
+        f"GitHub link missing from PDF Link annotations. Got: {uris}"
+    )
+
+
+def test_render_resume_eu_with_linked_contact_round_trips_for_ats(tmp_path: Path):
+    """End-to-end ATS guard: even with link annotations in the contact
+    line, pdfminer must extract the email, linkedin URL, and location
+    text in order. PDF link annotations are a metadata layer — they
+    don't replace the underlying text stream."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Summary\n"
+        "Tested.\n"
+    )
+    out = tmp_path / "linked.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Test Person",
+        "test@example.com",
+        "+1 555 0000",
+        "linkedin.com/in/test",
+        "Vienna, Austria",
     ])
