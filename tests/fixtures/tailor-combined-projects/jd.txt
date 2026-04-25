@@ -1,0 +1,26 @@
+Senior AI Product Engineer
+
+We are looking for a senior engineer to ship AI-powered features at the
+intersection of product and engineering. You will work with our founding
+team to design, build, and operate production systems that use frontier
+LLMs as core infrastructure.
+
+What you'll do:
+- Architect and build AI-driven features end-to-end
+- Run prompt evaluation pipelines across multiple LLM providers
+- Maintain shared developer tooling for the engineering team
+- Ship public-facing applications that integrate LLM capabilities
+
+What we're looking for:
+- 5+ years of hands-on software engineering, with at least 1 year of
+  production AI/LLM work
+- Strong full-stack capability: Python or TypeScript backend, modern
+  web frontend
+- Track record of shipping AI products and tooling at speed
+- Comfort working across multiple concurrent projects in a small team
+- Experience with prompt engineering, evaluation harnesses, and
+  production LLM integrations
+- Ability to communicate technical decisions to non-engineering
+  stakeholders
+
+Compensation: $180k – $230k base plus equity. Remote-friendly within US.
