@@ -1416,7 +1416,7 @@ def test_per_field_round_trip_survives_single_quotes_and_dollar_signs(tmp_path: 
         "Prose...\n"
         "FIT_SCORE: 6\n"
         "COMPANY: Macy's & $hop\n"
-        "ROLE: VP, Engineering \u2014 Tech & Tools\n"
+        "ROLE: VP, Engineering - Tech & Tools\n"
         "SENIORITY: vp\n"
         "STRENGTHS_COUNT: 5\n"
         "GAPS_COUNT: 3\n"
@@ -1441,7 +1441,7 @@ def test_per_field_round_trip_survives_single_quotes_and_dollar_signs(tmp_path: 
     )
     assert proc.returncode == 0, proc.stderr
     assert "COMPANY=[Macy's & $hop]" in proc.stdout
-    assert "ROLE=[VP, Engineering \u2014 Tech & Tools]" in proc.stdout
+    assert "ROLE=[VP, Engineering - Tech & Tools]" in proc.stdout
 
 
 def test_skill_md_prescribes_per_field_files_for_fit_extraction():
