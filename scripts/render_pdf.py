@@ -661,9 +661,15 @@ def _render_titled_block(
     """
     title_without_date, date = _split_title_and_date(raw_title)
     if date is None:
-        return [Paragraph(_escape(raw_title), title_style)]
+        # Run the title through _linkify_text so URLs in titles like
+        # "Resumasher (github.com/earino/resumasher)" become clickable.
+        # _linkify_text supersets _escape (HTML-escape + bold conversion +
+        # link wrapping). Titles without URLs round-trip identically.
+        return [Paragraph(_linkify_text(raw_title), title_style)]
     return [
-        Paragraph(_escape(title_without_date), title_style),
+        Paragraph(_linkify_text(title_without_date), title_style),
+        # Date metadata is just a date — no URL expected. Still safe to
+        # run through _linkify_text in case (yet ATS-irrelevant for dates).
         Paragraph(_escape(date), metadata_style),
     ]
 
@@ -782,28 +788,47 @@ def _build_resume_flowables(
                     spaceAfter=4,
                 ))
             else:
-                flow.append(Paragraph(_escape(para), styles["Body"]))
-        # Bare bullets (common for Skills).
+                # _linkify_text so URLs in Summary prose become clickable.
+                flow.append(Paragraph(_linkify_text(para), styles["Body"]))
+        # Bare bullets (common for Skills). _linkify_text so URLs embedded
+        # in skills bullets ("see github.com/me/X") are clickable.
         for bullet in section.raw_bullets:
-            flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
+            flow.append(Paragraph(_linkify_text(bullet), styles["Bullet"], bulletText="•"))
         # Blocks (Experience, Education, Projects).
+        #
+        # KeepTogether granularity (issue #42 follow-up): we split each block
+        # into smaller KeepTogether groups instead of one giant group per
+        # block. Why: when an entire block (title + 3 sub-blocks + their
+        # bullets) is bigger than the remaining page space, reportlab
+        # page-breaks BEFORE the whole thing, leaving the bottom of the
+        # page blank. Per-sub-block KeepTogether lets reportlab break
+        # between sub-blocks (the natural typesetting break) while still
+        # gluing each sub-role title to its own bullets.
         for block in section.blocks:
-            group: list = list(_render_titled_block(
+            block_group: list = list(_render_titled_block(
                 block.title, styles["BlockTitle"], styles["BlockMetadata"],
             ))
-            # Direct bullets (single-role blocks).
+            # Direct bullets (single-role blocks) stay glued to the block
+            # title — page-breaking between a job title and its first
+            # bullet would orphan the title at the bottom of a page.
             for bullet in block.bullets:
-                group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
-            # Sub-blocks for multi-role tenures. Each sub-block title stays
-            # glued to its own bullets via the group list, so KeepTogether
-            # prevents a page break from splitting role-title from its bullets.
+                block_group.append(Paragraph(
+                    _linkify_text(bullet), styles["Bullet"], bulletText="•",
+                ))
+            flow.append(KeepTogether(block_group))
+            # Each sub-block (multi-role tenure entry) gets its own
+            # KeepTogether so a sub-role title stays with its bullets, but
+            # adjacent sub-blocks within the same parent block CAN break
+            # across pages — which is the right typesetting boundary.
             for sub in block.sub_blocks:
-                group.extend(_render_titled_block(
+                sub_group: list = list(_render_titled_block(
                     sub.title, styles["SubBlockTitle"], styles["SubBlockMetadata"],
                 ))
                 for bullet in sub.bullets:
-                    group.append(Paragraph(_escape(bullet), styles["SubBlockBullet"], bulletText="•"))
-            flow.append(KeepTogether(group))
+                    sub_group.append(Paragraph(
+                        _linkify_text(bullet), styles["SubBlockBullet"], bulletText="•",
+                    ))
+                flow.append(KeepTogether(sub_group))
 
     return flow
 
@@ -811,52 +836,57 @@ def _build_resume_flowables(
 _MARKDOWN_BOLD_RE = re.compile(r"\*\*([^\n*][^\n]*?)\*\*")
 
 
-# Patterns for linkifying the contact line. Order matters: email is matched
-# before generic URLs (an email contains '@' but no '://'), and specific
-# hosts (linkedin / github) match before the generic https URL pattern so
-# bare-domain forms like "linkedin.com/in/foo" (no scheme) get linked too.
+# Patterns for linkifying URLs and emails anywhere in resume content. Order
+# matters: email is matched before generic URLs (an email contains '@' but no
+# '://'), and specific hosts (linkedin / github) match before the generic
+# https URL pattern so bare-domain forms like "linkedin.com/in/foo" or
+# "github.com/me" (no scheme — the form students typically write in project
+# titles and bullets) get linked too.
 #
-# Character classes use [^\s|] for URL paths so the regex stops at the
-# pipe-separator that contact lines typically use ("email | phone | linkedin
-# | location"), and at whitespace.
-_CONTACT_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.-]+"
-_CONTACT_LINKEDIN_RE = r"linkedin\.com/in/[^\s|<>]+"
-_CONTACT_GITHUB_RE = r"github\.com/[^\s|<>]+"
-_CONTACT_HTTPS_RE = r"https?://[^\s|<>]+"
-_CONTACT_LINK_PATTERN = re.compile(
-    rf"({_CONTACT_EMAIL_RE}|{_CONTACT_HTTPS_RE}|{_CONTACT_LINKEDIN_RE}|{_CONTACT_GITHUB_RE})"
+# Character classes use [^\s|<>)] so the regex stops at whitespace, the
+# pipe-separator that contact lines use, HTML tags (already-escaped output),
+# and closing parens (so a project title like "Foo (github.com/me/foo)"
+# matches just the URL, not the trailing paren).
+_LINK_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.-]+"
+_LINK_LINKEDIN_RE = r"linkedin\.com/in/[^\s|<>)]+"
+_LINK_GITHUB_RE = r"github\.com/[^\s|<>)]+"
+_LINK_HTTPS_RE = r"https?://[^\s|<>)]+"
+_LINK_PATTERN = re.compile(
+    rf"({_LINK_EMAIL_RE}|{_LINK_HTTPS_RE}|{_LINK_LINKEDIN_RE}|{_LINK_GITHUB_RE})"
 )
 
 
-def _linkify_contact(text: str) -> str:
+def _linkify_text(text: str) -> str:
     """
-    Render the contact line with email and profile URLs as clickable
-    links inside the PDF.
+    Wrap email + URL substrings in clickable `<a>` tags, HTML-escape
+    everything else (and convert `**bold**` to `<b>bold</b>` via `_escape`).
 
-    Email matches → `<a href="mailto:...">text</a>`.
-    `https://...` URLs → `<a href="...">text</a>`.
-    Bare-domain `linkedin.com/in/X` and `github.com/X` (the form
-    students typically write — without an explicit `https://` prefix)
-    → `<a href="https://...">text</a>`.
+    Used everywhere resume text is rendered into a Paragraph: contact line,
+    block titles, sub-block titles, bullets, and Summary-style paragraphs.
+    URLs in the body of a project title (`Resumasher (github.com/earino/
+    resumasher)`) or in a bullet description (`see https://...`) are now
+    clickable in the PDF, same as the contact line's email and LinkedIn
+    profile.
 
-    Phone numbers, locations, and any other text pass through to
-    `_escape` unchanged.
+    Email → `<a href="mailto:...">text</a>`.
+    `https://...` URL → `<a href="...">text</a>`.
+    Bare-domain `linkedin.com/in/X` / `github.com/X` get an automatic
+    `https://` prefix on the href; displayed text stays bare-domain.
 
-    Link styling: no `color` attribute on the `<a>` tag, so the
-    rendered link inherits the surrounding paragraph color (currently
-    the soft gray of the `Contact` / `SubheadCenter` style). The
-    clickable behavior is communicated by the PDF reader's cursor
-    change, not by 1990s-blue-underline. Modern resume convention.
+    Link styling: no `color=` attribute on the `<a>` tag, so links inherit
+    the surrounding paragraph color. The clickable behavior is communicated
+    by the PDF reader's cursor change, not by 1990s-blue-underline. Modern
+    resume convention.
 
-    ATS impact: zero. The link annotation is a PDF metadata layer that
-    does not alter the text stream — pdfminer and other parsers extract
-    the link text identically to the pre-link version.
+    ATS impact: zero. Link annotations are a PDF metadata layer that does
+    not alter the text stream — pdfminer and other parsers extract identical
+    text whether links are present or not.
     """
-    parts = _CONTACT_LINK_PATTERN.split(text)
+    parts = _LINK_PATTERN.split(text)
     out: list[str] = []
     # re.split with a capture group returns alternating non-match / match
-    # / non-match. Even indices are non-link text; odd indices are link
-    # candidates we wrap in <a>.
+    # / non-match. Even indices are non-link text (HTML-escape via _escape);
+    # odd indices are link candidates we wrap in <a>.
     for i, part in enumerate(parts):
         if i % 2 == 0:
             out.append(_escape(part))
@@ -869,6 +899,12 @@ def _linkify_contact(text: str) -> str:
             href = f"https://{part}"
         out.append(f'<a href="{href}">{_escape(part)}</a>')
     return "".join(out)
+
+
+# Backwards-compatible alias. The function previously named _linkify_contact
+# is now the general _linkify_text — same behavior, broader name. Keep the
+# old name for any caller / test that imports it.
+_linkify_contact = _linkify_text
 
 
 # Max dimension for embedded photos. The photo prints at 3cm × 3cm; at 300 DPI

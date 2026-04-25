@@ -26,6 +26,7 @@ from scripts.render_pdf import (
     MissingContactHeaderError,
     _build_styles,
     _linkify_contact,
+    _linkify_text,
     _render_titled_block,
     _split_title_and_date,
     assert_ats_roundtrip,
@@ -1982,3 +1983,237 @@ def test_render_resume_eu_with_linked_contact_round_trips_for_ats(tmp_path: Path
         "linkedin.com/in/test",
         "Vienna, Austria",
     ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final fixes: body-wide URL linkification + KeepTogether
+# granularity. Surfaced by real-run testing of the feature branch:
+# (a) URLs in project titles ("Resumasher (github.com/earino/resumasher)")
+#     and bullet text rendered as plain non-clickable text — only the
+#     contact line was linkified.
+# (b) Multi-sub-block tenures wrapped in a single big KeepTogether forced
+#     reportlab to page-break BEFORE the whole block when it didn't fit
+#     in the remaining page space, leaving the bottom of the page blank.
+# ---------------------------------------------------------------------------
+
+
+def test_linkify_text_alias_for_linkify_contact():
+    """`_linkify_text` is the new general-purpose name; `_linkify_contact`
+    is kept as a backwards-compatible alias. They must produce identical
+    output."""
+    text = "ana@example.com | linkedin.com/in/ana"
+    assert _linkify_text(text) == _linkify_contact(text)
+
+
+def test_linkify_text_handles_url_inside_parens():
+    """Project titles like 'Resumasher (github.com/earino/resumasher)'
+    must linkify the URL but NOT swallow the closing paren — the regex
+    excludes ')' from URL paths so the trailing paren stays as text."""
+    out = _linkify_text("Resumasher (github.com/earino/resumasher)")
+    assert '<a href="https://github.com/earino/resumasher">' in out
+    # Closing paren must NOT be inside the href.
+    assert '<a href="https://github.com/earino/resumasher)">' not in out
+    # And the closing paren must appear in the rendered output (as text).
+    assert "</a>)" in out
+
+
+def test_linkify_text_in_bullet_with_url():
+    """Bullets that mention a URL should produce wrapped output with the
+    URL clickable and the surrounding prose still readable."""
+    out = _linkify_text("Built it; see https://example.com/docs for details")
+    assert '<a href="https://example.com/docs">' in out
+    assert "Built it; see " in out
+    assert " for details" in out
+
+
+def test_linkify_text_preserves_bold_markers():
+    """`_linkify_text` supersets `_escape`, so `**bold**` markdown still
+    becomes `<b>bold</b>` (via _escape on non-link parts)."""
+    out = _linkify_text("**Senior Director** at github.com/me")
+    assert "<b>Senior Director</b>" in out
+    assert '<a href="https://github.com/me">' in out
+
+
+def test_linkify_text_no_url_passes_through_as_escape():
+    """Plain text without URLs round-trips identically to `_escape`."""
+    text = "Just some prose with <html> & ampersand"
+    from scripts.render_pdf import _escape
+    assert _linkify_text(text) == _escape(text)
+
+
+def test_render_resume_with_project_url_in_title_has_clickable_annotation(tmp_path: Path):
+    """End-to-end: a project block titled with a github URL produces a
+    PDF Link annotation that PDF readers actually open. Lock-in test for
+    the body-wide linkification feature."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | linkedin.com/in/test | City\n"
+        "\n"
+        "## Projects\n"
+        "### Resumasher (github.com/earino/resumasher)\n"
+        "- A Claude Code skill for tailoring resumes.\n"
+        "- See https://example.com/docs for the API.\n"
+    )
+    out = tmp_path / "with_project_link.pdf"
+    render_resume_eu(md, out)
+
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfpage import PDFPage
+
+    uris: list[str] = []
+    with open(out, "rb") as fp:
+        parser_ = PDFParser(fp)
+        pdf_doc = PDFDocument(parser_)
+        for page in PDFPage.create_pages(pdf_doc):
+            if not page.annots:
+                continue
+            for annot_ref in page.annots:
+                annot = annot_ref.resolve()
+                subtype = annot.get("Subtype")
+                if subtype is None or subtype.name != "Link":
+                    continue
+                action = annot.get("A")
+                if action is None:
+                    continue
+                action_resolved = (
+                    action.resolve() if hasattr(action, "resolve") else action
+                )
+                uri = action_resolved.get("URI")
+                if uri is not None:
+                    uris.append(uri.decode("utf-8") if isinstance(uri, bytes) else uri)
+
+    assert "https://github.com/earino/resumasher" in uris, (
+        f"Project-title URL missing from PDF Link annotations. Got: {uris}"
+    )
+    assert "https://example.com/docs" in uris, (
+        f"Bullet URL missing from PDF Link annotations. Got: {uris}"
+    )
+
+
+def test_keep_together_per_sub_block_not_per_block(tmp_path: Path):
+    """A multi-role block must produce MULTIPLE KeepTogether flowables —
+    one for the block title (+ direct bullets) and one for each sub-block
+    — instead of one giant KeepTogether wrapping the whole thing.
+
+    Why this matters: when the entire block doesn't fit in the remaining
+    page space, the giant-KeepTogether shape forces reportlab to page-
+    break BEFORE the block, leaving page 1's bottom half blank. Per-sub-
+    block KeepTogether lets reportlab break between sub-blocks, which is
+    the natural typesetting boundary.
+    """
+    from reportlab.platypus import KeepTogether
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Multi Role\n"
+        "mr@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- Led the org through hypergrowth.\n"
+        "**Director** (2021 – 2023)\n"
+        "- Built the team from scratch.\n"
+        "**Manager** (2020 – 2021)\n"
+        "- Started as the first engineer.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    # Count KeepTogether flowables. Pre-fix: exactly 1 (per block).
+    # Post-fix: 4 (1 block-title group + 3 sub-block groups).
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    assert len(keep_togethers) >= 4, (
+        f"Expected ≥4 KeepTogether flowables (1 per block-title + 1 per "
+        f"sub-block), got {len(keep_togethers)}. Pre-fix shape was 1 big "
+        f"KeepTogether per block, which causes reportlab to leave the "
+        f"bottom of a page blank when the block doesn't fit."
+    )
+
+
+def test_keep_together_block_with_no_sub_blocks_still_emits_one_group(tmp_path: Path):
+    """Regression guard: blocks without sub-blocks (single-role jobs,
+    education entries, projects) still emit exactly one KeepTogether
+    each. The new granularity must not over-fragment."""
+    from reportlab.platypus import KeepTogether
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Single Role\n"
+        "sr@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Foo Co (2022 – 2024)\n"
+        "- Did stuff.\n"
+        "- Did other stuff.\n"
+        "### Junior Analyst — Bar Co (2020 – 2022)\n"
+        "- More stuff.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    # Two blocks → two KeepTogether flowables. (Sub-block-less blocks
+    # don't emit extra KT groups.)
+    assert len(keep_togethers) == 2, (
+        f"Expected 2 KeepTogether flowables (1 per block, no sub-blocks), "
+        f"got {len(keep_togethers)}"
+    )
+
+
+def test_keep_together_sub_block_glues_sub_title_to_its_bullets(tmp_path: Path):
+    """The whole point of KeepTogether is to prevent orphaning a title
+    at the bottom of a page with its content on the next page. After
+    the granularity change, each sub-block's title must still be glued
+    to its own bullets."""
+    from reportlab.platypus import KeepTogether, Paragraph
+    from scripts.render_pdf import _build_resume_flowables, _section_order_eu
+
+    md = (
+        "# Test\n"
+        "t@x.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- First bullet.\n"
+        "- Second bullet.\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    keep_togethers = [f for f in flow if isinstance(f, KeepTogether)]
+    # Find the sub-block KT (the second one — the first is the block
+    # title group).
+    assert len(keep_togethers) >= 2
+    sub_kt = keep_togethers[1]
+    contained = sub_kt._content
+    # Sub-block group should have: SubBlockTitle + SubBlockMetadata +
+    # at least one SubBlockBullet paragraph.
+    style_names = [
+        getattr(item.style, "name", None)
+        for item in contained
+        if isinstance(item, Paragraph)
+    ]
+    assert "SubBlockTitle" in style_names
+    assert "SubBlockBullet" in style_names, (
+        f"Sub-block KeepTogether must contain SubBlockBullet paragraphs "
+        f"(otherwise the sub-title can orphan from its bullets at a page "
+        f"break). Got styles: {style_names}"
+    )
