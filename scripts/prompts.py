@@ -408,7 +408,7 @@ Schema:
     - Category: item, item
 
     ## Projects                                 <-- OMIT if no real projects
-    ### {Project name} ({path or URL})
+    ### {Project name} ({path or URL})          <-- ONE project per heading
     - bullet with a metric if available
 
 **Projects section rules.** OMIT this section entirely if the EVIDENCE block
@@ -419,6 +419,18 @@ the candidate's working directory (`projects/churn-model/`) or a GitHub
 URL (`github.com/username/repo`). **Never use `resume.pdf` as a project
 path** — that's the source resume, not a project. Never invent project
 entries to fill space.
+
+**One project per H3 heading.** Each `### {Project name} ({path or URL})`
+entry must describe exactly one project — one folder path OR one GitHub
+URL. Do NOT combine two related projects under a single heading
+(e.g., `### foo + bar (github.com/me/foo, github.com/me/bar)` or
+`### foo & bar (...)` or `### foo / bar (...)`); emit two separate
+`###` blocks instead, one per repo. Two repos in one heading is not a
+polished shape — it makes the title text long, confuses ATS parsers
+that expect one project per heading, and prevents the renderer from
+collapsing the title to a single clickable name. If two projects are
+genuinely related, that relationship belongs in the bullets of one or
+both entries, not in a combined heading.
 
     ## Certifications                           <-- OPTIONAL, see filter rule
     - {Cert name}

@@ -1,0 +1,71 @@
+Sam Jones — folder mining summary (synthetic fixture for issue #46)
+
+Sam's GitHub profile shows two thematically-related but architecturally-
+distinct projects in the LLM tooling space, plus a handful of unrelated
+work. This summary covers the two related ones in detail because they're
+the shape that surfaced issue #46 — the tailor pre-fix sometimes combined
+them into a single H3 heading, which is the wrong polish for a resume.
+
+PROJECT: prompt-harness (github.com/sam/prompt-harness)
+
+A Python CLI tool Sam built and maintains for evaluating prompts across
+multiple LLM providers in parallel. The repo has 312 passing tests, MIT
+license, and 47 GitHub stars. Architecture:
+
+- Click-based CLI, single entry point `prompt-harness eval --scenarios
+  scenarios.yaml`
+- Adapter layer for OpenRouter, Anthropic, OpenAI, and Gemini APIs
+- Scoring rubric configured per scenario; default uses Claude as judge
+  with a weighted 0-10 quality score
+- Output is a structured JSON results file plus a Markdown summary table
+- Validated 80+ prompts across six scenario categories during the most
+  recent benchmarking run (~$5-7 in API spend per full sweep)
+
+Notable artifacts in the repo:
+- `harness/adapters/` — one file per LLM backend, ~150 lines each.
+  Sam wrote all four adapters; they share a common `BackendAdapter`
+  protocol so adding a fifth would be ~50 lines.
+- `harness/scoring.py` — the Claude-as-judge rubric. The weighted
+  scoring formula is documented inline with examples.
+- `tests/fixtures/scenarios/` — 80 scenario files Sam authored over
+  six months of iteration.
+
+PROJECT: nonprofit-prompts (github.com/sam/nonprofit-prompts)
+
+A separate static-site project Sam shipped to make a curated subset of
+his prompt-harness scenarios publicly browsable. Built on Astro 5.x,
+Tailwind v4, React 19, with Pagefind for client-side search and GitHub
+Pages for hosting. Has 23 stars and a small but real user base of
+nonprofit operators consulting it for AI-tool ideas. Architecture:
+
+- Astro static-site generator. ~120 prompt cards rendered at build time
+  from YAML frontmatter sourced from Sam's prompt-harness scenarios.
+- React islands for the search UI and the per-prompt comparison table
+  (which model gave the highest-scored response).
+- Tailwind v4 design system; mobile-first with a max-width 768px layout.
+- GitHub Actions CI with link-checker and lighthouse perf gates.
+
+Notable artifacts:
+- `src/content/prompts/` — 120 markdown files, one per prompt. Each
+  card links back to the prompt-harness GitHub repo for the full
+  scenario context. The two repos are linked via these citations but
+  are otherwise independent codebases — different stack, different
+  deployment, different audience.
+- `src/components/CompareTable.tsx` — the React island that renders
+  the model-comparison table for each prompt. Reads the harness's
+  exported JSON.
+- `.github/workflows/ci.yml` — CI pipeline. Runs link-check and
+  lighthouse on every PR.
+
+The relationship between the two projects: nonprofit-prompts CONSUMES
+the JSON output of prompt-harness's evaluation runs, but they're
+separately versioned, separately deployed, and serve different
+audiences (developers using the CLI vs. nonprofit operators browsing
+the curated subset). They are NOT the same project. They should appear
+as two separate `### {Name} ({URL})` blocks in the tailored resume.
+
+OTHER PROJECTS (less detailed; tailor may use or omit at its discretion):
+- github.com/sam/feedback-ingest — the customer-feedback service Sam
+  shipped at BigCo. Python / FastAPI / Postgres, ~6K stars.
+- github.com/sam/dotfiles — personal config repo, not relevant to a
+  resume tailored for the AI Product Engineer role.
