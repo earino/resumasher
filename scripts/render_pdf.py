@@ -650,6 +650,32 @@ def _render_titled_block(
     ]
 
 
+def _section_divider() -> HRFlowable:
+    """
+    Thin horizontal rule that sits directly under a SectionHeading.
+
+    Visual purpose: structural break between major sections (Summary /
+    Experience / Education / Skills / Projects). Whitespace alone wasn't
+    enough — the eye reads stacked sections as one continuous wall when
+    the heading is just a 12pt bold line floating above content.
+
+    Distinct from the in-content `---` markdown rule (`_HR_SENTINEL`,
+    via `HRFlowable(thickness=0.5, color=#888888)`) which is a soft
+    break inside a section. Section dividers are slightly thicker and
+    darker so they read as structural rather than soft.
+
+    No spaceBefore — the rule sits right below the heading text. The
+    spaceAfter gives natural breathing room before the first block.
+    """
+    return HRFlowable(
+        width="100%",
+        thickness=0.75,
+        color=HexColor("#333333"),
+        spaceBefore=0,
+        spaceAfter=6,
+    )
+
+
 def _photo_render_size_cm(photo_source) -> tuple[float, float]:
     """Compute embed width/height in cm, preserving source aspect ratio.
 
@@ -719,6 +745,7 @@ def _build_resume_flowables(
 
     for section in section_order_fn(doc):
         flow.append(Paragraph(_escape(section.heading), styles["SectionHeading"]))
+        flow.append(_section_divider())
         # Paragraphs directly under the section (summary body). Horizontal-
         # rule sentinels get emitted as HRFlowable instead of text. See
         # `_HR_SENTINEL` for why this shape (issue #22 markdown `---` was
@@ -1006,6 +1033,7 @@ def render_interview_prep(source_markdown: str, output_path: str | Path) -> Path
                 flow.append(Paragraph(_escape(" ".join(current_para)), styles["Body"]))
                 current_para = []
             flow.append(Paragraph(_escape(line[3:].strip()), styles["SectionHeading"]))
+            flow.append(_section_divider())
             continue
 
         if line.startswith("### "):

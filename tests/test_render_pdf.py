@@ -1620,6 +1620,112 @@ def test_section_heading_space_before_visibly_separates_sections():
     )
 
 
+def test_section_heading_followed_by_divider_in_resume(tmp_path: Path):
+    """Each section heading must be followed by a horizontal rule
+    (`HRFlowable`) so sections read as visually separated structural
+    blocks rather than a wall of stacked text. The rule is the
+    section-divider variant (thicker, darker than the soft in-content
+    `---` markdown rule); `_section_divider` controls the params."""
+    from reportlab.platypus.flowables import HRFlowable
+    from scripts.render_pdf import (
+        _build_resume_flowables,
+        _section_divider,
+        _section_order_eu,
+    )
+    md = (
+        "# Test\n"
+        "t@x.com | +1\n"
+        "\n"
+        "## Summary\n"
+        "One sentence.\n"
+        "\n"
+        "## Experience\n"
+        "### Role — Co (2024)\n"
+        "- bullet\n"
+        "\n"
+        "## Education\n"
+        "### Degree — School (2020-2022)\n"
+        "- bullet\n"
+    )
+    doc = parse_resume_markdown(md)
+    flow = _build_resume_flowables(
+        doc,
+        _build_styles(),
+        section_order_fn=_section_order_eu,
+        center_header=False,
+        photo_path=None,
+    )
+    # Every SectionHeading paragraph must be immediately followed by an
+    # HRFlowable. Walk pairs and assert.
+    section_headings_seen = 0
+    for i, item in enumerate(flow):
+        # SectionHeading paragraphs carry the SectionHeading style.
+        from reportlab.platypus import Paragraph
+        if isinstance(item, Paragraph) and getattr(item.style, "name", None) == "SectionHeading":
+            section_headings_seen += 1
+            assert i + 1 < len(flow), (
+                f"SectionHeading at end of flow with no divider after"
+            )
+            nxt = flow[i + 1]
+            assert isinstance(nxt, HRFlowable), (
+                f"SectionHeading at index {i} not followed by HRFlowable; "
+                f"got {type(nxt).__name__}"
+            )
+    assert section_headings_seen >= 3, (
+        f"Expected ≥3 sections in fixture, saw {section_headings_seen}"
+    )
+
+
+def test_section_divider_distinct_from_in_content_hr_rule():
+    """The section divider (under each heading) and the in-content `---`
+    rule serve different roles and should be visually distinguishable.
+    Section dividers are slightly thicker and darker so they read as
+    structural; in-content rules are softer to read as soft breaks."""
+    from scripts.render_pdf import _section_divider
+    div = _section_divider()
+    # Section divider params: thicker than 0.5 (the in-content default)
+    # and darker than #888888 (also in-content default). Specific values
+    # are taste, but the inequality must hold.
+    assert div.lineWidth >= 0.6, (
+        f"Section divider thickness {div.lineWidth} should be ≥ 0.6 "
+        f"(thicker than the in-content `---` rule)"
+    )
+
+
+def test_section_divider_does_not_break_ats_round_trip(tmp_path: Path):
+    """HRFlowable produces no text in the PDF text layer, so adding a
+    rule under each section heading must not affect ATS extraction.
+    Regression guard: if reportlab ever changes HRFlowable to emit text
+    or alt-text, this catches it."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Summary\n"
+        "Short summary line.\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Deloitte (Aug 2022 – Aug 2025)\n"
+        "- A bullet about impact.\n"
+        "\n"
+        "## Skills\n"
+        "- Python, R, SQL\n"
+    )
+    out = tmp_path / "with_dividers.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Test Person",
+        "Summary",
+        "Short summary line",
+        "Experience",
+        "Senior Analyst",
+        "Aug 2022 – Aug 2025",
+        "A bullet about impact",
+        "Skills",
+        "Python, R, SQL",
+    ])
+
+
 def test_render_sub_block_bullets_extract_in_order(tmp_path: Path):
     """End-to-end: render a multi-role resume and assert the new bullet
     indent doesn't break ATS round-trip. Bullet text still appears in
