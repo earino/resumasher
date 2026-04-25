@@ -24,6 +24,9 @@ import pytest
 
 from scripts.render_pdf import (
     MissingContactHeaderError,
+    _build_styles,
+    _render_titled_block,
+    _split_title_and_date,
     assert_ats_roundtrip,
     parse_resume_markdown,
     render_cover_letter,
@@ -467,7 +470,11 @@ def test_render_multi_role_sub_blocks_appear_in_order(tmp_path: Path):
     professor = pos("Professor of Practice")
     visiting = pos("Visiting Professor")
     ecbs5200 = pos("ECBS5200")
-    meta = pos("Meta (July 2017")
+    # Pre-#42 this anchored on "Meta (July 2017" — the contiguous form
+    # before block-title-with-date got split into title + metadata
+    # paragraphs. After #42 the parens-segment is on its own line, so we
+    # anchor on bare "Meta" (still unique in the fixture).
+    meta = pos("Meta")
     senior_director = pos("Senior Director")
     # Unique anchors that only appear in the specific sub-block's bullets,
     # so we can verify sub-title → bullet → next-sub-title ordering.
@@ -1421,3 +1428,128 @@ def test_render_horizontal_rule_produces_non_empty_pdf(tmp_path: Path):
     # adds content). A dramatically smaller with-rule PDF would signal
     # something got dropped.
     assert out_with.stat().st_size >= out_without.stat().st_size - 500
+
+
+# ---------------------------------------------------------------------------
+# Issue #42: stacked dates under block titles.
+#
+# Block / sub-block titles that contain a recognizable date segment now
+# render as two paragraphs (title above, date below in a slightly smaller
+# regular-weight metadata style) instead of one. Single-flow text — no
+# Tables, no tab stops — so commercial ATS parsers (Workday, Greenhouse,
+# Taleo, iCIMS) read the date in document order rather than potentially
+# scrambling a 2-column layout.
+# ---------------------------------------------------------------------------
+
+
+def test_split_parenthesized_month_year_range():
+    title = "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst — Deloitte"
+    assert d == "Aug 2022 – Aug 2025"
+
+
+def test_split_year_range_pipe_separated():
+    title = "Senior Analyst | 2022–2025 | Deloitte"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst | Deloitte"
+    assert d == "2022–2025"
+
+
+def test_split_present():
+    title = "Director (Aug 2022 – Present)"
+    t, d = _split_title_and_date(title)
+    assert t == "Director"
+    assert d == "Aug 2022 – Present"
+
+
+def test_split_isolated_month_year():
+    title = "Project X (Feb 2026)"
+    t, d = _split_title_and_date(title)
+    assert t == "Project X"
+    assert d == "Feb 2026"
+
+
+def test_split_no_date_returns_none():
+    title = "Senior Analyst"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Analyst"
+    assert d is None
+
+
+def test_split_bare_year_in_prose_not_matched():
+    """'2024 Economic Survey' is a publication title, not a date. Bare
+    years in prose (not in parens or pipes) must NOT be hijacked as date
+    segments — that would put nonsense on the metadata line."""
+    title = "2024 Economic Survey — Statistics Austria"
+    t, d = _split_title_and_date(title)
+    assert d is None
+    assert t == title
+
+
+def test_render_titled_block_no_date_returns_single_paragraph():
+    """Regression guard: titles without dates must still render as a
+    single paragraph, identical to pre-#42 behavior. Anything else is a
+    behavior change for existing users."""
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Analyst",
+        styles["BlockTitle"],
+        styles["BlockMetadata"],
+    )
+    assert len(flowables) == 1
+
+
+def test_render_titled_block_with_date_returns_two_paragraphs():
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)",
+        styles["BlockTitle"],
+        styles["BlockMetadata"],
+    )
+    assert len(flowables) == 2
+
+
+def test_sub_block_title_also_gets_split():
+    """Sub-block titles get the same date-split treatment, with the
+    metadata line indented to match the sub-block title's leftIndent
+    so the date sits visually under its title rather than under the
+    parent block."""
+    styles = _build_styles()
+    flowables = _render_titled_block(
+        "Senior Director (Aug 2022 – Aug 2025)",
+        styles["SubBlockTitle"],
+        styles["SubBlockMetadata"],
+    )
+    assert len(flowables) == 2
+    # The metadata paragraph must use the indented sub-block style so the
+    # date aligns under its title, not under the parent company heading.
+    metadata_para = flowables[1]
+    assert metadata_para.style.leftIndent == 8
+
+
+def test_ats_round_trip_dates_still_extractable_after_split(tmp_path: Path):
+    """The whole point of #42: dates render as single-flow text that ATS
+    parsers extract in document order. If the rendered PDF doesn't
+    contain the date string in extractable form after the split, we've
+    broken ATS safety — which would defeat the entire reason for the
+    stacked-line approach over the Table approach we rejected."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | +1 555 0000 | linkedin.com/in/test | Vienna, Austria\n"
+        "\n"
+        "## Experience\n"
+        "### Senior Analyst — Deloitte (Aug 2022 – Aug 2025)\n"
+        "- Some bullet.\n"
+        "### Teaching Assistant — School (2024-2025)\n"
+        "- Another bullet.\n"
+    )
+    out = tmp_path / "stacked.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Aug 2022 – Aug 2025",
+        "2024-2025",
+        "Senior Analyst",
+        "Deloitte",
+        "Teaching Assistant",
+    ])

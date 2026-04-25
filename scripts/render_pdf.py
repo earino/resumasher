@@ -457,6 +457,27 @@ def _build_styles() -> StyleSheet1:
         spaceBefore=3,
         spaceAfter=1,
     ))
+    # Stacked-date metadata line that sits under a block or sub-block title
+    # when the title contains a recognizable date segment. Slightly smaller
+    # and regular-weight (vs bold title) creates real typographic hierarchy
+    # without the ATS risk of 2-column / Table layouts. See issue #42.
+    ss.add(ParagraphStyle(
+        name="BlockMetadata",
+        fontName=regular,
+        fontSize=9.5,
+        leading=12,
+        alignment=TA_LEFT,
+        spaceAfter=2,
+    ))
+    ss.add(ParagraphStyle(
+        name="SubBlockMetadata",
+        fontName=regular,
+        fontSize=9.5,
+        leading=12,
+        alignment=TA_LEFT,
+        leftIndent=8,
+        spaceAfter=2,
+    ))
     ss.add(ParagraphStyle(
         name="Bullet",
         fontName=regular,
@@ -530,6 +551,80 @@ def _ordered_sections(doc: ResumeDoc, preferred: list[str]) -> list[ResumeSectio
 
 _PHOTO_MAX_SIDE_CM = 3.0
 _VALID_PHOTO_POSITIONS = ("left", "right", "center")
+
+
+# Recognize a date segment inside a block/sub-block title. Heuristic: the
+# date is whatever parenthesized expression at end-of-string, or pipe-
+# separated segment, contains a 4-digit year (1900-2099). Bare years in
+# prose like "2024 Economic Survey" don't match because they're not in
+# parens or pipes. The rare false positive (e.g., "(founded 1995)" in a
+# title) is acceptable — splitting it onto its own line is mildly weird,
+# not destructive. See issue #42 for the full ATS rationale.
+_YEAR_PATTERN = r"\b(?:19|20)\d{2}\b"
+_PARENS_DATE_RE = re.compile(rf"\(([^()]*{_YEAR_PATTERN}[^()]*)\)\s*$")
+
+
+def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
+    """
+    Try to extract a date segment from a block/sub-block title.
+
+    Returns (title_without_date, date_string) when a date is detected,
+    otherwise (original_title, None).
+
+    Detection looks for either:
+    - a trailing parenthesized expression containing a year:
+      "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)"
+      "Project X (Feb 2026)"
+      "Director (Aug 2022 – Present)"
+    - a pipe-separated segment containing a year, in which case both
+      surrounding pipes collapse to one:
+      "Senior Analyst | 2022–2025 | Deloitte" → "Senior Analyst | Deloitte"
+
+    Bare years in prose (not in parens/pipes) are NOT matched —
+    "2024 Economic Survey" stays as the title.
+    """
+    m = _PARENS_DATE_RE.search(title)
+    if m:
+        date = m.group(1).strip()
+        title_without = title[: m.start()].rstrip()
+        return title_without, date
+
+    if "|" in title:
+        parts = [p.strip() for p in title.split("|")]
+        for i, part in enumerate(parts):
+            if re.search(_YEAR_PATTERN, part):
+                date = part
+                remaining = [p for j, p in enumerate(parts) if j != i and p]
+                rebuilt = " | ".join(remaining)
+                return rebuilt, date
+
+    return title, None
+
+
+def _render_titled_block(
+    raw_title: str,
+    title_style: ParagraphStyle,
+    metadata_style: ParagraphStyle,
+) -> list:
+    """
+    Render a block (or sub-block) title.
+
+    If the raw title contains a recognizable date segment, the date moves
+    to a separate metadata paragraph beneath the title. Otherwise the
+    title renders as a single paragraph (current behavior — regression-
+    guarded).
+
+    Single-flow text only — no Tables, no tab stops. The metadata line is
+    a real second paragraph that ATS parsers read in document order, which
+    is what every commercial-ATS guidance recommends. See issue #42.
+    """
+    title_without_date, date = _split_title_and_date(raw_title)
+    if date is None:
+        return [Paragraph(_escape(raw_title), title_style)]
+    return [
+        Paragraph(_escape(title_without_date), title_style),
+        Paragraph(_escape(date), metadata_style),
+    ]
 
 
 def _photo_render_size_cm(photo_source) -> tuple[float, float]:
@@ -622,7 +717,9 @@ def _build_resume_flowables(
             flow.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
         # Blocks (Experience, Education, Projects).
         for block in section.blocks:
-            group: list = [Paragraph(_escape(block.title), styles["BlockTitle"])]
+            group: list = list(_render_titled_block(
+                block.title, styles["BlockTitle"], styles["BlockMetadata"],
+            ))
             # Direct bullets (single-role blocks).
             for bullet in block.bullets:
                 group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
@@ -630,7 +727,9 @@ def _build_resume_flowables(
             # glued to its own bullets via the group list, so KeepTogether
             # prevents a page break from splitting role-title from its bullets.
             for sub in block.sub_blocks:
-                group.append(Paragraph(_escape(sub.title), styles["SubBlockTitle"]))
+                group.extend(_render_titled_block(
+                    sub.title, styles["SubBlockTitle"], styles["SubBlockMetadata"],
+                ))
                 for bullet in sub.bullets:
                     group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
             flow.append(KeepTogether(group))
