@@ -365,6 +365,126 @@ def cleanup_stray_outputs(
 
 
 # ---------------------------------------------------------------------------
+# 2.6 cleanup_stray_prompts: defense-in-depth for prompt-staging PII leaks
+# ---------------------------------------------------------------------------
+#
+# Background: real-run testing of #43 surfaced that some agents (Claude Code's
+# Bash tool was the observed offender on macOS) improvise around SKILL.md's
+# prompt-build pattern. Instead of capturing the rendered prompt in a shell
+# variable (which can hit argv-length caps for the folder-miner prompt at
+# 100KB+), they write it to `/tmp/<kind>-prompt.txt` and pass the path. That
+# leaks the student's resume + JD + project content as plaintext PII into a
+# directory that's world-readable on macOS (mode 0755) until reboot.
+#
+# Belt-and-suspenders fix:
+#   - Suspenders: SKILL.md now prescribes `$RUN_DIR/prompts/<kind>.txt`
+#     for prompt staging (gitignored, run-scoped, wiped each run).
+#   - Belt: this scan runs at end of Phase 8 to catch and delete any
+#     /tmp/<kind>-prompt.{txt,md} file the agent improvised anyway.
+#
+# Anti-footgun rules:
+#   - Top-level only (never recursive). /tmp has many other tools' files;
+#     we only look at the immediate top.
+#   - mtime gate: only files newer than the run's start timestamp are
+#     candidates. Pre-existing /tmp files (other tools' debug output) are
+#     never touched.
+#   - Name match: basename must equal `<kind>-prompt.<ext>` or
+#     `<kind>_prompt.<ext>` for a kind in PROMPT_KINDS, with .txt / .md
+#     suffix. Generic /tmp files like `bash_history` or `screenshot.png`
+#     are never touched.
+#   - Action: delete unconditionally. These are transient sub-agent
+#     intermediates; there's no recovery value, and they contain PII we
+#     want gone. (If you ever decide you want them moved-and-logged for
+#     debugging, file a new issue and we can flip the action.)
+
+
+def _registered_prompt_kinds() -> tuple[str, ...]:
+    """Returns the registered prompt kind names. Kept as a function so the
+    cleanup pattern set updates automatically as new kinds are added to
+    `scripts/prompts.py` — there's no second list to keep in sync."""
+    return tuple(_PROMPT_KINDS)
+
+
+def cleanup_stray_prompts(
+    since_timestamp: float,
+    scan_dir: Path = Path("/tmp"),
+) -> list[CleanupAction]:
+    """Scan `scan_dir` (default `/tmp`) top-level for prompt-staging files
+    a sub-agent improvised, deleting any whose mtime is newer than
+    `since_timestamp` and whose basename matches `<kind>-prompt.{txt,md}`
+    or `<kind>_prompt.{txt,md}` for a kind in `_PROMPT_KINDS`.
+
+    Returns a list of CleanupAction records. Never raises on a single
+    bad file — records a `skipped` action and moves on. If `scan_dir`
+    doesn't exist or isn't a directory, returns an empty list (some
+    constrained runtimes don't have /tmp).
+    """
+    actions: list[CleanupAction] = []
+    if not scan_dir.exists() or not scan_dir.is_dir():
+        return actions
+
+    kinds = _registered_prompt_kinds()
+    # Build the matched-name set: for each kind name, both the canonical
+    # hyphen-separator form (`folder-miner-prompt`) and the all-underscore
+    # form (`folder_miner_prompt`) are accepted, with both `-prompt` and
+    # `_prompt` connector separators. Agents improvise across all these
+    # combinations in real runs (Eduardo's logs showed both variants from
+    # different sessions).
+    expected_stems: set[str] = set()
+    for kind in kinds:
+        kind_lower = kind.lower()
+        kind_underscore = kind_lower.replace("-", "_")
+        for stem_prefix in {kind_lower, kind_underscore}:
+            for sep in ("-", "_"):
+                expected_stems.add(f"{stem_prefix}{sep}prompt")
+
+    try:
+        entries = list(scan_dir.iterdir())
+    except OSError:
+        return actions
+
+    for entry in entries:
+        try:
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() not in (".txt", ".md"):
+                continue
+            if entry.stem.lower() not in expected_stems:
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime <= since_timestamp:
+                continue
+        except OSError:
+            continue
+
+        try:
+            entry.unlink()
+            actions.append(
+                CleanupAction(
+                    path=entry,
+                    action="deleted",
+                    reason=(
+                        "transient sub-agent prompt-staging file in /tmp; "
+                        "SKILL.md prescribes $RUN_DIR/prompts/ for staging"
+                    ),
+                )
+            )
+        except OSError as exc:
+            actions.append(
+                CleanupAction(
+                    path=entry,
+                    action="skipped",
+                    reason=f"delete failed: {exc}",
+                )
+            )
+
+    return actions
+
+
+# ---------------------------------------------------------------------------
 # 3. read file with encoding detection (chardet fallback to utf-8-sig / utf-8)
 # ---------------------------------------------------------------------------
 
@@ -1233,6 +1353,35 @@ def _cli() -> int:
         help="Epoch seconds; only files with mtime newer than this are candidates",
     )
 
+    p = sub.add_parser(
+        "cleanup-stray-prompts",
+        help=(
+            "Defense-in-depth: scan /tmp for prompt-staging files a "
+            "sub-agent improvised (issue #45). Files newer than "
+            "--since-timestamp whose basenames match <kind>-prompt.{txt,md} "
+            "or <kind>_prompt.{txt,md} for a registered prompt kind are "
+            "deleted unconditionally — they're transient sub-agent "
+            "intermediates containing student PII (resume, JD, project "
+            "content). Emits a JSON summary on stdout. Always exits 0 — "
+            "cleanup failures are logged but never block the orchestrator."
+        ),
+    )
+    p.add_argument(
+        "--since-timestamp",
+        type=float,
+        required=True,
+        help="Epoch seconds; only files with mtime newer than this are candidates",
+    )
+    p.add_argument(
+        "--scan-dir",
+        default="/tmp",
+        help=(
+            "Directory to scan, top-level only (default: /tmp). Mainly "
+            "useful for tests; production callers should leave this at "
+            "the default."
+        ),
+    )
+
     p = sub.add_parser("first-run-needed")
     p.add_argument("cwd", nargs="?", default=".")
 
@@ -1512,6 +1661,27 @@ def _cli() -> int:
                 for a in actions
             ],
             "moved": sum(1 for a in actions if a.action == "moved"),
+            "deleted": sum(1 for a in actions if a.action == "deleted"),
+            "skipped": sum(1 for a in actions if a.action == "skipped"),
+        }
+        print(json.dumps(summary))
+        return 0
+
+    if args.command == "cleanup-stray-prompts":
+        actions = cleanup_stray_prompts(
+            since_timestamp=args.since_timestamp,
+            scan_dir=Path(args.scan_dir),
+        )
+        summary = {
+            "scanned": str(Path(args.scan_dir).resolve()),
+            "actions": [
+                {
+                    "path": str(a.path),
+                    "action": a.action,
+                    "reason": a.reason,
+                }
+                for a in actions
+            ],
             "deleted": sum(1 for a in actions if a.action == "deleted"),
             "skipped": sum(1 for a in actions if a.action == "skipped"),
         }

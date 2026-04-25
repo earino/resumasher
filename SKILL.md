@@ -219,6 +219,17 @@ PROMPT=$("$RS" orchestration build-prompt --kind <kind> --cwd "$STUDENT_CWD" [--
 
 `build-prompt` reads the appropriate files from `$RUN_DIR/` / `.resumasher/cache.txt` / `$OUT_DIR/`, substitutes them into the kind's template (defined in `scripts/prompts.py`), and emits the fully-rendered prompt to stdout. No LLM-side substitution, no ambiguity. If a required file is missing, `build-prompt` exits with code 2 and a clear error naming the file and the phase that produces it.
 
+**If a prompt is too large to round-trip through a shell variable** (the `folder-miner` prompt routinely exceeds 100KB on a real GitHub mine, and some hosts cap argv length at 128KB), stage the rendered prompt to a file inside `$RUN_DIR/prompts/` — NEVER `/tmp/` — then read it back when dispatching:
+
+```bash
+mkdir -p "$RUN_DIR/prompts"
+"$RS" orchestration build-prompt --kind folder-miner --cwd "$STUDENT_CWD" \
+  > "$RUN_DIR/prompts/folder-miner.txt"
+PROMPT=$(cat "$RUN_DIR/prompts/folder-miner.txt")
+```
+
+`$RUN_DIR/prompts/` is gitignored (parent `.resumasher/` is) and gets wiped at the start of every run, so prompt staging never leaks across sessions and never lands on the student's git history. **`/tmp/` is forbidden** for prompt staging because: (1) on macOS it's world-readable to other local users until reboot, exposing the student's resume + JD + project content as plaintext PII; (2) prompt files there can outlive the run and accumulate across sessions; (3) we have no cleanup hook for `/tmp` paths the agent improvises. A defense-in-depth cleanup scan (Phase 9) catches and deletes any `/tmp/<kind>-prompt.txt` files that slip through anyway, but the SKILL.md prescription above is the first line of defense — please follow it.
+
 Then dispatch the sub-agent with `$PROMPT` as the instruction text. The dispatch primitive varies by host:
 
 - **Claude Code:** `Task` tool with `subagent_type="general-purpose"` and the prompt as `description`/`prompt`.
@@ -710,16 +721,27 @@ DISPATCH_TS=$(date +%s)
 
 **Take each sub-agent's text response — the markdown document it returned in its message — and use the Write tool to save it to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md` respectively.** The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
 
-**Run the post-phase cleanup scan** to remove any rogue interview-prep-shaped files a misbehaving sub-agent may have planted in `$STUDENT_CWD`:
+**Run the post-phase cleanup scans** to remove any rogue files a misbehaving sub-agent or shell may have left behind:
 
 ```bash
+# Belt #1: rogue interview-prep-shaped files in $STUDENT_CWD (issue #29).
 "$RS" orchestration cleanup-stray-outputs \
     --cwd "$STUDENT_CWD" \
     --out-dir "$OUT_DIR" \
     --since-timestamp "$DISPATCH_TS"
+
+# Belt #2: stray prompt-staging files left in /tmp (issue #45).
+# Even with the SKILL.md prescription above ($RUN_DIR/prompts/),
+# an agent that improvises around the guidance could still drop
+# /tmp/<kind>-prompt.txt files containing student PII (resume, JD,
+# project content). On macOS /tmp is world-readable to other local
+# users until reboot. This scan deletes any such file with mtime
+# newer than $START_TS so PII never sits there.
+"$RS" orchestration cleanup-stray-prompts \
+    --since-timestamp "$START_TS"
 ```
 
-This is defense-in-depth — the prompt and orchestration changes above should keep sub-agents from writing rogue files in the first place, but a future weaker model could regress. The scan only touches files newer than `$DISPATCH_TS` whose names look like interview-prep output (case-insensitive substring match on `interview`, `prep`, or `bundle`); student-owned content is not at risk.
+This is defense-in-depth — the prompt and orchestration changes above should keep sub-agents from writing rogue files in the first place, but a future weaker model could regress. The first scan only touches files newer than `$DISPATCH_TS` whose names look like interview-prep output (case-insensitive substring match on `interview`, `prep`, or `bundle`); student-owned content is not at risk. The second scan only touches files in `/tmp` whose basenames match `<kind>-prompt.{txt,md}` for one of the registered prompt kinds; it never recurses, never touches files outside `/tmp`, and never touches files older than the run's `$START_TS`.
 
 **Retry budget:** each gets 1 retry. On second failure, write a stub file:
 
