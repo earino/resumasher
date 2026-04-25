@@ -425,15 +425,17 @@ mkdir -p "$RUN_DIR"
 Parse the job source and save the JD text to `$RUN_DIR/jd.txt` (later phases — fit-analyst, tailor, cover-letter, interview-coach — read from that path, and Phase 3 copies the file to `$OUT_DIR/jd.md` for the student's records):
 
 ```bash
-"$RS" orchestration parse-job-source "$JOB_SOURCE_ARG"
-# Returns JSON: {"mode": "file|url|literal", "path": "...", "content": "..."}
+# Capture the mode (single word: file / url / literal). Safe to capture
+# in $(...) under any shell — no JSON, no escapes, no newlines.
+JD_MODE=$("$RS" orchestration parse-job-mode "$JOB_SOURCE_ARG")
 ```
 
-Route the write through `format-jd` so the Source URL header is prepended for URL-mode inputs (matters for `applications/<slug>/jd.md`: students recovering an old run need the URL for recruiter follow-up even after the posting is taken down). Pass the content via stdin:
+Route the write through `format-jd`. For file and literal modes, pipe `parse-job-content` directly through `format-jd` — never round-trip the content through a shell variable, which would let `echo`-interpret-backslash quirks (zsh, dash, bash with `xpg_echo`) corrupt the bytes:
 
 ```bash
-# mode=file or mode=literal — content comes straight from parse-job-source:
-echo -n "$CONTENT" | "$RS" orchestration format-jd --mode "$MODE" > "$RUN_DIR/jd.txt"
+# mode=file or mode=literal — pipe content directly, no shell-string roundtrip:
+"$RS" orchestration parse-job-content "$JOB_SOURCE_ARG" \
+  | "$RS" orchestration format-jd --mode "$JD_MODE" > "$RUN_DIR/jd.txt"
 
 # mode=url — fetch the page FIRST, then pipe the fetched text with --url set:
 echo -n "$FETCHED_PAGE_TEXT" | "$RS" orchestration format-jd --mode url --url "$URL" > "$RUN_DIR/jd.txt"
@@ -461,7 +463,7 @@ echo "$START_TS" > "$RUN_DIR/start-ts.txt"
   --resume-format "$RESUME_FORMAT"
 ```
 
-Substitute `$JD_MODE` with the `mode` field from `parse-job-source` output (`file`, `url`, or `literal`). Substitute `$RESUME_FORMAT` with one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned. Substitute `$MODEL` as described in the prologue.
+`$JD_MODE` is the value captured from `parse-job-mode` above (`file`, `url`, or `literal`). Substitute `$RESUME_FORMAT` with one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned. Substitute `$MODEL` as described in the prologue.
 
 ---
 
@@ -1240,8 +1242,8 @@ installation path — user-scope (`$HOME/.claude/skills/`, `.codex/skills/`, or
 substitution needed. `$SETUP_DURATION_SECONDS` is time elapsed since the consent
 prompt started.
 
-**Phase 1 (start) — run_started.** Fired right after `parse-job-source` and
-`discover-resume` succeed:
+**Phase 1 (start) — run_started.** Fired right after `parse-job-mode` /
+`parse-job-content` and `discover-resume` succeed:
 
 ```bash
 "$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
@@ -1252,7 +1254,7 @@ prompt started.
   --resume-format "$RESUME_FORMAT"
 ```
 
-`$JD_MODE` is the `mode` field from `parse-job-source` output (`file`, `url`,
+`$JD_MODE` is the value captured from `parse-job-mode` (`file`, `url`,
 or `literal`). `$RESUME_FORMAT` is one of `resume_md`, `resume_pdf`, `cv_md`,
 `cv_pdf` based on the `discover-resume` filename.
 
