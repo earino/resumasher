@@ -98,13 +98,24 @@ def _run_orchestration_cli(args: list[str], cwd: Path) -> "subprocess.CompletedP
     subprocess runs from the repo root so the `scripts` package resolves
     on the import path; the resolution-against-cwd argument is preserved
     for any subcommand that takes a `--cwd` flag (caller passes that
-    explicitly via args)."""
+    explicitly via args).
+
+    `encoding="utf-8"` is explicit because Python's subprocess defaults
+    decode captured stdout via `locale.getpreferredencoding(False)`,
+    which is CP1252 on Windows English-locale runners. CP1252 can't
+    represent curly quotes, em-dashes, or ligatures — exactly the
+    characters our JD-content tests assert byte-perfect round-trip on.
+    The orchestration CLI itself reconfigures stdout to UTF-8 (issue
+    #34); this test-side encoding pin closes the loop on the receiving
+    end so the symmetry holds on Windows CI runners.
+    """
     import subprocess
     repo_root = Path(__file__).resolve().parent.parent
     return subprocess.run(
         [sys.executable, "-m", "scripts.orchestration", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=str(repo_root),
         check=False,
     )

@@ -1755,11 +1755,22 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
 
 
 if __name__ == "__main__":
-    # Python on Windows defaults stdout/stderr to the system ANSI code page
-    # (typically CP1252) when not attached to a TTY. Prompts and user-facing
-    # output contain `→`, `…`, curly quotes, and non-ASCII names that CP1252
-    # can't encode, so writes raise UnicodeEncodeError. Force UTF-8 so the
-    # Windows Git Bash path behaves like macOS/Linux.
+    # Python on Windows defaults stdin/stdout/stderr to the system ANSI code
+    # page (typically CP1252) when not attached to a TTY. Prompts and JD
+    # content contain `→`, `…`, curly quotes (U+2019), em-dashes (U+2014),
+    # ligatures (ﬁ in 'office'), and non-ASCII names that CP1252 can't
+    # represent. Without this reconfigure, three failure modes hit Windows
+    # students:
+    #  - stdout writes raise UnicodeEncodeError
+    #  - stdin reads decode bytes via CP1252 with surrogateescape error
+    #    handler, producing low-surrogates that can't later round-trip
+    #    back to UTF-8 (this is the failure surfaced by issue #44's bash-
+    #    pipeline test on the Windows CI matrix)
+    #  - stderr writes corrupt diagnostics
+    # Force UTF-8 on all three streams so the Windows Git Bash path
+    # behaves identically to macOS/Linux.
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
