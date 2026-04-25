@@ -2709,3 +2709,36 @@ def test_render_project_title_collapses_to_single_link_in_pdf(tmp_path: Path):
     assert "https://github.com/earino/ci_fixer_bot" in uris, (
         f"Project URL missing from PDF Link annotations. Got: {uris}"
     )
+
+
+def test_linkify_title_collapses_when_url_in_code_span_backticks():
+    """Real-run regression: tailor LLM wraps project URLs in markdown
+    code spans like `Name (`URL`)`. Pre-fix the collapse regex didn't
+    match because the parens content was a backtick-wrapped URL, not a
+    bare URL. Code spans must be stripped before the shape check."""
+    out = _linkify_title("ci_fixer_bot (`github.com/earino/ci_fixer_bot`)")
+    assert out == (
+        '<a href="https://github.com/earino/ci_fixer_bot" '
+        'color="#0645AD">ci_fixer_bot</a>'
+    ), f"Code-span-wrapped URL did not collapse: {out!r}"
+
+
+def test_linkify_title_collapses_https_url_in_code_span():
+    out = _linkify_title("Project (`https://example.com/foo`)")
+    assert '<a href="https://example.com/foo"' in out
+    assert "color=\"#0645AD\"" in out
+    assert ">Project</a>" in out
+
+
+def test_linkify_title_does_not_collapse_when_two_urls_in_parens():
+    """Even after stripping code spans, parens content with multiple
+    URLs separated by commas isn't a single-URL parens shape — falls
+    through to inline-URL behavior. Real-run example: a project entry
+    that combined two repos in one heading."""
+    title = "prompt-harness + nonprofit.ai (`github.com/me/a`, `github.com/me/b`)"
+    out = _linkify_title(title)
+    # Title text "prompt-harness + nonprofit.ai" must survive (no collapse).
+    assert "prompt-harness + nonprofit.ai" in out
+    # Both URLs become inline clickable runs.
+    assert '<a href="https://github.com/me/a' in out
+    assert '<a href="https://github.com/me/b' in out

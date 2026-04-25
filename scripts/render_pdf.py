@@ -1025,6 +1025,12 @@ def _linkify_title(title: str) -> str:
         "Project (https://example.com)"
             → '<a href="https://example.com" color="...">Project</a>'
 
+    Code-span backticks around the URL are stripped before the shape
+    check. Real-run markdown commonly has shapes like ``Name (`URL`)``
+    where the tailor LLM wraps URLs in code spans — those would
+    otherwise fail the regex (the parens content would carry literal
+    backticks, not a bare URL pattern).
+
     For every other title shape (no parens, parens with non-URL content,
     parens with URL + extra metadata, etc.) falls through to
     `_linkify_text` so embedded URLs still get inline link annotations.
@@ -1033,7 +1039,13 @@ def _linkify_title(title: str) -> str:
     Bullets keep the inline-URL display because their parens routinely
     contain commas and additional metadata ("(github.com/me/x, 23 stars)").
     """
-    m = _TITLE_TRAILING_URL_RE.match(title.strip())
+    # Strip markdown code-span backticks first — same pre-pass as
+    # `_linkify_text`. The tailor LLM wraps project URLs in code spans
+    # (the markdown shape ``Name (`github.com/me/x`)``), and the
+    # title-collapse regex only matches when the parens contain a bare
+    # URL with no surrounding markup.
+    candidate = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", title).strip()
+    m = _TITLE_TRAILING_URL_RE.match(candidate)
     if not m:
         return _linkify_text(title)
     name = m.group(1).strip()
