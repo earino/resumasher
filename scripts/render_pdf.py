@@ -635,14 +635,21 @@ _VALID_PHOTO_POSITIONS = ("left", "right", "center")
 
 
 # Recognize a date segment inside a block/sub-block title. Heuristic: the
-# date is whatever parenthesized expression at end-of-string, or pipe-
-# separated segment, contains a 4-digit year (1900-2099). Bare years in
-# prose like "2024 Economic Survey" don't match because they're not in
-# parens or pipes. The rare false positive (e.g., "(founded 1995)" in a
-# title) is acceptable — splitting it onto its own line is mildly weird,
-# not destructive. See issue #42 for the full ATS rationale.
+# date is whatever parenthesized expression containing a 4-digit year
+# (1900-2099), or pipe-separated segment containing a year. The
+# parenthesized form matches anywhere in the title, not just at the end —
+# real-run resumes commonly have shapes like
+# `Senior Director (Aug 2022 – Aug 2025) — Zurich` where a location
+# trails the closing paren, and the location must remain in the title
+# while the date moves to its own metadata line.
+#
+# Bare years in prose like "2024 Economic Survey" don't match because
+# they're not in parens or pipes. The rare false positive (e.g.,
+# "(founded 1995)" in a title) is acceptable — splitting it onto its own
+# line is mildly weird, not destructive. See issue #42 for the full ATS
+# rationale.
 _YEAR_PATTERN = r"\b(?:19|20)\d{2}\b"
-_PARENS_DATE_RE = re.compile(rf"\(([^()]*{_YEAR_PATTERN}[^()]*)\)\s*$")
+_PARENS_DATE_RE = re.compile(rf"\(([^()]*{_YEAR_PATTERN}[^()]*)\)")
 
 
 def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
@@ -653,10 +660,18 @@ def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
     otherwise (original_title, None).
 
     Detection looks for either:
-    - a trailing parenthesized expression containing a year:
+    - a parenthesized expression containing a year, ANYWHERE in the
+      title (start, middle, or end). The text before AND after the
+      matched parens is preserved as the title, joined with a single
+      space, so a city/location trailing the date stays put:
+      "Senior Director (Aug 2022 – Aug 2025) — Zurich"
+        → title="Senior Director — Zurich", date="Aug 2022 – Aug 2025"
       "Senior Analyst — Deloitte (Aug 2022 – Aug 2025)"
+        → title="Senior Analyst — Deloitte", date="Aug 2022 – Aug 2025"
       "Project X (Feb 2026)"
+        → title="Project X", date="Feb 2026"
       "Director (Aug 2022 – Present)"
+        → title="Director", date="Aug 2022 – Present"
     - a pipe-separated segment containing a year, in which case both
       surrounding pipes collapse to one:
       "Senior Analyst | 2022–2025 | Deloitte" → "Senior Analyst | Deloitte"
@@ -667,7 +682,12 @@ def _split_title_and_date(title: str) -> tuple[str, Optional[str]]:
     m = _PARENS_DATE_RE.search(title)
     if m:
         date = m.group(1).strip()
-        title_without = title[: m.start()].rstrip()
+        before = title[: m.start()].rstrip()
+        after = title[m.end() :].lstrip()
+        if before and after:
+            title_without = f"{before} {after}"
+        else:
+            title_without = before or after
         return title_without, date
 
     if "|" in title:

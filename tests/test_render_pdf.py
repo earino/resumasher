@@ -2510,3 +2510,84 @@ def test_render_resume_with_italic_in_bullet_renders_without_asterisks(tmp_path:
     # And the asterisks must NOT appear in the rendered output.
     assert "*Applied" not in text
     assert "Learning*" not in text
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 final regression: parens-with-date in the MIDDLE of a title.
+# Real-run testing surfaced sub-block titles shaped like
+#   `Senior Director, Data Science (August 2022 – August 2025) — Zurich`
+# Pre-fix the regex was anchored to end-of-string, so the trailing
+# "— Zurich" caused the regex to miss the parens and the date stayed
+# inline. Result: CEU sub-blocks (no trailing location) split correctly,
+# Meta sub-blocks (with trailing "— Zurich" / "— Menlo Park") didn't.
+# ---------------------------------------------------------------------------
+
+
+def test_split_parens_with_trailing_location_after_close_paren():
+    """The shape that broke real runs: closing paren NOT at end of
+    string — there's a city/location separated by an em-dash after it."""
+    title = "Senior Director, Data Science (August 2022 – August 2025) — Zurich"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Director, Data Science — Zurich", (
+        f"Expected location preserved as title suffix, got: {t!r}"
+    )
+    assert d == "August 2022 – August 2025"
+
+
+def test_split_parens_with_trailing_location_em_dash_menlo_park():
+    """Variant with a different city to make sure the rebuild logic is
+    location-agnostic, not just hard-coded around 'Zurich'."""
+    title = "Data Science Manager (July 2017 – February 2021) — Menlo Park"
+    t, d = _split_title_and_date(title)
+    assert t == "Data Science Manager — Menlo Park"
+    assert d == "July 2017 – February 2021"
+
+
+def test_split_parens_at_end_still_works_no_trailing_text():
+    """Regression guard: the previous shape (no text after parens) must
+    keep working — this is what CEU sub-blocks look like."""
+    title = "Visiting Professor (December 2017 – July 2025)"
+    t, d = _split_title_and_date(title)
+    assert t == "Visiting Professor"
+    assert d == "December 2017 – July 2025"
+
+
+def test_split_parens_at_start_with_trailing_text():
+    """Edge case: parens at the very beginning, content after. Both
+    pieces of the title are preserved (one is empty, the rebuild logic
+    must not insert an awkward leading space)."""
+    title = "(Aug 2022 – Aug 2025) Senior Director"
+    t, d = _split_title_and_date(title)
+    assert t == "Senior Director"
+    assert d == "Aug 2022 – Aug 2025"
+
+
+def test_render_meta_subblock_with_trailing_location_splits_date(tmp_path: Path):
+    """End-to-end: the exact shape that was broken in Eduardo's
+    real-run resume PDF. The rendered text must show the title +
+    location on one line and the date on its own metadata line —
+    NOT the date inlined between the title and the location."""
+    md = (
+        "# Test Person\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Meta (July 2017 – August 2025)\n"
+        "**Senior Director, Data Science** (August 2022 – August 2025) — Zurich\n"
+        "- Did stuff.\n"
+    )
+    out = tmp_path / "trailing_location.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The date must NOT appear inline with the title and location.
+    assert "Senior Director, Data Science (August 2022" not in text, (
+        "Date appears inlined in the sub-block title — the parens-in-"
+        "middle case isn't being split."
+    )
+    # The split shape must appear: title-with-location, then date on
+    # its own line. pdfminer wraps lines so we just verify both pieces
+    # of text are present in the right order.
+    assert "Senior Director, Data Science" in text
+    assert "Zurich" in text
+    assert "August 2022 – August 2025" in text
