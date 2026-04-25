@@ -609,3 +609,96 @@ def test_cli_build_prompt_missing_out_dir_exits_2(skill_tree: Path):
     r = _run_build_prompt("--kind", "cover-letter", "--cwd", str(skill_tree))
     assert r.returncode == 2
     assert "--out-dir" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Issue #46: tailor must emit one project per H3 heading.
+#
+# Pre-fix the tailor prompt allowed the LLM to combine two related repos
+# under a single heading like
+#   `### prompt-harness + nonprofit.ai (github.com/me/a, github.com/me/b)`
+# The renderer's title-collapse logic only handles `Name (single URL)`,
+# so combined headings rendered as inline-URL fallback — visually
+# inconsistent with the canonical project entries in the same resume,
+# and ATS-confusing (one heading, two repos).
+#
+# These tests pin the prompt-template guidance against future drops.
+# ---------------------------------------------------------------------------
+
+
+def test_tailor_prompt_explicitly_requires_one_project_per_h3():
+    """The tailor template must contain the literal "One project per H3
+    heading" rule. If a future edit to scripts/prompts.py drops this
+    rule, the tailor LLM will start combining repos again under a
+    single heading."""
+    p = build_prompt(
+        "tailor",
+        contact_info="contact line placeholder",
+        resume_text="x",
+        folder_summary="y",
+        jd_text="z",
+    )
+    # The rule heading appears verbatim in the rendered prompt.
+    assert "One project per H3 heading" in p, (
+        "Tailor prompt must contain the 'One project per H3 heading' rule. "
+        "If this assertion fails, the rule was dropped from the template "
+        "in scripts/prompts.py — please restore it. See issue #46."
+    )
+
+
+def test_tailor_prompt_lists_concrete_combiner_examples_to_avoid():
+    """The rule names the specific combiner shapes (`+`, `&`, `/`) we
+    observed in real runs. Examples in prompts are load-bearing — LLMs
+    follow the example pattern more reliably than abstract rules."""
+    p = build_prompt(
+        "tailor",
+        contact_info="contact line placeholder",
+        resume_text="x",
+        folder_summary="y",
+        jd_text="z",
+    )
+    # The rule explicitly names at least the `+` combiner (the shape
+    # Eduardo's run produced) so the LLM has a concrete negative
+    # example to anchor against.
+    assert "foo + bar" in p, (
+        "Tailor prompt rule must include a concrete `Name + Name (URLs)` "
+        "negative example to anchor LLM behavior. See issue #46."
+    )
+
+
+def test_tailor_prompt_says_emit_two_separate_blocks_instead():
+    """The rule must prescribe the correct behavior, not just forbid the
+    wrong one. 'Emit two separate ### blocks' is the affirmative
+    instruction the LLM follows."""
+    p = build_prompt(
+        "tailor",
+        contact_info="contact line placeholder",
+        resume_text="x",
+        folder_summary="y",
+        jd_text="z",
+    )
+    assert "two separate" in p and "###" in p, (
+        "Tailor prompt rule must prescribe emitting separate ### blocks. "
+        "See issue #46."
+    )
+
+
+def test_tailor_prompt_schema_block_annotates_one_project_per_heading():
+    """The Projects schema block (the visible template structure the
+    LLM mirrors) should annotate the one-project-per-heading constraint
+    inline with the H3 line — schema annotations are more salient to
+    the LLM than buried prose rules."""
+    p = build_prompt(
+        "tailor",
+        contact_info="contact line placeholder",
+        resume_text="x",
+        folder_summary="y",
+        jd_text="z",
+    )
+    # Look for the H3 schema line followed by the ONE-per-heading
+    # annotation. The exact spacing isn't asserted (template comments
+    # are visual, not load-bearing), but the annotation must be there.
+    assert "ONE project per heading" in p, (
+        "Tailor prompt schema block must annotate the H3 line with "
+        "'<-- ONE project per heading'. See issue #46."
+    )
