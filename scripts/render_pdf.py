@@ -431,7 +431,11 @@ def _build_styles() -> StyleSheet1:
         fontSize=12,
         leading=15,
         alignment=TA_LEFT,
-        spaceBefore=10,
+        # spaceBefore bumped 10 → 14 alongside #42's stacked-date layout:
+        # blocks gained a metadata line, so the heading-to-content rhythm
+        # would otherwise feel proportionally compressed. Sections now read
+        # as visually separate.
+        spaceBefore=14,
         spaceAfter=4,
         textColor="#111111",
     ))
@@ -486,6 +490,25 @@ def _build_styles() -> StyleSheet1:
         alignment=TA_LEFT,
         leftIndent=14,
         bulletIndent=4,
+        spaceAfter=1,
+    ))
+    # Bullets that live under a sub-block title need to indent past the
+    # sub-block's own indent (SubBlockTitle.leftIndent=8), or the bullet
+    # character renders to the LEFT of the sub-block content above it —
+    # which reads as broken hierarchy. Pre-#42 this latent bug was easy
+    # to miss because the sub-block title-with-date occupied a single
+    # dense line; #42's stacked-date layout puts the metadata line
+    # immediately above the bullet, making the misalignment glaring.
+    # leftIndent + 8 / bulletIndent + 8 keeps the bullet visibly indented
+    # past its parent sub-block's content.
+    ss.add(ParagraphStyle(
+        name="SubBlockBullet",
+        fontName=regular,
+        fontSize=10,
+        leading=13,
+        alignment=TA_LEFT,
+        leftIndent=22,
+        bulletIndent=12,
         spaceAfter=1,
     ))
     ss.add(ParagraphStyle(
@@ -731,7 +754,7 @@ def _build_resume_flowables(
                     sub.title, styles["SubBlockTitle"], styles["SubBlockMetadata"],
                 ))
                 for bullet in sub.bullets:
-                    group.append(Paragraph(_escape(bullet), styles["Bullet"], bulletText="•"))
+                    group.append(Paragraph(_escape(bullet), styles["SubBlockBullet"], bulletText="•"))
             flow.append(KeepTogether(group))
 
     return flow

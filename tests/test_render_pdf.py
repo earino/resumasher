@@ -1553,3 +1553,97 @@ def test_ats_round_trip_dates_still_extractable_after_split(tmp_path: Path):
         "Deloitte",
         "Teaching Assistant",
     ])
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 correctness fixes: sub-block bullet indent + section separation.
+#
+# The stacked-date layout exposed two pre-existing layout issues that made
+# multi-role tenures actively uglier than before-#42:
+#   (1) Bullets under sub-blocks rendered with bullet-character to the LEFT
+#       of the sub-block content above them (Bullet.bulletIndent=4 vs
+#       SubBlockTitle.leftIndent=8). The new metadata line directly above
+#       the bullet made the misalignment impossible to miss.
+#   (2) SectionHeading.spaceBefore=10 was tight before; with blocks
+#       gaining a metadata line, the heading-to-content rhythm felt
+#       proportionally compressed and sections read as one continuous
+#       chunk.
+#
+# Bundled with #42 because shipping the date-split alone would have been
+# a regression. Correctness, not scope creep.
+# ---------------------------------------------------------------------------
+
+
+def test_sub_block_bullet_indent_is_past_sub_block_content():
+    """SubBlockBullet must indent past SubBlockTitle.leftIndent so the
+    bullet character renders to the RIGHT of (or aligned with) the
+    sub-block title and metadata above it, not to the left of them."""
+    styles = _build_styles()
+    sub_title_indent = styles["SubBlockTitle"].leftIndent
+    sub_bullet_left = styles["SubBlockBullet"].leftIndent
+    sub_bullet_char = styles["SubBlockBullet"].bulletIndent
+    # Both the bullet character position and the bullet text position
+    # must be ≥ the sub-block title's indent. Otherwise the visual
+    # hierarchy reads as "bullet outdents past its parent."
+    assert sub_bullet_char >= sub_title_indent, (
+        f"SubBlockBullet.bulletIndent ({sub_bullet_char}) must be ≥ "
+        f"SubBlockTitle.leftIndent ({sub_title_indent}) so the bullet "
+        f"character doesn't render to the left of the sub-block content."
+    )
+    assert sub_bullet_left >= sub_title_indent, (
+        f"SubBlockBullet.leftIndent ({sub_bullet_left}) must be ≥ "
+        f"SubBlockTitle.leftIndent ({sub_title_indent})."
+    )
+
+
+def test_top_level_bullet_indent_unchanged_regression_guard():
+    """Regression guard: bullets at section level or directly under a
+    block (not a sub-block) must still use the original Bullet style.
+    Changing top-level bullet indent would shift every existing resume's
+    layout — out of scope for #42."""
+    styles = _build_styles()
+    assert styles["Bullet"].leftIndent == 14
+    assert styles["Bullet"].bulletIndent == 4
+
+
+def test_section_heading_space_before_visibly_separates_sections():
+    """SectionHeading.spaceBefore must be large enough that sections
+    read as separate. 10pt was OK before #42's metadata lines added
+    vertical density to each block; bumped to 14 to restore the
+    proportional rhythm. Anything below ~12 starts to look cramped on
+    real resumes."""
+    styles = _build_styles()
+    assert styles["SectionHeading"].spaceBefore >= 12, (
+        f"SectionHeading.spaceBefore is {styles['SectionHeading'].spaceBefore}pt; "
+        f"sections need ≥12pt above to read as visually separate after "
+        f"#42's metadata lines added vertical density to blocks."
+    )
+
+
+def test_render_sub_block_bullets_extract_in_order(tmp_path: Path):
+    """End-to-end: render a multi-role resume and assert the new bullet
+    indent doesn't break ATS round-trip. Bullet text still appears in
+    document order — just with deeper visual indent."""
+    md = (
+        "# Multi Role\n"
+        "mr@example.com | +1 555 0000 | linkedin.com/in/mr | City\n"
+        "\n"
+        "## Experience\n"
+        "### Big Co (2020 – Present)\n"
+        "**Senior Director** (2023 – Present)\n"
+        "- Led the org through hypergrowth.\n"
+        "**Director** (2020 – 2023)\n"
+        "- Built the team from scratch.\n"
+    )
+    out = tmp_path / "multi.pdf"
+    render_resume_eu(md, out)
+    assert_ats_roundtrip(str(out), [
+        "Big Co",
+        "2020 – Present",
+        "Senior Director",
+        "2023 – Present",
+        "Led the org through hypergrowth",
+        "Director",
+        "2020 – 2023",
+        "Built the team from scratch",
+    ])
