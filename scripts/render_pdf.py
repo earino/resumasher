@@ -96,11 +96,22 @@ from PIL import Image as PILImage
 _ROOT = Path(__file__).resolve().parent.parent
 _FONT_REG_NAME = "ResumasherSans"
 _FONT_BOLD_NAME = "ResumasherSans-Bold"
+_FONT_OBLIQUE_NAME = "ResumasherSans-Oblique"
+_FONT_BOLD_OBLIQUE_NAME = "ResumasherSans-BoldOblique"
 _FONT_REGISTERED = False
 
 
 def _register_fonts() -> tuple[str, str]:
-    """Register DejaVu Sans under stable names. Returns (regular, bold) names."""
+    """Register DejaVu Sans (regular + bold + oblique + bold-oblique) under
+    stable names. Returns the (regular, bold) names — italic/boldItalic
+    are wired via `registerFontFamily` so reportlab's `<i>` tag in
+    Paragraph picks them up automatically.
+
+    Bundling both oblique files (~1.3MB total in assets/) is the right
+    call: without them, `*italic*` markdown in tailored bullets renders
+    as regular-weight text — visible difference between intent and
+    output. With them, italic actually renders as italic.
+    """
     global _FONT_REGISTERED
     if _FONT_REGISTERED:
         return _FONT_REG_NAME, _FONT_BOLD_NAME
@@ -117,9 +128,23 @@ def _register_fonts() -> tuple[str, str]:
         Path("/Library/Fonts/DejaVuSans-Bold.ttf"),
         Path("/System/Library/Fonts/DejaVuSans-Bold.ttf"),
     ]
+    candidates_oblique = [
+        _ROOT / "assets" / "DejaVuSans-Oblique.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf"),
+        Path("/Library/Fonts/DejaVuSans-Oblique.ttf"),
+        Path("/System/Library/Fonts/DejaVuSans-Oblique.ttf"),
+    ]
+    candidates_bold_oblique = [
+        _ROOT / "assets" / "DejaVuSans-BoldOblique.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf"),
+        Path("/Library/Fonts/DejaVuSans-BoldOblique.ttf"),
+        Path("/System/Library/Fonts/DejaVuSans-BoldOblique.ttf"),
+    ]
 
     regular = next((p for p in candidates_regular if p.exists()), None)
     bold = next((p for p in candidates_bold if p.exists()), None)
+    oblique = next((p for p in candidates_oblique if p.exists()), None)
+    bold_oblique = next((p for p in candidates_bold_oblique if p.exists()), None)
 
     if regular is None:
         # Fall back to Helvetica but warn loudly on stderr so the caller knows
@@ -140,14 +165,29 @@ def _register_fonts() -> tuple[str, str]:
         # Register regular under bold name too so <b> doesn't crash.
         pdfmetrics.registerFont(TTFont(_FONT_BOLD_NAME, str(regular)))
 
-    # Map bold/italic so Paragraph <b>...</b> resolves correctly.
+    # Italic and bold-italic. If the oblique file is missing (someone cloned
+    # without the full assets/ tree), fall back to regular/bold so the <i>
+    # tag still produces text rather than crashing — the asterisks are still
+    # gone, just no slant.
+    if oblique is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_OBLIQUE_NAME, str(oblique)))
+    else:
+        pdfmetrics.registerFont(TTFont(_FONT_OBLIQUE_NAME, str(regular)))
+    if bold_oblique is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(bold_oblique)))
+    elif bold is not None:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(bold)))
+    else:
+        pdfmetrics.registerFont(TTFont(_FONT_BOLD_OBLIQUE_NAME, str(regular)))
+
+    # Map bold/italic so Paragraph <b>/<i>/<b><i> resolve correctly.
     from reportlab.pdfbase.pdfmetrics import registerFontFamily
     registerFontFamily(
         _FONT_REG_NAME,
         normal=_FONT_REG_NAME,
         bold=_FONT_BOLD_NAME,
-        italic=_FONT_REG_NAME,
-        boldItalic=_FONT_BOLD_NAME,
+        italic=_FONT_OBLIQUE_NAME,
+        boldItalic=_FONT_BOLD_OBLIQUE_NAME,
     )
     _FONT_REGISTERED = True
     return _FONT_REG_NAME, _FONT_BOLD_NAME
@@ -979,6 +1019,15 @@ def _downscale_photo_for_embed(path: str) -> object:
 
 _MARKDOWN_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 
+# Italic: `*text*` where content has no asterisks or newlines, AND starts
+# AND ends with a non-whitespace character. Run AFTER bold conversion so
+# `**...**` markers are already <b> tags and don't false-match here. The
+# non-whitespace bound at start/end follows standard markdown — it
+# eliminates math-operator false positives like "5 * 4 * 3" (each `*` has
+# whitespace on both sides) while still catching real italic intent like
+# "*Applied Deep Learning*" (course title, no spaces around the markers).
+_MARKDOWN_ITALIC_RE = re.compile(r"\*([^\s*](?:[^*\n]*?[^\s*])?)\*")
+
 
 def _escape(text: str) -> str:
     """Escape the small HTML-ish subset reportlab Paragraph interprets, and
@@ -987,21 +1036,24 @@ def _escape(text: str) -> str:
     reportlab Paragraph accepts an HTML-like subset for <b>, <i>, etc. Any
     literal &, <, > in user content must be escaped or the parser throws.
 
-    After escaping, we translate two markdown forms:
-    - `**bold**` → `<b>bold</b>` so markdown emphasis from upstream
-      sub-agents (common in interview-prep and cover letters) renders as
-      bold rather than literal asterisks. Italic (`*x*`) is intentionally
-      skipped — too easy to false-match on single asterisks in prose.
+    After escaping, we translate three markdown forms:
+    - `**bold**` → `<b>bold</b>` for emphasis from upstream sub-agents
+      (common in interview-prep and cover letters).
+    - `*italic*` → `<i>italic</i>` for course titles, book references,
+      foreign words. Bundled obliques (DejaVuSans-Oblique.ttf, registered
+      as italic via `registerFontFamily`) make this render as actual
+      italic, not regular text with markers stripped.
     - `` `code` `` → bare `code` so markdown code-span backticks (which
       the tailor LLM commonly wraps URLs in: `` `github.com/foo` ``) don't
       leak into the rendered output as visible decorative characters.
       reportlab Paragraph doesn't render code spans natively, and we have
       no use for them in a resume — strip the markers and keep the text.
 
-    The bold regex requires at least one non-asterisk, non-newline character
-    inside the pair, and forbids the pair from spanning a line break. The
-    code-span regex requires at least one non-backtick, non-newline char.
-    Both keep "*" / "`" alone, doubled markers, and multi-line content safe.
+    Order matters: code-span strip first, bold convert second, italic
+    convert third. Bold runs before italic so `**foo**` doesn't get
+    half-processed by the italic regex. Both bold and italic regexes
+    forbid pair-spans-newline so a misplaced asterisk can't eat a
+    paragraph break.
     """
     escaped = (
         text.replace("&", "&amp;")
@@ -1009,7 +1061,8 @@ def _escape(text: str) -> str:
         .replace(">", "&gt;")
     )
     escaped = _MARKDOWN_CODE_SPAN_RE.sub(r"\1", escaped)
-    return _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
+    escaped = _MARKDOWN_BOLD_RE.sub(r"<b>\1</b>", escaped)
+    return _MARKDOWN_ITALIC_RE.sub(r"<i>\1</i>", escaped)
 
 
 # ---------------------------------------------------------------------------

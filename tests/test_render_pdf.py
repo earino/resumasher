@@ -2388,3 +2388,125 @@ def test_render_resume_with_code_span_url_produces_clean_clickable_link(tmp_path
         assert not uri.endswith("`"), (
             f"Backtick leaked into PDF Link annotation href: {uri!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #42 italic markdown handling: `*italic*` → `<i>italic</i>`,
+# rendered with the bundled DejaVu Sans Oblique font (assets/) so it
+# actually visually slants rather than just stripping the markers.
+# ---------------------------------------------------------------------------
+
+
+def test_escape_converts_single_asterisk_pair_to_italic():
+    """`*text*` becomes `<i>text</i>` so course titles like
+    `*Applied Deep Learning*` (in tailored bullets) render as italic
+    rather than leaking the asterisks as visible markers."""
+    from scripts.render_pdf import _escape
+    assert _escape("*Applied Deep Learning*") == "<i>Applied Deep Learning</i>"
+
+
+def test_escape_italic_does_not_match_math_operator_with_spaces():
+    """`5 * 4 * 3` (math expression with spaces around operators) must
+    NOT match the italic regex. Standard markdown rule: italic markers
+    require non-whitespace immediately inside the `*` pair."""
+    from scripts.render_pdf import _escape
+    out = _escape("5 * 4 * 3")
+    assert "<i>" not in out, f"Math operators got false-matched as italic: {out!r}"
+    assert out == "5 * 4 * 3"
+
+
+def test_escape_italic_does_not_match_lone_trailing_asterisk():
+    """`footnote*` (single trailing asterisk, common in academic prose)
+    must not match — the italic regex requires a closing `*`."""
+    from scripts.render_pdf import _escape
+    assert _escape("see footnote*") == "see footnote*"
+
+
+def test_escape_bold_takes_precedence_over_italic():
+    """`**bold**` becomes `<b>bold</b>`, NOT `<i>*bold*</i>`. Bold
+    conversion runs before italic so the `**` markers are gone before
+    italic regex sees the text."""
+    from scripts.render_pdf import _escape
+    out = _escape("**bold**")
+    assert out == "<b>bold</b>"
+
+
+def test_escape_italic_does_not_span_newlines():
+    """Mismatched asterisks across a line break must not eat the
+    paragraph break — same safety as the bold regex."""
+    from scripts.render_pdf import _escape
+    out = _escape("first *line\nsecond* line")
+    # Both asterisks survive because the pair would have to cross a newline.
+    assert out.count("*") == 2
+
+
+def test_escape_italic_handles_multiple_pairs_in_one_string():
+    """A bullet might have several italic phrases. Each pair becomes
+    its own `<i>...</i>`."""
+    from scripts.render_pdf import _escape
+    out = _escape("read *War and Peace* then *Anna Karenina*")
+    assert "<i>War and Peace</i>" in out
+    assert "<i>Anna Karenina</i>" in out
+
+
+def test_escape_italic_combines_with_bold_in_same_string():
+    """Both formats can appear in the same line. Bold must remain bold
+    and italic remain italic — the conversion order ensures they don't
+    interfere."""
+    from scripts.render_pdf import _escape
+    out = _escape("**Senior Director** of *AI Research*")
+    assert "<b>Senior Director</b>" in out
+    assert "<i>AI Research</i>" in out
+
+
+def test_register_fonts_wires_italic_to_oblique_font():
+    """Font family registration must map the `italic` slot to the
+    bundled DejaVu Sans Oblique. Without this wiring, `<i>` tags
+    render in regular text — markers gone but no visible italic.
+    Verified via reportlab's pdfmetrics.getRegisteredFontNames()."""
+    from scripts.render_pdf import _register_fonts
+    from reportlab.pdfbase import pdfmetrics
+    _register_fonts()
+    # The oblique font must be registered under our stable name.
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    assert "ResumasherSans-Oblique" in registered, (
+        f"Oblique font not registered. Got: {sorted(registered)}"
+    )
+    assert "ResumasherSans-BoldOblique" in registered
+
+
+def test_oblique_font_files_bundled_in_assets():
+    """The asset files must exist on disk so a fresh clone has them.
+    Pre-#42 final-polish, only Regular and Bold were bundled — italic
+    rendered as regular. Now Oblique and BoldOblique ship too."""
+    from pathlib import Path
+    assets = Path(__file__).resolve().parent.parent / "assets"
+    assert (assets / "DejaVuSans-Oblique.ttf").exists(), (
+        "DejaVuSans-Oblique.ttf must be bundled in assets/ so italic "
+        "actually renders as italic, not as markers-stripped regular text."
+    )
+    assert (assets / "DejaVuSans-BoldOblique.ttf").exists()
+
+
+def test_render_resume_with_italic_in_bullet_renders_without_asterisks(tmp_path: Path):
+    """End-to-end: a bullet containing markdown italic markers renders
+    a PDF whose extracted text has no `*` characters — the asterisks
+    must have been converted to italic markup, not left as decorations.
+    """
+    md = (
+        "# Italic Test\n"
+        "test@example.com | City\n"
+        "\n"
+        "## Experience\n"
+        "### Teach (2023 – Present)\n"
+        "- Teach ECBS5200 *Applied Deep Learning* — six weeks of training.\n"
+    )
+    out = tmp_path / "italic.pdf"
+    render_resume_eu(md, out)
+    from pdfminer.high_level import extract_text
+    text = extract_text(str(out)) or ""
+    # The italic content must still be present as text.
+    assert "Applied Deep Learning" in text
+    # And the asterisks must NOT appear in the rendered output.
+    assert "*Applied" not in text
+    assert "Learning*" not in text
