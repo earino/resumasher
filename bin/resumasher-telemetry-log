@@ -51,7 +51,8 @@ if [ -n "${RESUMASHER_STATE_DIR:-}" ]; then
   STATE_DIR="$RESUMASHER_STATE_DIR"
 else
   _GRANDPARENT="$(cd "$RESUMASHER_DIR/../.." 2>/dev/null && pwd -P || echo "")"
-  if [ "$_GRANDPARENT" = "$(cd "$HOME/.claude" 2>/dev/null && pwd -P || echo "")" ]; then
+  if [ "$_GRANDPARENT" = "$(cd "$HOME/.claude" 2>/dev/null && pwd -P || echo "")" ] \
+    || [ "$_GRANDPARENT" = "$(cd "$HOME/.opencode" 2>/dev/null && pwd -P || echo "")" ]; then
     STATE_DIR="$HOME/.resumasher"
   else
     # Project-scope: project root is three directories above the skill.
@@ -60,10 +61,11 @@ else
 fi
 
 # Install-scope detection: "user_home" if the skill lives under any of the
-# three host-CLI user-convention directories ($HOME/.claude, .codex, .gemini),
-# else "project_local". Orchestrator can override via --install-scope-path.
+# four host-CLI user-convention directories ($HOME/.claude, .codex, .gemini,
+# .opencode), else "project_local". Orchestrator can override via
+# --install-scope-path.
 INSTALL_SCOPE_DETECTED="project_local"
-for _prefix in "$HOME/.claude/skills/" "$HOME/.codex/skills/" "$HOME/.gemini/skills/"; do
+for _prefix in "$HOME/.claude/skills/" "$HOME/.codex/skills/" "$HOME/.gemini/skills/" "$HOME/.opencode/skills/"; do
   case "$RESUMASHER_DIR/" in
     "$_prefix"*)
       INSTALL_SCOPE_DETECTED="user_home"
@@ -253,6 +255,8 @@ if [ -z "$HOST" ]; then
     HOST="codex_cli"
   elif [ -n "${GEMINI_VERSION:-}${GEMINI_CLI:-}" ]; then
     HOST="gemini_cli"
+  elif [ -n "${OPENCODE_VERSION:-}${OPENCODE:-}" ]; then
+    HOST="opencode_cli"
   else
     HOST="unknown"
   fi

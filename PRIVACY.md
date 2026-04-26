@@ -27,10 +27,13 @@ GDPR, ignoring a consent prompt is not consent. Active opt-in only.
   user is hitting the same bug repeatedly") without knowing who you are.
 
   **Where state lives — scope matches scope:**
-  - If you installed resumasher at user scope (`~/.claude/skills/resumasher/`),
-    the installation ID and local event log live at `~/.resumasher/` and are
-    shared across every project you use resumasher in. One Mac, one ID.
-  - If you installed resumasher at project scope (`<project>/.claude/skills/resumasher/`),
+  - If you installed resumasher at user scope (`~/.claude/skills/resumasher/`,
+    `~/.codex/skills/resumasher/`, `~/.gemini/skills/resumasher/`, or
+    `~/.opencode/skills/resumasher/`), the installation ID and local event log
+    live at `~/.resumasher/` and are shared across every project you use
+    resumasher in. One Mac, one ID.
+  - If you installed resumasher at project scope (`<project>/.claude/skills/resumasher/`
+    or the equivalent under `.codex`, `.gemini`, `.opencode`),
     the installation ID and local event log live at `<project>/.resumasher/`.
     Deleting the project deletes the telemetry state; nothing leaks outside
     the project boundary. Each project-scope install gets its own ID.
@@ -40,9 +43,10 @@ GDPR, ignoring a consent prompt is not consent. Active opt-in only.
 For each event:
 
 - Event type, timestamp, resumasher version, host (Claude Code / Codex /
-  Gemini), OS, CPU arch
+  Gemini / OpenCode), OS, CPU arch
 - Model identifier (e.g. `claude-opus-4-7`, `gpt-5-codex`,
-  `gemini-2.5-pro`) — self-reported by the AI orchestrator so the
+  `gemini-2.5-pro`, `anthropic/claude-opus-4-7` for OpenCode's
+  provider/model format) — self-reported by the AI orchestrator so the
   maintainer can see which models produce which fit scores or hit
   which bugs
 - Duration, outcome, error class (from a pre-declared enum — never a raw
@@ -83,7 +87,7 @@ dashboard views survive retention (they are counts, not individual rows).
 A curated subset of community-tier data is published publicly at
 [earino.github.io/resumasher/stats](https://earino.github.io/resumasher/stats/).
 The page shows counts only: runs per day, host distribution (Claude
-Code / Codex / Gemini), model mix, fit score histogram, seniority
+Code / Codex / Gemini / OpenCode), model mix, fit score histogram, seniority
 buckets, placeholder fill mix, and failures by phase.
 
 Every number is produced by a `SECURITY DEFINER` Postgres function

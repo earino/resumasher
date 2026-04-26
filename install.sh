@@ -143,11 +143,73 @@ if [ -d "$SCRIPT_DIR/bin" ]; then
   chmod +x "$SCRIPT_DIR/bin/"* 2>/dev/null || true
 fi
 
+
+# OpenCode slash-command shim. OpenCode resolves `/resumasher <args>` by
+# reading `~/.config/opencode/commands/resumasher.md` and substituting
+# `$ARGUMENTS` into its body. Without the shim, OpenCode falls back to
+# pasting the full SKILL.md as a user message and silently drops the
+# argument — observed under qwen3.6-35b in run ses_235c, where the model
+# replied "I've loaded the resumasher skill. What would you like me to do?"
+# instead of executing. The shim ensures `/resumasher jd.md` actually runs
+# the pipeline. Skipped silently if OpenCode isn't installed.
+OPENCODE_CMD_SRC="$SCRIPT_DIR/commands/resumasher.md"
+if [ -f "$OPENCODE_CMD_SRC" ] && command -v opencode >/dev/null 2>&1; then
+  OPENCODE_CMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands"
+  if mkdir -p "$OPENCODE_CMD_DIR" 2>/dev/null; then
+    if cp "$OPENCODE_CMD_SRC" "$OPENCODE_CMD_DIR/resumasher.md" 2>/dev/null; then
+      echo "Installed OpenCode slash-command shim at $OPENCODE_CMD_DIR/resumasher.md"
+    fi
+  fi
+fi
+
+# OpenCode tool_output.max_bytes detection. resumasher's SKILL.md is ~82KB,
+# above OpenCode's default 51,200-byte tool-output cap. When the cap is too
+# low, OpenCode truncates the skill load and weak local models (qwen,
+# llama-32b, etc.) miss Phase 7-9 prescriptions — wrong PDF filenames,
+# missing interview-prep.pdf, skeletal Phase 9 telemetry. Strong cloud
+# models (Claude, GPT-5) usually recover but the bug is real.
+#
+# We READ the user's opencode config (never write to it) and warn if the
+# cap is below SKILL.md's size. The user's config stays the user's
+# concern. See samples-issue42/session-ses_2359.md for the failure mode.
+if command -v opencode >/dev/null 2>&1; then
+  OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+  SKILL_BYTES=$(wc -c < "$SCRIPT_DIR/SKILL.md" 2>/dev/null | tr -d ' ')
+  # Use the venv Python we just built — every host has Python after install.
+  # Falls back to the documented OpenCode default (51200) on any parse error
+  # so we err on the side of warning (false positive is harmless; missing a
+  # real warning would let a student silently ship a half-truncated SKILL.md).
+  OPENCODE_MAX=$("$VENV_BIN/python" -c '
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    print(int(data.get("tool_output", {}).get("max_bytes", 51200)))
+except Exception:
+    print(51200)
+' "$OPENCODE_CONFIG" 2>/dev/null || echo 51200)
+  if [ -n "$SKILL_BYTES" ] && [ -n "$OPENCODE_MAX" ] && [ "$OPENCODE_MAX" -lt "$SKILL_BYTES" ]; then
+    echo ""
+    echo "NOTE: OpenCode detected. Your tool_output.max_bytes is $OPENCODE_MAX,"
+    echo "      but resumasher's SKILL.md is $SKILL_BYTES bytes. OpenCode will"
+    echo "      truncate the skill when it loads. Strong cloud models (Claude,"
+    echo "      GPT-5) usually recover; weak local models (qwen, llama-32b)"
+    echo "      will miss Phase 7-9 instructions and ship broken artifacts."
+    echo ""
+    echo "      To fix, add to $OPENCODE_CONFIG:"
+    echo '        { "tool_output": { "max_bytes": 102400 } }'
+    echo ""
+    echo "      (We never modify your opencode config — this is a heads-up,"
+    echo "      not an action item, and you can ignore it on cloud models.)"
+    echo ""
+  fi
+fi
+
 echo ""
 echo "resumasher installed at $SCRIPT_DIR"
 echo ""
 echo "Next steps:"
-echo "  1. Restart your AI CLI (Claude Code, Codex, or Gemini) so it picks up the new skill."
+echo "  1. Restart your AI CLI (Claude Code, Codex, Gemini, or OpenCode) so it picks up the new skill."
 echo "  2. cd to a folder containing resume.md (try GOLDEN_FIXTURES/ for a demo)."
 echo "  3. Run: /resumasher <job-source>"
 if [ "$INSTALL_DEV" = "0" ]; then

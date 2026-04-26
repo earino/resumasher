@@ -376,7 +376,8 @@ def test_log_host_falls_through_to_unknown_when_unset(sandbox):
     env.pop("RESUMASHER_HOST", None)
     for v in ["CLAUDE_CODE_VERSION", "CLAUDECODE",
               "CODEX_VERSION", "CODEX",
-              "GEMINI_VERSION", "GEMINI_CLI"]:
+              "GEMINI_VERSION", "GEMINI_CLI",
+              "OPENCODE_VERSION", "OPENCODE"]:
         env.pop(v, None)
         env[v] = ""  # explicitly empty in case it's set in parent env
     _run(LOG_BIN, [
@@ -386,6 +387,29 @@ def test_log_host_falls_through_to_unknown_when_unset(sandbox):
     jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
     parsed = json.loads(jsonl)
     assert parsed["host"] == "unknown"
+
+
+def test_log_sniffs_opencode_from_env(sandbox):
+    """OPENCODE / OPENCODE_VERSION env vars trigger host=opencode_cli when
+    no --host flag and no RESUMASHER_HOST override are present. Mirrors the
+    sniff behavior for the other three hosts; documents the contract."""
+    _write_config(sandbox["student"], "anonymous")
+    env = _env(sandbox["state"])
+    env.pop("RESUMASHER_HOST", None)
+    # Clear other host signals so the sniffer can't pick them up first.
+    for v in ["CLAUDE_CODE_VERSION", "CLAUDECODE",
+              "CODEX_VERSION", "CODEX",
+              "GEMINI_VERSION", "GEMINI_CLI"]:
+        env.pop(v, None)
+        env[v] = ""
+    env["OPENCODE_VERSION"] = "1.14.25"
+    _run(LOG_BIN, [
+        "--event-type", "run_started",
+        "--cwd", str(sandbox["student"]),
+    ], env=env)
+    jsonl = (sandbox["state"] / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["host"] == "opencode_cli"
 
 
 def test_log_includes_model_when_flag_passed(sandbox):
@@ -558,6 +582,37 @@ def test_install_scope_auto_detected_as_user_home_for_claude_path(tmp_path: Path
     _write_config(student, "community")
 
     env = {"HOME": str(fake_home), "RESUMASHER_HOST": "claude_code",
+           "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
+           "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
+    _run(skill_root / "bin" / "resumasher-telemetry-log", [
+        "--event-type", "first_run_setup_completed",
+        "--cwd", str(student),
+    ], env=env)
+
+    jsonl = (fake_home / ".resumasher" / "analytics" / "skill-usage.jsonl").read_text().strip()
+    parsed = json.loads(jsonl)
+    assert parsed["install_scope_path"] == "user_home"
+
+
+def test_install_scope_auto_detected_as_user_home_for_opencode_path(tmp_path: Path):
+    """Same auto-detection for OpenCode user-scope install ($HOME/.opencode/skills/...).
+
+    Note: OpenCode also reads $HOME/.claude/skills/ as a Claude-compat directory,
+    so most students will hit the .claude path covered by the test above; this
+    test exercises the native OpenCode install path for completeness."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    skill_root = fake_home / ".opencode" / "skills" / "resumasher"
+    (skill_root / "bin").mkdir(parents=True)
+    shutil.copy(LOG_BIN, skill_root / "bin" / "resumasher-telemetry-log")
+    for p in (skill_root / "bin").iterdir():
+        p.chmod(0o755)
+
+    student = tmp_path / "proj"
+    (student / ".resumasher").mkdir(parents=True)
+    _write_config(student, "community")
+
+    env = {"HOME": str(fake_home), "RESUMASHER_HOST": "opencode_cli",
            "RESUMASHER_SUPABASE_URL": "http://127.0.0.1:1",
            "RESUMASHER_SUPABASE_ANON_KEY": "fake"}
     _run(skill_root / "bin" / "resumasher-telemetry-log", [

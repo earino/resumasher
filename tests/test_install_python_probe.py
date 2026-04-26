@@ -166,7 +166,10 @@ def test_install_sh_invokes_pip_via_python_module_form():
     form. A future refactor that reverts to invoking the pip binary for
     upgrades will flag here before shipping.
     """
-    install_sh_text = (REPO_ROOT / "install.sh").read_text()
+    # Explicit UTF-8 — Python on Windows defaults to cp1252 for `read_text()`
+    # without an encoding arg, which crashes on any non-ASCII byte in install.sh
+    # (e.g., the em-dash in our help text). Caught by Windows CI on PR #54.
+    install_sh_text = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     assert '"$VENV_BIN/python" -m pip install' in install_sh_text, (
         "install.sh must invoke pip via `python -m pip install`, not the "
         "pip binary — otherwise pip self-upgrade fails on Windows because "

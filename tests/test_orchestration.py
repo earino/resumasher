@@ -643,6 +643,34 @@ def test_read_resume_pdf_raises_clearly_on_corrupted_pdf(tmp_path: Path):
     assert "pdf" in msg
 
 
+def test_read_resume_cli_errors_on_empty_path_argument():
+    """When weaker models forget to re-derive `$RESUME_PATH` in a fresh
+    Bash call (variables don't persist across resumasher Bash tool calls
+    by design), the prior call's value expands to "" and `read-resume ""`
+    arrives at the CLI. Pre-fix this silently became `Path("")` → "." →
+    IsADirectoryError deep in the call stack, while the orchestrator
+    happily continued with a 0-byte resume.txt (observed under
+    qwen3.6-35b on OpenCode, run ses_236d). Now the CLI catches it at
+    the boundary and exits 2 with a clear message naming the likely
+    cause and the fix.
+    """
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parents[1]
+    res = subprocess.run(
+        [sys.executable, "-m", "scripts.orchestration", "read-resume", ""],
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 2
+    assert "FAILURE" in res.stderr
+    assert "non-empty path" in res.stderr
+    # The error should name the likely cause so the agent can recover
+    # rather than retry the same broken pattern.
+    assert "RESUME_PATH" in res.stderr
+
+
 # ---------------------------------------------------------------------------
 # folder_state_hash
 # ---------------------------------------------------------------------------
@@ -718,13 +746,14 @@ def test_mine_folder_context_excludes_claude_skills(tmp_path: Path):
     assert "9999" not in ctx
 
 
-@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".agents"])
+@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".opencode", ".agents"])
 def test_folder_state_hash_ignores_other_ai_cli_dirs(tmp_path: Path, ai_dir: str):
     """
-    Regression for the Codex/Gemini port: project-scope installs live at
-    .codex/skills/resumasher/ and .gemini/skills/resumasher/ (plus .agents/
-    as Gemini's documented alias). These must be ignored by the folder
-    miner the same way .claude/ is \u2014 same self-mining risk.
+    Regression for the Codex/Gemini/OpenCode port: project-scope installs
+    live at .codex/skills/resumasher/, .gemini/skills/resumasher/, and
+    .opencode/skills/resumasher/ (plus .agents/ as Gemini's documented alias).
+    These must be ignored by the folder miner the same way .claude/ is
+    \u2014 same self-mining risk.
     """
     (tmp_path / "resume.md").write_text("# Me", encoding="utf-8")
     hash_before = folder_state_hash(tmp_path)
@@ -740,7 +769,7 @@ def test_folder_state_hash_ignores_other_ai_cli_dirs(tmp_path: Path, ai_dir: str
     )
 
 
-@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".agents"])
+@pytest.mark.parametrize("ai_dir", [".codex", ".gemini", ".opencode", ".agents"])
 def test_mine_folder_context_excludes_other_ai_cli_dirs(tmp_path: Path, ai_dir: str):
     (tmp_path / "resume.md").write_text("# Me\n\nreal content", encoding="utf-8")
     fake_skill = tmp_path / ai_dir / "skills" / "resumasher"
@@ -981,6 +1010,41 @@ def test_extract_gaps_count(prose, expected):
 )
 def test_extract_recommendation(prose, expected):
     assert extract_recommendation(prose) == expected
+
+
+@pytest.mark.parametrize(
+    "prose,extractor,expected",
+    [
+        # Markdown-bold around the key (the qwen3.6-35b shape from
+        # samples-issue42/session-ses_236d.md — the model wrapped the
+        # leading sentinel headers in `**KEY:**` despite "on a line
+        # by itself" guidance, leaving role.txt empty pre-fix).
+        ("**ROLE:** Senior Data Scientist", extract_role, "Senior Data Scientist"),
+        ("**SENIORITY:** senior", extract_seniority, "senior"),
+        ("**COMPANY:** Deloitte Consulting", extract_company, "Deloitte Consulting"),
+        ("**FIT_SCORE:** 8", extract_fit_score, 8),
+        ("**STRENGTHS_COUNT:** 5", extract_strengths_count, 5),
+        ("**GAPS_COUNT:** 3", extract_gaps_count, 3),
+        ("**RECOMMENDATION:** yes", extract_recommendation, "yes"),
+        # Bold around the value (less common but seen in the wild —
+        # e.g. `ROLE: **Data Analyst**`).
+        ("ROLE: **Data Analyst**", extract_role, "Data Analyst"),
+        ("COMPANY: **Acme Corp**", extract_company, "Acme Corp"),
+        # Bold around BOTH key and value.
+        ("**ROLE:** **Senior ML Engineer**", extract_role, "Senior ML Engineer"),
+        # Plain form (regression — must keep working).
+        ("ROLE: Senior Data Scientist", extract_role, "Senior Data Scientist"),
+        ("FIT_SCORE: 7", extract_fit_score, 7),
+    ],
+)
+def test_extractors_tolerate_markdown_bold_around_keys(prose, extractor, expected):
+    """Weak models (qwen3.6-35b on OpenCode, observed in run ses_236d)
+    sometimes emit `**KEY:** value` markdown-bold variants instead of
+    the plain `KEY: value` form prescribed by the fit-analyst prompt.
+    The extractors are tolerant of the bold wrapper so role.txt /
+    company.txt / score.txt still get populated and the orchestrator
+    isn't tempted to fabricate the missing values into telemetry."""
+    assert extractor(prose) == expected
 
 
 def test_seniority_classification_works_in_any_language_via_llm():

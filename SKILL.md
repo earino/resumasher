@@ -55,7 +55,10 @@ for c in \
   "$REPO_ROOT/.codex/skills/resumasher" \
   "$HOME/.gemini/skills/resumasher" \
   "$PWD/.gemini/skills/resumasher" \
-  "$REPO_ROOT/.gemini/skills/resumasher"; do
+  "$REPO_ROOT/.gemini/skills/resumasher" \
+  "$HOME/.opencode/skills/resumasher" \
+  "$PWD/.opencode/skills/resumasher" \
+  "$REPO_ROOT/.opencode/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   if [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; then
@@ -88,7 +91,7 @@ This sets:
 **Telemetry identifiers you (the orchestrator) substitute literally: `$MODEL` and `$HOST`.** Many `"$TEL"` calls below pass `--model "$MODEL"` and `--host "$HOST"`. These are NOT shell variables the prologue sets — they're strings you substitute with literals before executing the command.
 
 - `$MODEL`: your own model identifier. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit `--model`; null is better than fabricated.
-- `$HOST`: which AI CLI you're running in. Exactly one of `claude_code`, `codex_cli`, or `gemini_cli`. You know this — it's literally the CLI that loaded this SKILL.md. If omitted, the log script falls back to env-var sniffing and then to `"unknown"`, which is what we want to avoid.
+- `$HOST`: which AI CLI you're running in. Exactly one of `claude_code`, `codex_cli`, `gemini_cli`, or `opencode_cli`. You know this — it's literally the CLI that loaded this SKILL.md. If omitted, the log script falls back to env-var sniffing and then to `"unknown"`, which is what we want to avoid.
 
 Both are self-reported because bash can't reliably detect them across host CLIs (Codex, for instance, doesn't set a discoverable env var).
 
@@ -124,15 +127,16 @@ Then every intermediate — resume text, folder context, sub-agent outputs — w
 
 ### Interactive prompt pattern (cross-host)
 
-This skill runs on Claude Code, Codex CLI, and Gemini CLI. Each host has a different tool name but the same contract: present 2+ real options, let the student type free text in an "Other" field. The tools are:
+This skill runs on Claude Code, Codex CLI, Gemini CLI, and OpenCode. Each host has a different tool name but the same contract: present 2+ real options, let the student type free text in an "Other" field. The tools are:
 
 - **Claude Code:** `AskUserQuestion`
 - **Codex CLI:** `request_user_input` (NOT `ask_user_question` — that's an unshipped enhancement request)
 - **Gemini CLI:** `ask_user`
+- **OpenCode:** `question`
 
 Wherever this document says "use the question tool" or names `AskUserQuestion`, use whichever tool your host provides. Reference them with backticks — models match fenced tool names more reliably than bare prose.
 
-⚠️ **All three tools require a MINIMUM of 2 real options.** "Other" is auto-added and does NOT count toward the minimum. Supplying only 1 option crashes with `InputValidationError: Too small: expected array to have >=2 items` (Claude) or `"request_user_input requires non-empty options for every question"` (Codex). Gemini is similarly strict. This is the #1 first-run-setup bug to avoid.
+⚠️ **All four tools require a MINIMUM of 2 real options.** "Other" is auto-added and does NOT count toward the minimum. Supplying only 1 option crashes with `InputValidationError: Too small: expected array to have >=2 items` (Claude) or `"request_user_input requires non-empty options for every question"` (Codex). Gemini and OpenCode are similarly strict. This is the #1 first-run-setup bug to avoid.
 
 Your job when collecting a free-text value is to avoid TWO separate mistakes:
 
@@ -230,9 +234,10 @@ PROMPT=$(cat "$RUN_DIR/prompts/folder-miner.txt")
 
 `$RUN_DIR/prompts/` is gitignored (parent `.resumasher/` is) and gets wiped at the start of every run, so prompt staging never leaks across sessions and never lands on the student's git history. **`/tmp/` is forbidden** for prompt staging because: (1) on macOS it's world-readable to other local users until reboot, exposing the student's resume + JD + project content as plaintext PII; (2) prompt files there can outlive the run and accumulate across sessions; (3) we have no cleanup hook for `/tmp` paths the agent improvises. A defense-in-depth cleanup scan (Phase 9) catches and deletes any `/tmp/<kind>-prompt.txt` files that slip through anyway, but the SKILL.md prescription above is the first line of defense — please follow it.
 
-Then dispatch the sub-agent with `$PROMPT` as the instruction text. The dispatch primitive varies by host:
+Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt has been carefully tuned per kind: it includes labeled `<<<...BEGIN>>>/<<<...END>>>` markers around resume, folder summary, JD, and company-research blocks; it includes prompt-injection defenses for UNTRUSTED content; it includes the exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt by handcrafting a shorter version (observed under qwen3.6-35b on OpenCode, run ses_235c — Qwen rewrote the cover-letter prompt and inverted "Start with" to "End with", causing the salutation to render as a giant H1 at the bottom of the PDF) ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (observed under qwen3.6-35b on OpenCode, run ses_235c — the model defaulted to Claude Code's `general-purpose` and got rejected before self-correcting to OpenCode's `general`).
 
 - **Claude Code:** `Task` tool with `subagent_type="general-purpose"` and the prompt as `description`/`prompt`.
+- **OpenCode:** `task` tool (lowercase) with `subagent_type="general"` (NOT `"general-purpose"` — that's Claude Code's value) and the prompt as `description`/`prompt`. Same shape as Claude Code's `Task`. Note: same-message parallel dispatch works in current builds but has been historically flaky ([sst/opencode#14195](https://github.com/sst/opencode/issues/14195)) — if two concurrent dispatches serialize instead of running in parallel, that's known and benign.
 - **Gemini CLI:** `@generalist` (its built-in generalist sub-agent).
 - **Codex CLI:** explicitly instruct the model to spawn a sub-agent — "spawn a sub-agent with the following prompt and return its output." Without the explicit spawn request, Codex tends to run the task inline in the parent session (still produces correct output, but loses prompt-injection isolation).
 
@@ -274,7 +279,7 @@ Print the GDPR notice:
 
 **Pre-fill from resume.pdf when possible.** If a `resume.pdf` is present, extract its text (`"$RS" orchestration read-resume resume.pdf`) and try to spot the candidate's name, email, LinkedIn, and location. Show those extracted values as the defaults in your questions so the student only has to CONFIRM, not retype them. Saves 3+ prompt rounds on first-run setup.
 
-Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to collect the remaining values. Follow the "Interactive prompt pattern (cross-host)" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
+Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode) to collect the remaining values. Follow the "Interactive prompt pattern (cross-host)" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
 
 Concrete question shapes. Every free-text question has EXACTLY 2 or more explicit options in `options` array (plus the auto-added Other). Anything less crashes with `InputValidationError`.
 
@@ -397,13 +402,21 @@ If the student already has a `config.json` from before GitHub was a field, AND d
 
 **Photo position migration (issue #22, added 2026-04).** If the student has a `config.json` with `include_photo: true` but no `photo_position` field, ask the same photo-position question from step 8a once, save the answer, and continue. One-time upgrade prompt per student. Students with `include_photo: false` are unaffected (no photo → placement is moot).
 
-Write `.resumasher/config.json` with those values, then:
+Write `.resumasher/config.json` with those values. The parent `.resumasher/` directory may not exist yet on a fresh folder — **create it first** before redirecting into the file, otherwise the redirect fails with `zsh: no such file or directory: .../config.json` and the next phase silently runs against an empty config. The `mkdir -p` is idempotent; cheap insurance:
 
 ```bash
+mkdir -p "$STUDENT_CWD/.resumasher"
+cat > "$STUDENT_CWD/.resumasher/config.json" << 'CONFIGEOF'
+{
+  "name": "...",
+  "email": "...",
+  ...
+}
+CONFIGEOF
 "$RS" orchestration ensure-gitignore .
 ```
 
-(Idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
+(`ensure-gitignore` is idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
 
 **Fire telemetry (end of Phase 0).** If the student opted into `anonymous` or `community` this call logs a `first_run_setup_completed` event and syncs to the backend; if they chose `off` the script exits 0 without writing anything. Either way, run it unconditionally — the script reads the tier from `config.json` and decides:
 
@@ -419,7 +432,7 @@ Write `.resumasher/config.json` with those values, then:
 
 The `install_scope_path` field is auto-detected by the log script from the skill's own path ($HOME/.claude/skills/... → `user_home`; other locations → `project_local`). You don't need to pass it explicitly.
 
-Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with "true" or "false", `$GITHUB_CONFIGURED` with "true" or "false" depending on whether `github_username` is set. For `$MODEL` substitute your own model identifier literally (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`). For `$HOST` substitute the host CLI literally (`claude_code`, `codex_cli`, or `gemini_cli`). The script never exits non-zero; its failures are silent so the student never sees telemetry errors.
+Substitute `$STYLE` with the chosen style ("eu" or "us"), `$PHOTO_INCLUDED` with "true" or "false", `$GITHUB_CONFIGURED` with "true" or "false" depending on whether `github_username` is set. For `$MODEL` substitute your own model identifier literally (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`). For `$HOST` substitute the host CLI literally (`claude_code`, `codex_cli`, `gemini_cli`, or `opencode_cli`). The script never exits non-zero; its failures are silent so the student never sees telemetry errors.
 
 ---
 
@@ -454,7 +467,7 @@ echo -n "$FETCHED_PAGE_TEXT" | "$RS" orchestration format-jd --mode url --url "$
 
 `format-jd` is a pure transform — it takes the raw content on stdin, prepends `Source URL: <url>\n\n` when `mode=url`, and emits the final bytes on stdout. File and literal modes pass through unchanged. If `--url` is omitted under `mode=url`, the prepend is skipped (defensive fallback — better to ship an un-headered JD than crash).
 
-If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) to paste the JD text manually, then treat the response as `mode: "literal"` (no `--url` needed in the format-jd call since the student's paste has no URL).
+If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the equivalent `web_fetch` tool (Gemini) / curl-via-Bash (Codex, which conflates fetch with search) / `webfetch` tool (OpenCode). If the returned text is shorter than 500 characters or clearly a login wall (contains "Sign in", "Log in", or similar without the JD content), prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode) to paste the JD text manually, then treat the response as `mode: "literal"` (no `--url` needed in the format-jd call since the student's paste has no URL).
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
@@ -499,7 +512,7 @@ RESUME_PATH=$("$RS" orchestration discover-resume "$STUDENT_CWD")
 
 **If `$RESUME_PATH` is empty (discover-resume exited with `FAILURE: no resume found`):** the fast path missed. Don't halt — a student whose resume is named `Lebenslauf.md` (German), `curriculum.md` (Spanish), `履歴書.md` (Japanese), `my_resume_final_v3.md`, or anything else outside the canonical English filename list is still a valid user. Fall through to asking.
 
-Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini) with:
+Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode) with:
 
 > I couldn't find a resume with one of the default filenames (resume.md, cv.md, resume.pdf, etc.) in this folder. What's the filename? Examples: `Lebenslauf.md`, `履歴書.md`, `my_resume.pdf`.
 
@@ -573,12 +586,18 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text (see the "Sub-agent 
 
 > Evidence extraction failed after 3 attempts. Please run /resumasher again, or paste your project list manually into `resume.md` and retry.
 
-Cache the successful summary:
+Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains a name like `Ana's capstone` or any other apostrophe, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'` (observed under qwen3.6-35b on OpenCode, run `ses_236d`). Heredoc with a single-quoted delimiter is byte-literal and immune.
 
 ```bash
-echo "$FOLDER_SUMMARY" > "$CACHE_PATH"
+# Recommended — heredoc with quoted delimiter, byte-literal:
+cat > "$CACHE_PATH" << 'HEREDOC'
+<paste the sub-agent's text response here>
+HEREDOC
+
 echo "$FOLDER_HASH" > "$CACHE_HASH_PATH"
 ```
+
+Equivalent on hosts with a Write tool (Claude Code, OpenCode): use Write directly with the sub-agent response as the file body — Write doesn't go through a shell at all, so no quoting hazard. **Avoid** `FOLDER_SUMMARY='...'; echo "$FOLDER_SUMMARY" > file` — that's the broken pattern.
 
 ---
 
@@ -592,10 +611,16 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-Parse the output (the fit-analyst emits more than just fit_score/company — ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION — extract them all for telemetry and downstream phases). **Persist each field to its own file under `$RUN_DIR/fit/`** so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
+**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` (observed under qwen3.6-35b on OpenCode, run ses_235c) bypasses both gates and ships freeform strings to the public dashboard, where they don't fit any aggregation bucket. The fit-analyst sub-agent's output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
+
+The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION are all extracted. Each field is persisted to its own file under `$RUN_DIR/fit/` so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
 
 ```bash
 mkdir -p "$RUN_DIR/fit"
+# REQUIRED: pipe the fit-analyst output through extract-fit-fields.
+# DO NOT replace this with `echo "8" > $RUN_DIR/fit/score.txt` etc. —
+# manual writes bypass enum validation. See run ses_235c for what
+# happens when the agent improvises this step.
 echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-fields --output-dir "$RUN_DIR/fit"
 
 # Capture into shell variables for inline use within this Phase 3 block.
@@ -612,7 +637,7 @@ RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 
 **Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** That shape was the original bug in issue #50: `COMPANY=Elevation Capital` (unquoted) on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command, leaves COMPANY empty. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect. Same belt-and-suspenders shape as the rest of `$RUN_DIR/`'s scratch state (`run-id.txt`, `start-ts.txt`, `dispatch-ts.txt`, `out-dir.txt`).
 
-If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
+If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
 
 **Fire telemetry (end of Phase 3).** After fit-assessment.md is written and extractors have run:
 
@@ -660,9 +685,9 @@ Dispatch the company-researcher sub-agent, giving it the WebSearch tool.
 PROMPT=$("$RS" orchestration build-prompt --kind company-researcher --cwd "$STUDENT_CWD" --company "$COMPANY")
 ```
 
-Dispatch a sub-agent with `$PROMPT` as its instruction text. Unlike the other sub-agents, company-researcher MUST have `WebSearch` and `WebFetch` (Claude Code) / `web_search` and `web_fetch` (Gemini) / `web_search` opt-in (Codex) tools available — those are the whole point of this task. The compiled prompt asks for 3-5 recent company facts with parenthetical citations. Template: `scripts/prompts.py` `company-researcher` kind.
+Dispatch a sub-agent with `$PROMPT` as its instruction text. Unlike the other sub-agents, company-researcher MUST have `WebSearch` and `WebFetch` (Claude Code) / `web_search` and `web_fetch` (Gemini) / `web_search` opt-in (Codex) / `websearch` and `webfetch` (OpenCode — `websearch` requires `OPENCODE_ENABLE_EXA=1` or the OpenCode provider) tools available — those are the whole point of this task. The compiled prompt asks for 3-5 recent company facts with parenthetical citations. Template: `scripts/prompts.py` `company-researcher` kind.
 
-If the sub-agent returns a FAILURE sentinel, prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini): "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
+If the sub-agent returns a FAILURE sentinel, prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
 
 Save the research to `$OUT_DIR/company-research.md`.
 
@@ -702,7 +727,7 @@ USED_MULTIROLE=$(grep -q 'sub-role\|· \*\*' "$OUT_DIR/tailored-resume.md" 2>/de
 
 ### Phase 6 — Cover letter + Interview prep (PARALLEL)
 
-Dispatch BOTH sub-agents in the same message with two Task tool calls. They have no dependency on each other, and running in parallel saves ~30-45 seconds.
+Dispatch BOTH sub-agents in the same message with two sub-agent dispatch calls (`Task` in Claude Code, `task` in OpenCode, `@generalist` in Gemini, sub-agent spawn instructions in Codex). They have no dependency on each other, and running in parallel saves ~30-45 seconds.
 
 **Build the cover-letter prompt:**
 
@@ -728,7 +753,7 @@ The compiled prompt reads `$OUT_DIR/tailored-resume.md`, `.resumasher/cache.txt`
 DISPATCH_TS=$(date +%s)
 ```
 
-**Dispatch cover-letter and interview-coach in parallel** — in one orchestrator turn, issue both sub-agent calls with `$PROMPT_COVER` and `$PROMPT_PREP` respectively. Under Claude Code this is two `Task` calls in the same message; under Gemini two `@generalist` calls; under Codex instruct the model to spawn two sub-agents concurrently.
+**Dispatch cover-letter and interview-coach in parallel** — in one orchestrator turn, issue both sub-agent calls with `$PROMPT_COVER` and `$PROMPT_PREP` respectively. Under Claude Code this is two `Task` calls in the same message; under OpenCode two `task` calls in the same message (parallel works in current builds but may serialize — see dispatch notes earlier in this doc); under Gemini two `@generalist` calls; under Codex instruct the model to spawn two sub-agents concurrently.
 
 **Take each sub-agent's text response — the markdown document it returned in its message — and use the Write tool to save it to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md` respectively.** The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
 
@@ -784,7 +809,7 @@ The tailor emits `[INSERT ...]` placeholders when the resume/evidence didn't sup
 
 2. For each bullet, Read the full line (including any `<!--SOFT: ... -->` comment), parse out the placeholder tokens (`[INSERT TEAM SIZE]`, etc.) and the SOFT alternate content.
 
-3. Batch questions — up to 4 bullets per question-tool call (`AskUserQuestion` / `request_user_input` / `ask_user`; all three support batching 2-4 questions per call). For each bullet:
+3. Batch questions — up to 4 bullets per question-tool call (`AskUserQuestion` / `request_user_input` / `ask_user` / `question`; all four support batching 2-4 questions per call). For each bullet:
 
    ```
    Question: "This bullet in tailored-resume.md has placeholders:
@@ -1085,7 +1110,10 @@ for c in \
   "$REPO_ROOT/.codex/skills/resumasher" \
   "$HOME/.gemini/skills/resumasher" \
   "$PWD/.gemini/skills/resumasher" \
-  "$REPO_ROOT/.gemini/skills/resumasher"; do
+  "$REPO_ROOT/.gemini/skills/resumasher" \
+  "$HOME/.opencode/skills/resumasher" \
+  "$PWD/.opencode/skills/resumasher" \
+  "$REPO_ROOT/.opencode/skills/resumasher"; do
   [ -n "$c" ] || continue
   [ -f "$c/SKILL.md" ] || continue
   { [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; } && SKILL_ROOT="$c" && break
@@ -1236,13 +1264,14 @@ Resolve `$TEL` once per Bash tool call, just like `$RS`:
 TEL="$RS_DIR/bin/resumasher-telemetry-log"
 ```
 
-**Every call-site below should include both `--host "$HOST"` and `--model "$MODEL"`.** `$HOST` is the AI CLI you're running in (one of `claude_code`, `codex_cli`, `gemini_cli`); `$MODEL` is your own model identifier. You substitute both as literal strings — you know what CLI you are and what model you are. Examples by host:
+**Every call-site below should include both `--host "$HOST"` and `--model "$MODEL"`.** `$HOST` is the AI CLI you're running in (one of `claude_code`, `codex_cli`, `gemini_cli`, `opencode_cli`); `$MODEL` is your own model identifier. You substitute both as literal strings — you know what CLI you are and what model you are. Examples by host:
 
 - Claude Code: `--host claude_code --model claude-opus-4-7` (or `claude-sonnet-4-6`, `claude-haiku-4-5`)
 - Codex CLI: `--host codex_cli --model gpt-5-codex` (or `gpt-5`, `gpt-5-mini`)
 - Gemini CLI: `--host gemini_cli --model gemini-2.5-pro` (or `gemini-2.5-flash`)
+- OpenCode: `--host opencode_cli --model anthropic/claude-opus-4-7` (or whichever provider/model you're configured against — OpenCode uses the `provider/model` format)
 
-If you genuinely don't know the model ID, omit `--model` (null is better than fabricated). Same rule for `--host`: omit rather than guess. The edge function caps both at 40 chars; no enum validation on model (space moves too fast), but host should match the three canonical values above.
+If you genuinely don't know the model ID, omit `--model` (null is better than fabricated). Same rule for `--host`: omit rather than guess. The edge function caps both at 40 chars; no enum validation on model (space moves too fast), but host should match the four canonical values above.
 
 **Phase 0 (end) — first_run_setup_completed.** Fired right after config.json
 is written:
