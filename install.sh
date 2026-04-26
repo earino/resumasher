@@ -144,6 +144,37 @@ if [ -d "$SCRIPT_DIR/bin" ]; then
 fi
 
 
+# Per-host SKILL.md selection. The repo ships SKILL-<host>.md for each
+# supported AI CLI host (claude, codex, gemini, opencode), generated from
+# SKILL.md.tmpl by tools/gen_skill_md.py. Each variant only contains its
+# own host's tool names and dispatch primitives — the cross-host
+# enumerations confused weak local models (run ses_235c on OpenCode under
+# qwen3.6-35b: defaulted to Claude Code's `general-purpose` subagent_type
+# and got rejected before self-correcting).
+#
+# Detect the host from the install path and swap the right variant in.
+# A user who clones to e.g. ~/.codex/skills/resumasher/ should get the
+# Codex variant; a clone to ~/.claude/skills/resumasher/ gets Claude;
+# anything outside the four canonical paths defaults to Claude (the
+# committed SKILL.md is already the Claude variant).
+case "$SCRIPT_DIR" in
+  */.codex/skills/resumasher) DETECTED_HOST=codex ;;
+  */.gemini/skills/resumasher) DETECTED_HOST=gemini ;;
+  */.opencode/skills/resumasher) DETECTED_HOST=opencode ;;
+  */.claude/skills/resumasher) DETECTED_HOST=claude ;;
+  *) DETECTED_HOST=claude ;;  # project-scope or unknown — default to Claude
+esac
+
+# Only swap when the variant is non-Claude AND the file exists. Missing
+# variant means a partial checkout or pre-templating release; falling back
+# to whatever SKILL.md already contains is safer than copying nothing and
+# leaving a broken state.
+if [ "$DETECTED_HOST" != "claude" ] && [ -f "$SCRIPT_DIR/SKILL-$DETECTED_HOST.md" ]; then
+  cp "$SCRIPT_DIR/SKILL-$DETECTED_HOST.md" "$SCRIPT_DIR/SKILL.md"
+  echo "Installed $DETECTED_HOST variant of SKILL.md (auto-detected from install path)."
+fi
+
+
 # OpenCode slash-command shim. OpenCode resolves `/resumasher <args>` by
 # reading `~/.config/opencode/commands/resumasher.md` and substituting
 # `$ARGUMENTS` into its body. Without the shim, OpenCode falls back to
