@@ -402,13 +402,21 @@ If the student already has a `config.json` from before GitHub was a field, AND d
 
 **Photo position migration (issue #22, added 2026-04).** If the student has a `config.json` with `include_photo: true` but no `photo_position` field, ask the same photo-position question from step 8a once, save the answer, and continue. One-time upgrade prompt per student. Students with `include_photo: false` are unaffected (no photo → placement is moot).
 
-Write `.resumasher/config.json` with those values, then:
+Write `.resumasher/config.json` with those values. The parent `.resumasher/` directory may not exist yet on a fresh folder — **create it first** before redirecting into the file, otherwise the redirect fails with `zsh: no such file or directory: .../config.json` and the next phase silently runs against an empty config. The `mkdir -p` is idempotent; cheap insurance:
 
 ```bash
+mkdir -p "$STUDENT_CWD/.resumasher"
+cat > "$STUDENT_CWD/.resumasher/config.json" << 'CONFIGEOF'
+{
+  "name": "...",
+  "email": "...",
+  ...
+}
+CONFIGEOF
 "$RS" orchestration ensure-gitignore .
 ```
 
-(Idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
+(`ensure-gitignore` is idempotent. Returns nothing and exits 0 if the folder isn't inside a git repo.)
 
 **Fire telemetry (end of Phase 0).** If the student opted into `anonymous` or `community` this call logs a `first_run_setup_completed` event and syncs to the backend; if they chose `off` the script exits 0 without writing anything. Either way, run it unconditionally — the script reads the tier from `config.json` and decides:
 
@@ -578,12 +586,18 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text (see the "Sub-agent 
 
 > Evidence extraction failed after 3 attempts. Please run /resumasher again, or paste your project list manually into `resume.md` and retry.
 
-Cache the successful summary:
+Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains a name like `Ana's capstone` or any other apostrophe, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'` (observed under qwen3.6-35b on OpenCode, run `ses_236d`). Heredoc with a single-quoted delimiter is byte-literal and immune.
 
 ```bash
-echo "$FOLDER_SUMMARY" > "$CACHE_PATH"
+# Recommended — heredoc with quoted delimiter, byte-literal:
+cat > "$CACHE_PATH" << 'HEREDOC'
+<paste the sub-agent's text response here>
+HEREDOC
+
 echo "$FOLDER_HASH" > "$CACHE_HASH_PATH"
 ```
+
+Equivalent on hosts with a Write tool (Claude Code, OpenCode): use Write directly with the sub-agent response as the file body — Write doesn't go through a shell at all, so no quoting hazard. **Avoid** `FOLDER_SUMMARY='...'; echo "$FOLDER_SUMMARY" > file` — that's the broken pattern.
 
 ---
 

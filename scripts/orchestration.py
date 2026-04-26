@@ -817,14 +817,39 @@ def mine_folder_context(
 # 6. extract_fit_score / extract_company from prose
 # ---------------------------------------------------------------------------
 
-_FIT_SCORE_RE = re.compile(r"FIT_SCORE:\s*(-?\d{1,2})\b", re.IGNORECASE)
-_COMPANY_RE = re.compile(r"^\s*COMPANY:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-_FAILURE_RE = re.compile(r"^\s*FAILURE:\s*.+", re.IGNORECASE)
-_ROLE_RE = re.compile(r"^\s*ROLE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-_SENIORITY_RE = re.compile(r"^\s*SENIORITY:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-_STRENGTHS_COUNT_RE = re.compile(r"^\s*STRENGTHS_COUNT:\s*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
-_GAPS_COUNT_RE = re.compile(r"^\s*GAPS_COUNT:\s*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
-_RECOMMENDATION_RE = re.compile(r"^\s*RECOMMENDATION:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+# Each pattern accepts the plain `KEY: value` form prescribed by the
+# fit-analyst prompt AND markdown-bold variants weaker models emit
+# despite the "on a line by itself" instruction:
+#   - **KEY:** value             (bold around key+colon)
+#   - **KEY**: value             (bold around just the key)
+#   - KEY: **value**             (bold around just the value)
+#   - **KEY:** **value**         (bold around both, separately)
+# Observed under qwen3.6-35b on OpenCode (run ses_236d) — the model
+# produced `**ROLE:** Data Analyst` instead of `ROLE: Data Analyst`,
+# leaving role.txt empty and forcing the orchestrator to fabricate
+# downstream telemetry values.
+#
+# The trick is `[\s*]*` (character class of whitespace OR `*`) before
+# and after each meaningful token: it absorbs any mix of `*` markers
+# and spaces in any order, regardless of which side of the colon the
+# bold delimiters sit on. Earlier attempts with separate `\*{0,2}`
+# groups misparsed `**KEY:** **value**` because the closing `**` of
+# the key-bold is structurally indistinguishable from the opening
+# `**` of the value-bold.
+#
+# `_FIT_SCORE_RE` is `re.search` (no MULTILINE anchor) so it already
+# matches anywhere in the prose; the others stay anchored to line
+# starts to avoid hijacking inline `ROLE:` mentions in body prose.
+# `(.+?)` lazy + trailing `[\s*]*$` greedy means `(.+?)` captures
+# the value with trailing `*` and whitespace stripped automatically.
+_FIT_SCORE_RE = re.compile(r"[\s*]*FIT_SCORE[\s*]*:[\s*]*(-?\d{1,2})\b", re.IGNORECASE)
+_COMPANY_RE = re.compile(r"^[\s*]*COMPANY[\s*]*:[\s*]*(.+?)[\s*]*$", re.MULTILINE | re.IGNORECASE)
+_FAILURE_RE = re.compile(r"^[\s*]*FAILURE[\s*]*:[\s*]*.+", re.IGNORECASE)
+_ROLE_RE = re.compile(r"^[\s*]*ROLE[\s*]*:[\s*]*(.+?)[\s*]*$", re.MULTILINE | re.IGNORECASE)
+_SENIORITY_RE = re.compile(r"^[\s*]*SENIORITY[\s*]*:[\s*]*(.+?)[\s*]*$", re.MULTILINE | re.IGNORECASE)
+_STRENGTHS_COUNT_RE = re.compile(r"^[\s*]*STRENGTHS_COUNT[\s*]*:[\s*]*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
+_GAPS_COUNT_RE = re.compile(r"^[\s*]*GAPS_COUNT[\s*]*:[\s*]*(\d{1,3})\b", re.MULTILINE | re.IGNORECASE)
+_RECOMMENDATION_RE = re.compile(r"^[\s*]*RECOMMENDATION[\s*]*:[\s*]*(.+?)[\s*]*$", re.MULTILINE | re.IGNORECASE)
 
 VALID_SENIORITY = frozenset({
     "intern", "junior", "mid", "senior", "staff",
@@ -1635,6 +1660,22 @@ def _cli() -> int:
         return 0
 
     if args.command == "read-resume":
+        # Defensive: weak models sometimes invoke read-resume in a fresh
+        # Bash call where the prior call's $RESUME_PATH didn't persist
+        # (observed under qwen3.6-35b on OpenCode). The argument then
+        # arrives empty and Path("") resolves to "." (cwd), producing a
+        # confusing IsADirectoryError deep in the call stack while the
+        # caller blithely continues with a 0-byte resume.txt. Catch it
+        # at the boundary instead.
+        if not args.path or not args.path.strip():
+            print(
+                "FAILURE: read-resume requires a non-empty path argument. "
+                "Likely cause: $RESUME_PATH was not re-derived in this "
+                "Bash call. Re-run discover-resume in the same call and "
+                "pass its output directly.",
+                file=sys.stderr,
+            )
+            return 2
         print(read_resume(Path(args.path)))
         return 0
 
