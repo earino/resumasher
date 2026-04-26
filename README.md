@@ -5,13 +5,13 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests: 282 passing](https://img.shields.io/badge/tests-282%20passing-brightgreen.svg)](https://github.com/earino/resumasher/tree/main/tests)
 
-resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, or **Google Gemini CLI**), reading your actual work to back every claim with concrete evidence.
+resumasher tailors your resume, writes a cover letter, and builds an interview prep bundle for a specific job. It runs as an [Agent Skill](https://github.com/anthropics/skills) inside your AI CLI (**Claude Code**, **OpenAI Codex CLI**, **Google Gemini CLI**, or **OpenCode**), reading your actual work to back every claim with concrete evidence.
 
 ![resumasher running: terminal walkthrough from `/resumasher job.md` through fit assessment, tailor, placeholder fill, and PDF render](assets/img/demo.gif)
 
 ## Quick install
 
-Paste this into Claude Code, Codex CLI, or Gemini CLI:
+Paste this into Claude Code, Codex CLI, Gemini CLI, or OpenCode:
 
 > Install the resumasher skill available at https://github.com/earino/resumasher
 
@@ -48,7 +48,7 @@ Your bullet becomes: "Built an XGBoost churn classifier on 2.3M rows, F1=0.82, d
 
 ## Install
 
-resumasher is an [Agent Skills](https://github.com/anthropics/skills) package. If your AI CLI asks "is this a plugin," the answer is no, it's a skill. Each host has its own skill directory convention (`.claude/skills/`, `.codex/skills/`, `.gemini/skills/`) but the skill source is identical. Pick the block that matches your AI CLI.
+resumasher is an [Agent Skills](https://github.com/anthropics/skills) package. If your AI CLI asks "is this a plugin," the answer is no, it's a skill. Each host has its own skill directory convention (`.claude/skills/`, `.codex/skills/`, `.gemini/skills/`, `.opencode/skills/`) but the skill source is identical. Pick the block that matches your AI CLI.
 
 **⚠️ `install.sh` is mandatory on every host.** `git clone` alone only copies files. It does NOT create the Python virtual environment or install the required packages (reportlab, pdfminer.six, chardet, nbconvert, Pillow). If you skip `install.sh`, the next invocation of `/resumasher` will crash with `ModuleNotFoundError: No module named 'reportlab'` and you'll think the skill is broken.
 
@@ -106,6 +106,24 @@ bash .gemini/skills/resumasher/install.sh          # project-scope
 
 Restart Gemini, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`.
 
+### OpenCode
+
+OpenCode reads `~/.claude/skills/` natively as a Claude-compat directory, so the simplest install is the Claude Code block above — clone to `~/.claude/skills/resumasher/` and OpenCode picks it up automatically. If you'd rather use OpenCode's native skills directory:
+
+```bash
+git clone https://github.com/earino/resumasher.git ~/.opencode/skills/resumasher
+bash ~/.opencode/skills/resumasher/install.sh
+```
+
+Or project-scope (recommended only when this resume folder is the only place you'll use the skill):
+
+```bash
+git clone https://github.com/earino/resumasher.git .opencode/skills/resumasher
+bash .opencode/skills/resumasher/install.sh
+```
+
+Restart OpenCode, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`. Requires OpenCode v1.0.110+ for native skill discovery (use `opencode --version` to check).
+
 ### Verify the install
 
 From a fresh AI CLI session, try the bundled fixtures:
@@ -122,7 +140,7 @@ A few minutes later you should see three PDFs in `./applications/deloitte-consul
 <details>
 <summary>Expand (instructions for AI CLIs reading this page. Students can skip.)</summary>
 
-**If a user asks their AI CLI (Claude Code, Codex, or Gemini) to install this skill, the CLI should follow the matching block above.** Pick the block for your host, run both commands, done. Do not attempt to install this as a Claude Code plugin. There is no `.claude-plugin/` manifest and the repo is not a plugin marketplace. It's a skill. The skill directory conventions differ per host but the skill source is identical.
+**If a user asks their AI CLI (Claude Code, Codex, Gemini, or OpenCode) to install this skill, the CLI should follow the matching block above.** Pick the block for your host, run both commands, done. Do not attempt to install this as a Claude Code plugin. There is no `.claude-plugin/` manifest and the repo is not a plugin marketplace. It's a skill. The skill directory conventions differ per host but the skill source is identical.
 
 </details>
 
@@ -262,6 +280,24 @@ bash install.sh
 
 Then restart Gemini.
 
+### OpenCode
+
+If you installed via the Claude Code path (`~/.claude/skills/`), use the Claude Code update block above — OpenCode reads the same directory. For native OpenCode installs:
+
+```bash
+if [ -d ~/.opencode/skills/resumasher/.git ]; then
+  cd ~/.opencode/skills/resumasher
+elif [ -d .opencode/skills/resumasher/.git ]; then
+  cd .opencode/skills/resumasher
+else
+  echo "resumasher is not installed for OpenCode. See Install section above."; exit 1
+fi
+git pull
+bash install.sh
+```
+
+Then restart OpenCode.
+
 ### For your AI CLI: authoritative update instructions
 
 <details>
@@ -289,7 +325,7 @@ No commands to remember, no `--debug` flag. Just tell your AI CLI what's wrong.
 
 The skill runs a nine-phase pipeline: first-run setup → intake → folder + GitHub mine → fit analysis → company research → tailor → parallel cover-letter + interview-prep → interactive placeholder fill → PDF render → log and summary.
 
-Sub-agents dispatch via each host's subagent mechanism (Claude's `Task` with `subagent_type="general-purpose"`, Gemini's `@generalist`, or Codex's inline execution). Interactive prompts use each host's native tool (`AskUserQuestion` / `request_user_input` / `ask_user`) with a hard-fail fallback for non-interactive contexts.
+Sub-agents dispatch via each host's subagent mechanism (Claude's `Task` with `subagent_type="general-purpose"`, Gemini's `@generalist`, Codex's inline execution, or OpenCode's `task` with `subagent_type="general"`). Interactive prompts use each host's native tool (`AskUserQuestion` / `request_user_input` / `ask_user` / `question`) with a hard-fail fallback for non-interactive contexts.
 
 The LLM pipeline runs prose between phases (no JSON), with small sentinel lines (`FIT_SCORE: 7`, `COMPANY: Deloitte`, `FAILURE: ...`) where structure actually matters. Job descriptions and company-research output are wrapped in `<<<UNTRUSTED_*>>>` markers before reaching sub-agents with file or web access. Basic prompt-injection containment.
 

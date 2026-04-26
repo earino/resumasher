@@ -610,13 +610,15 @@ DEFAULT_IGNORE_DIRS = {
     "applications",
     ".DS_Store",
     # Critical: when resumasher is installed project-scope at
-    # <project>/.claude/skills/resumasher/ (or .codex, .gemini), the folder
-    # miner would otherwise walk its own source tree + GOLDEN_FIXTURES and
-    # present them to the fit-analyst as the student's evidence. These dirs
-    # hold AI CLI skills/agents/settings — never resume evidence.
+    # <project>/.claude/skills/resumasher/ (or .codex, .gemini, .opencode),
+    # the folder miner would otherwise walk its own source tree +
+    # GOLDEN_FIXTURES and present them to the fit-analyst as the student's
+    # evidence. These dirs hold AI CLI skills/agents/settings — never
+    # resume evidence.
     ".claude",
     ".codex",
     ".gemini",
+    ".opencode",
     ".agents",
 }
 
