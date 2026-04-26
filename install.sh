@@ -190,17 +190,17 @@ except Exception:
 ' "$OPENCODE_CONFIG" 2>/dev/null || echo 51200)
   if [ -n "$SKILL_BYTES" ] && [ -n "$OPENCODE_MAX" ] && [ "$OPENCODE_MAX" -lt "$SKILL_BYTES" ]; then
     echo ""
-    echo "⚠️  OpenCode detected. Your tool_output.max_bytes is $OPENCODE_MAX,"
-    echo "    but resumasher's SKILL.md is $SKILL_BYTES bytes. OpenCode will"
-    echo "    truncate the skill when it loads. Strong cloud models (Claude,"
-    echo "    GPT-5) usually recover; weak local models (qwen, llama-32b)"
-    echo "    will miss Phase 7-9 instructions and ship broken artifacts."
+    echo "NOTE: OpenCode detected. Your tool_output.max_bytes is $OPENCODE_MAX,"
+    echo "      but resumasher's SKILL.md is $SKILL_BYTES bytes. OpenCode will"
+    echo "      truncate the skill when it loads. Strong cloud models (Claude,"
+    echo "      GPT-5) usually recover; weak local models (qwen, llama-32b)"
+    echo "      will miss Phase 7-9 instructions and ship broken artifacts."
     echo ""
-    echo "    To fix, add to $OPENCODE_CONFIG:"
-    echo '      { "tool_output": { "max_bytes": 102400 } }'
+    echo "      To fix, add to $OPENCODE_CONFIG:"
+    echo '        { "tool_output": { "max_bytes": 102400 } }'
     echo ""
-    echo "    (We never modify your opencode config — this is a heads-up,"
-    echo "    not an action item, and you can ignore it on cloud models.)"
+    echo "      (We never modify your opencode config — this is a heads-up,"
+    echo "      not an action item, and you can ignore it on cloud models.)"
     echo ""
   fi
 fi
