@@ -162,6 +162,49 @@ if [ -f "$OPENCODE_CMD_SRC" ] && command -v opencode >/dev/null 2>&1; then
   fi
 fi
 
+# OpenCode tool_output.max_bytes detection. resumasher's SKILL.md is ~82KB,
+# above OpenCode's default 51,200-byte tool-output cap. When the cap is too
+# low, OpenCode truncates the skill load and weak local models (qwen,
+# llama-32b, etc.) miss Phase 7-9 prescriptions — wrong PDF filenames,
+# missing interview-prep.pdf, skeletal Phase 9 telemetry. Strong cloud
+# models (Claude, GPT-5) usually recover but the bug is real.
+#
+# We READ the user's opencode config (never write to it) and warn if the
+# cap is below SKILL.md's size. The user's config stays the user's
+# concern. See samples-issue42/session-ses_2359.md for the failure mode.
+if command -v opencode >/dev/null 2>&1; then
+  OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+  SKILL_BYTES=$(wc -c < "$SCRIPT_DIR/SKILL.md" 2>/dev/null | tr -d ' ')
+  # Use the venv Python we just built — every host has Python after install.
+  # Falls back to the documented OpenCode default (51200) on any parse error
+  # so we err on the side of warning (false positive is harmless; missing a
+  # real warning would let a student silently ship a half-truncated SKILL.md).
+  OPENCODE_MAX=$("$VENV_BIN/python" -c '
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+try:
+    data = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+    print(int(data.get("tool_output", {}).get("max_bytes", 51200)))
+except Exception:
+    print(51200)
+' "$OPENCODE_CONFIG" 2>/dev/null || echo 51200)
+  if [ -n "$SKILL_BYTES" ] && [ -n "$OPENCODE_MAX" ] && [ "$OPENCODE_MAX" -lt "$SKILL_BYTES" ]; then
+    echo ""
+    echo "⚠️  OpenCode detected. Your tool_output.max_bytes is $OPENCODE_MAX,"
+    echo "    but resumasher's SKILL.md is $SKILL_BYTES bytes. OpenCode will"
+    echo "    truncate the skill when it loads. Strong cloud models (Claude,"
+    echo "    GPT-5) usually recover; weak local models (qwen, llama-32b)"
+    echo "    will miss Phase 7-9 instructions and ship broken artifacts."
+    echo ""
+    echo "    To fix, add to $OPENCODE_CONFIG:"
+    echo '      { "tool_output": { "max_bytes": 102400 } }'
+    echo ""
+    echo "    (We never modify your opencode config — this is a heads-up,"
+    echo "    not an action item, and you can ignore it on cloud models.)"
+    echo ""
+  fi
+fi
+
 echo ""
 echo "resumasher installed at $SCRIPT_DIR"
 echo ""

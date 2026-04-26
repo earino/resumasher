@@ -126,6 +126,22 @@ Restart OpenCode, then run `/resumasher <job>` from a folder with your `resume.m
 
 `install.sh` automatically drops the slash-command shim at `~/.config/opencode/commands/resumasher.md` when it detects the `opencode` binary on PATH. The shim wires `/resumasher <args>` to invoke the skill — without it, OpenCode just pastes SKILL.md as a user message and drops the argument. If you skip the installer, copy `commands/resumasher.md` from this repo to `~/.config/opencode/commands/resumasher.md` manually.
 
+#### OpenCode `tool_output.max_bytes` setting (small-model users only)
+
+OpenCode caps tool output at 51,200 bytes by default ([source](https://github.com/sst/opencode/blob/dev/packages/opencode/src/tool/truncate.ts)). resumasher's `SKILL.md` is ~82KB — above the cap. When the cap is too low, OpenCode truncates the skill load and the model sees only the first ~38% of the workflow. Strong cloud models (Claude, GPT-5) usually recover by inferring the missing phases. Weak local models (qwen-32b, llama-32b, etc.) miss Phase 7-9 prescriptions and ship wrong PDF filenames, missing `interview-prep.pdf`, and skeletal Phase 9 telemetry.
+
+`install.sh` reads your OpenCode config (read-only, never modifies it) and prints a heads-up if your cap is below `SKILL.md`'s size. To raise it, add this to `~/.config/opencode/opencode.json` (or the `XDG_CONFIG_HOME`-based equivalent):
+
+```json
+{
+  "tool_output": {
+    "max_bytes": 102400
+  }
+}
+```
+
+100KB is double the default and comfortably fits resumasher today plus headroom for future SKILL.md growth. If you only run resumasher under cloud models you can skip this — the truncation degrades gracefully on Claude/GPT-5.
+
 ### Verify the install
 
 From a fresh AI CLI session, try the bundled fixtures:

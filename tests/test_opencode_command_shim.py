@@ -113,3 +113,53 @@ def test_install_sh_installs_shim_when_opencode_detected():
         "so users without OpenCode aren't surprised by writes outside "
         "the skill directory."
     )
+
+
+def test_install_sh_warns_on_low_opencode_tool_output_cap():
+    """install.sh must READ (never write) the user's opencode config and
+    warn if `tool_output.max_bytes` is smaller than SKILL.md's size.
+    OpenCode's default cap is 51,200 bytes; SKILL.md is ~82KB. Without
+    the warning, students on weak local models hit silent truncation
+    of the back half of SKILL.md (Phases 7-9), shipping wrong PDF
+    filenames + missing artifacts — see samples-issue42/session-ses_2359.md.
+    """
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    # The check itself: reads max_bytes, references the OpenCode default
+    assert "tool_output" in text, (
+        "install.sh must reference `tool_output` (OpenCode's config key)."
+    )
+    assert "max_bytes" in text, (
+        "install.sh must read `max_bytes` specifically — not `max_lines`, "
+        "since the truncation we hit is byte-bounded (SKILL.md fits the "
+        "line cap easily but not the byte cap)."
+    )
+    assert "51200" in text, (
+        "install.sh must reference 51200 as the documented OpenCode "
+        "default. Hardcoding the default lets us warn even when the user "
+        "has no opencode.json yet — they're still at 51200 by inheritance."
+    )
+    # The fix it suggests
+    assert "102400" in text, (
+        "install.sh must suggest 102400 (100KB) as the recommended "
+        "value — double the default, fits SKILL.md plus growth headroom."
+    )
+    # Read-only contract: no jq install, no config write, no merge logic
+    assert "cp " not in _opencode_config_block(text), (
+        "install.sh must NOT copy/write to the opencode config file. "
+        "Read-only is the user-respecting contract for this detection."
+    )
+    assert ">$OPENCODE_CONFIG" not in text and "> \"$OPENCODE_CONFIG\"" not in text, (
+        "install.sh must NOT redirect output INTO the opencode config "
+        "file under any branch."
+    )
+
+
+def _opencode_config_block(text: str) -> str:
+    """Extract the section of install.sh that handles the OpenCode
+    tool_output cap detection — bounded by `OPENCODE_CONFIG=` and the
+    next blank-line-terminated `fi`."""
+    start = text.find("OPENCODE_CONFIG=")
+    assert start != -1, "could not locate OPENCODE_CONFIG= marker in install.sh"
+    end_marker = text.find("\nfi\n", start)
+    assert end_marker != -1, "could not locate end of OpenCode config block"
+    return text[start:end_marker]
