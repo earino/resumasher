@@ -124,6 +124,8 @@ bash .opencode/skills/resumasher/install.sh
 
 Restart OpenCode, then run `/resumasher <job>` from a folder with your `resume.md` or `resume.pdf`. Requires OpenCode v1.0.110+ for native skill discovery (use `opencode --version` to check).
 
+`install.sh` automatically drops the slash-command shim at `~/.config/opencode/commands/resumasher.md` when it detects the `opencode` binary on PATH. The shim wires `/resumasher <args>` to invoke the skill — without it, OpenCode just pastes SKILL.md as a user message and drops the argument. If you skip the installer, copy `commands/resumasher.md` from this repo to `~/.config/opencode/commands/resumasher.md` manually.
+
 ### Verify the install
 
 From a fresh AI CLI session, try the bundled fixtures:

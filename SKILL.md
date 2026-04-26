@@ -234,12 +234,12 @@ PROMPT=$(cat "$RUN_DIR/prompts/folder-miner.txt")
 
 `$RUN_DIR/prompts/` is gitignored (parent `.resumasher/` is) and gets wiped at the start of every run, so prompt staging never leaks across sessions and never lands on the student's git history. **`/tmp/` is forbidden** for prompt staging because: (1) on macOS it's world-readable to other local users until reboot, exposing the student's resume + JD + project content as plaintext PII; (2) prompt files there can outlive the run and accumulate across sessions; (3) we have no cleanup hook for `/tmp` paths the agent improvises. A defense-in-depth cleanup scan (Phase 9) catches and deletes any `/tmp/<kind>-prompt.txt` files that slip through anyway, but the SKILL.md prescription above is the first line of defense — please follow it.
 
-Then dispatch the sub-agent with `$PROMPT` as the instruction text. The dispatch primitive varies by host:
+Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt has been carefully tuned per kind: it includes labeled `<<<...BEGIN>>>/<<<...END>>>` markers around resume, folder summary, JD, and company-research blocks; it includes prompt-injection defenses for UNTRUSTED content; it includes the exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt by handcrafting a shorter version (observed under qwen3.6-35b on OpenCode, run ses_235c — Qwen rewrote the cover-letter prompt and inverted "Start with" to "End with", causing the salutation to render as a giant H1 at the bottom of the PDF) ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (observed under qwen3.6-35b on OpenCode, run ses_235c — the model defaulted to Claude Code's `general-purpose` and got rejected before self-correcting to OpenCode's `general`).
 
 - **Claude Code:** `Task` tool with `subagent_type="general-purpose"` and the prompt as `description`/`prompt`.
+- **OpenCode:** `task` tool (lowercase) with `subagent_type="general"` (NOT `"general-purpose"` — that's Claude Code's value) and the prompt as `description`/`prompt`. Same shape as Claude Code's `Task`. Note: same-message parallel dispatch works in current builds but has been historically flaky ([sst/opencode#14195](https://github.com/sst/opencode/issues/14195)) — if two concurrent dispatches serialize instead of running in parallel, that's known and benign.
 - **Gemini CLI:** `@generalist` (its built-in generalist sub-agent).
 - **Codex CLI:** explicitly instruct the model to spawn a sub-agent — "spawn a sub-agent with the following prompt and return its output." Without the explicit spawn request, Codex tends to run the task inline in the parent session (still produces correct output, but loses prompt-injection isolation).
-- **OpenCode:** `task` tool (lowercase) with `subagent_type="general"` and the prompt as `description`/`prompt`. Same shape as Claude Code's `Task`. Note: same-message parallel dispatch works in current builds but has been historically flaky ([sst/opencode#14195](https://github.com/sst/opencode/issues/14195)) — if two concurrent dispatches serialize instead of running in parallel, that's known and benign.
 
 The six kinds and their required inputs:
 
@@ -611,10 +611,16 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-Parse the output (the fit-analyst emits more than just fit_score/company — ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION — extract them all for telemetry and downstream phases). **Persist each field to its own file under `$RUN_DIR/fit/`** so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
+**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` (observed under qwen3.6-35b on OpenCode, run ses_235c) bypasses both gates and ships freeform strings to the public dashboard, where they don't fit any aggregation bucket. The fit-analyst sub-agent's output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
+
+The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION are all extracted. Each field is persisted to its own file under `$RUN_DIR/fit/` so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
 
 ```bash
 mkdir -p "$RUN_DIR/fit"
+# REQUIRED: pipe the fit-analyst output through extract-fit-fields.
+# DO NOT replace this with `echo "8" > $RUN_DIR/fit/score.txt` etc. —
+# manual writes bypass enum validation. See run ses_235c for what
+# happens when the agent improvises this step.
 echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-fields --output-dir "$RUN_DIR/fit"
 
 # Capture into shell variables for inline use within this Phase 3 block.

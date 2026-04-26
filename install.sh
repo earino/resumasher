@@ -143,11 +143,30 @@ if [ -d "$SCRIPT_DIR/bin" ]; then
   chmod +x "$SCRIPT_DIR/bin/"* 2>/dev/null || true
 fi
 
+
+# OpenCode slash-command shim. OpenCode resolves `/resumasher <args>` by
+# reading `~/.config/opencode/commands/resumasher.md` and substituting
+# `$ARGUMENTS` into its body. Without the shim, OpenCode falls back to
+# pasting the full SKILL.md as a user message and silently drops the
+# argument — observed under qwen3.6-35b in run ses_235c, where the model
+# replied "I've loaded the resumasher skill. What would you like me to do?"
+# instead of executing. The shim ensures `/resumasher jd.md` actually runs
+# the pipeline. Skipped silently if OpenCode isn't installed.
+OPENCODE_CMD_SRC="$SCRIPT_DIR/commands/resumasher.md"
+if [ -f "$OPENCODE_CMD_SRC" ] && command -v opencode >/dev/null 2>&1; then
+  OPENCODE_CMD_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands"
+  if mkdir -p "$OPENCODE_CMD_DIR" 2>/dev/null; then
+    if cp "$OPENCODE_CMD_SRC" "$OPENCODE_CMD_DIR/resumasher.md" 2>/dev/null; then
+      echo "Installed OpenCode slash-command shim at $OPENCODE_CMD_DIR/resumasher.md"
+    fi
+  fi
+fi
+
 echo ""
 echo "resumasher installed at $SCRIPT_DIR"
 echo ""
 echo "Next steps:"
-echo "  1. Restart your AI CLI (Claude Code, Codex, or Gemini) so it picks up the new skill."
+echo "  1. Restart your AI CLI (Claude Code, Codex, Gemini, or OpenCode) so it picks up the new skill."
 echo "  2. cd to a folder containing resume.md (try GOLDEN_FIXTURES/ for a demo)."
 echo "  3. Run: /resumasher <job-source>"
 if [ "$INSTALL_DEV" = "0" ]; then
