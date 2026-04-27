@@ -87,17 +87,9 @@ This sets:
 - `TEL` — absolute path to `bin/resumasher-telemetry-log`, the no-op-when-tier-off event logger called at 8 pipeline boundaries below.
 - `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
 
-**Telemetry identifiers you (the orchestrator) substitute literally: `$MODEL` and `$HOST`.** Many `"$TEL"` calls below pass `--model "$MODEL"` and `--host "$HOST"`. These are NOT shell variables the prologue sets — they're strings you substitute with literals before executing the command.
+**`$MODEL` and `$HOST` are literal strings you substitute, not shell variables the prologue sets.** `$MODEL` is your own model identifier (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`, `anthropic/claude-opus-4-7` for OpenCode); omit `--model` if you genuinely don't know — null beats fabricated. `$HOST` is exactly one of `claude_code` / `codex_cli` / `gemini_cli` / `opencode_cli` — the CLI that loaded this SKILL.md. Both are self-reported because bash can't reliably detect them across hosts (Codex, for instance, doesn't set a discoverable env var).
 
-- `$MODEL`: your own model identifier. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit `--model`; null is better than fabricated.
-- `$HOST`: which AI CLI you're running in. Exactly one of `claude_code`, `codex_cli`, `gemini_cli`, or `opencode_cli`. You know this — it's literally the CLI that loaded this SKILL.md. If omitted, the log script falls back to env-var sniffing and then to `"unknown"`, which is what we want to avoid.
-
-Both are self-reported because bash can't reliably detect them across host CLIs (Codex, for instance, doesn't set a discoverable env var).
-
-The check distinguishes three failure modes:
-- **SKILL_ROOT set, success** — everything good, proceed.
-- **NEEDS_INSTALL set, SKILL_ROOT empty** — skill was cloned but `install.sh` was never run. Error message names the exact command to fix it. This is the "future Claude cloned the repo and forgot the install step" case.
-- **Both empty** — skill isn't installed at all. Point the user at the README install section.
+The prologue's check distinguishes three failure modes: SKILL_ROOT set → proceed; NEEDS_INSTALL set, SKILL_ROOT empty → cloned but install.sh wasn't run, error message names the fix; both empty → not installed, point at the README.
 
 Every helper call in this document looks like:
 
@@ -212,7 +204,7 @@ This halt-and-resume path is the ONLY acceptable fallback. Never infer name, ema
 
 Every LLM sub-agent resumasher dispatches (folder-miner, fit-analyst, company-researcher, tailor, cover-letter, interview-coach) uses a prompt built from runtime content — the student's resume, the folder summary, the JD, etc.
 
-**Do NOT build these prompts inline with string interpolation.** A previous design had the orchestrator LLM substitute `{resume_text}` / `{folder_summary}` / `{jd_text}` tokens before dispatching. Cross-host testing revealed this is unreliable: under Gemini CLI, the fit-analyst sub-agent received a prompt with `{resume_text}` unfilled and produced a fit assessment that literally said *"the resume section is a placeholder."* Claude and Codex happened to substitute, but LLM judgment is the wrong tool for a mechanical string operation.
+**Do NOT build these prompts inline with string interpolation.** LLM judgment is the wrong tool for a mechanical string operation: cross-host testing showed Gemini CLI's fit-analyst received `{resume_text}` unfilled and produced a fit assessment that said *"the resume section is a placeholder."* Use `build-prompt` instead.
 
 Instead, use `build-prompt`:
 
@@ -231,9 +223,9 @@ mkdir -p "$RUN_DIR/prompts"
 PROMPT=$(cat "$RUN_DIR/prompts/folder-miner.txt")
 ```
 
-`$RUN_DIR/prompts/` is gitignored (parent `.resumasher/` is) and gets wiped at the start of every run, so prompt staging never leaks across sessions and never lands on the student's git history. **`/tmp/` is forbidden** for prompt staging because: (1) on macOS it's world-readable to other local users until reboot, exposing the student's resume + JD + project content as plaintext PII; (2) prompt files there can outlive the run and accumulate across sessions; (3) we have no cleanup hook for `/tmp` paths the agent improvises. A defense-in-depth cleanup scan (Phase 9) catches and deletes any `/tmp/<kind>-prompt.txt` files that slip through anyway, but the SKILL.md prescription above is the first line of defense — please follow it.
+`$RUN_DIR/prompts/` is gitignored and wiped each run — staged prompts never leak across sessions or land in git history. **`/tmp/` is forbidden** for prompt staging: on macOS it's world-readable to other local users until reboot (exposing the student's resume + JD + project content as plaintext PII), files there outlive the run, and we have no cleanup hook for paths the agent improvises. A Phase 9 cleanup scan deletes `/tmp/<kind>-prompt.txt` stragglers as defense-in-depth, but the prescription above is the first line of defense.
 
-Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt has been carefully tuned per kind: it includes labeled `<<<...BEGIN>>>/<<<...END>>>` markers around resume, folder summary, JD, and company-research blocks; it includes prompt-injection defenses for UNTRUSTED content; it includes the exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt by handcrafting a shorter version (observed under qwen3.6-35b on OpenCode, run ses_235c — Qwen rewrote the cover-letter prompt and inverted "Start with" to "End with", causing the salutation to render as a giant H1 at the bottom of the PDF) ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (observed under qwen3.6-35b on OpenCode, run ses_235c — the model defaulted to Claude Code's `general-purpose` and got rejected before self-correcting to OpenCode's `general`).
+Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt is tuned per kind: labeled `<<<...BEGIN>>>/<<<...END>>>` markers, prompt-injection defenses for UNTRUSTED content, exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt — observed: a Qwen run inverted "Start with" to "End with" and the cover letter's salutation rendered as a giant H1 at the bottom of the PDF — ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (a weak model on OpenCode picked Claude Code's `general-purpose` instead of OpenCode's `general` and got rejected before self-correcting).
 
 - **Claude Code:** `Task` tool with `subagent_type="general-purpose"` and the prompt as `description`/`prompt`.
 - **OpenCode:** `task` tool (lowercase) with `subagent_type="general"` (NOT `"general-purpose"` — that's Claude Code's value) and the prompt as `description`/`prompt`. Same shape as Claude Code's `Task`. Note: same-message parallel dispatch works in current builds but has been historically flaky ([sst/opencode#14195](https://github.com/sst/opencode/issues/14195)) — if two concurrent dispatches serialize instead of running in parallel, that's known and benign.
@@ -512,7 +504,7 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text (see the "Sub-agent 
 
 > Evidence extraction failed after 3 attempts. Please run /resumasher again, or paste your project list manually into `resume.md` and retry.
 
-Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains a name like `Ana's capstone` or any other apostrophe, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'` (observed under qwen3.6-35b on OpenCode, run `ses_236d`). Heredoc with a single-quoted delimiter is byte-literal and immune.
+Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains an apostrophe like `Ana's capstone`, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'`. Heredoc with a single-quoted delimiter is byte-literal and immune.
 
 ```bash
 # Recommended — heredoc with quoted delimiter, byte-literal:
@@ -537,7 +529,7 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` (observed under qwen3.6-35b on OpenCode, run ses_235c) bypasses both gates and ships freeform strings to the public dashboard, where they don't fit any aggregation bucket. The fit-analyst sub-agent's output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
+**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` bypasses both gates and ships freeform strings to the dashboard, where they don't fit any aggregation bucket. The fit-analyst output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
 
 The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION are all extracted. Each field is persisted to its own file under `$RUN_DIR/fit/` so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
 
@@ -545,8 +537,7 @@ The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS
 mkdir -p "$RUN_DIR/fit"
 # REQUIRED: pipe the fit-analyst output through extract-fit-fields.
 # DO NOT replace this with `echo "8" > $RUN_DIR/fit/score.txt` etc. —
-# manual writes bypass enum validation. See run ses_235c for what
-# happens when the agent improvises this step.
+# manual writes bypass enum validation and ship garbage to telemetry.
 echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-fields --output-dir "$RUN_DIR/fit"
 
 # Capture into shell variables for inline use within this Phase 3 block.
@@ -561,7 +552,7 @@ GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
 RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 ```
 
-**Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** That shape was the original bug in issue #50: `COMPANY=Elevation Capital` (unquoted) on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command, leaves COMPANY empty. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect. Same belt-and-suspenders shape as the rest of `$RUN_DIR/`'s scratch state (`run-id.txt`, `start-ts.txt`, `dispatch-ts.txt`, `out-dir.txt`).
+**Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** Unquoted `COMPANY=Elevation Capital` on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command and leaves `COMPANY` empty whenever the company name has a space. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect.
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
 
@@ -703,7 +694,7 @@ DISPATCH_TS=$(date +%s)
     --since-timestamp "$START_TS"
 ```
 
-This is defense-in-depth — the prompt and orchestration changes above should keep sub-agents from writing rogue files in the first place, but a future weaker model could regress. The first scan only touches files newer than `$DISPATCH_TS` whose names look like interview-prep output (case-insensitive substring match on `interview`, `prep`, or `bundle`); student-owned content is not at risk. The second scan only touches files in `/tmp` whose basenames match `<kind>-prompt.{txt,md}` for one of the registered prompt kinds; it never recurses, never touches files outside `/tmp`, and never touches files older than the run's `$START_TS`.
+Defense-in-depth — the prompt + orchestration changes should prevent rogue files in the first place, but a future weaker model could regress. The first scan is narrow by design: only files newer than `$DISPATCH_TS` whose names match `interview` / `prep` / `bundle` (case-insensitive); student content is never at risk. The second scan is similarly narrow: only `/tmp` (no recursion, never outside `/tmp`), only basenames matching `<kind>-prompt.{txt,md}` for a registered kind, only files newer than `$START_TS`.
 
 **Retry budget:** each gets 1 retry. On second failure, write a stub file:
 
