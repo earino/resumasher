@@ -35,14 +35,29 @@ def _phase_6_block(text: str) -> str:
     return text[start:end]
 
 
-def test_phase_6_instructs_orchestrator_to_use_write_tool_explicitly(skill_text: str):
-    """The orchestrator must be told to use Write on the sub-agent's text
-    response, not 'save the outputs' (which is ambiguous)."""
+def test_phase_6_instructs_orchestrator_to_use_write_or_heredoc_explicitly(skill_text: str):
+    """The orchestrator must be told to save the sub-agent's text response
+    via a specific shell-free or shell-safe mechanism — not the ambiguous
+    'save the outputs' that caused issue #29.
+
+    Two acceptable mechanisms:
+    - The Write tool (Claude Code / OpenCode) — bypasses shell entirely.
+    - A heredoc with a quoted delimiter (`<< 'HEREDOC'`) — byte-literal
+      and immune to apostrophes, dollar signs, and backticks in the
+      sub-agent's response. Required for hosts that don't ship a Write
+      tool (Codex, Gemini), and a safe fallback everywhere.
+
+    What's forbidden: assigning the response to a single-quoted shell
+    variable and echoing it. That breaks on apostrophes (`Ana's capstone`,
+    `client's request`) with `unmatched '` and produces empty files."""
     block = _phase_6_block(skill_text)
-    assert "use the Write tool to save it" in block, (
-        "Phase 6 must explicitly say 'use the Write tool to save it to ...' "
-        "so the orchestrator knows to call Write on the sub-agent's text "
-        "response. Ambiguous 'save the outputs' wording caused issue #29."
+    has_write = "Write tool" in block
+    has_heredoc = "<< 'HEREDOC'" in block or "heredoc" in block.lower()
+    assert has_write and has_heredoc, (
+        "Phase 6 must explicitly prescribe BOTH the Write tool AND a "
+        "heredoc-with-quoted-delimiter as the two safe save mechanisms "
+        "for sub-agent text responses. Single-quoted shell variables "
+        "break on apostrophes (issue #29 + the qwen3.6-35b OpenCode runs)."
     )
 
 

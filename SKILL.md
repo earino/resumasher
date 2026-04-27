@@ -389,23 +389,16 @@ If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the e
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
-**Generate `$RUN_ID`, capture `$START_TS`, and fire telemetry (start of Phase 1).** Every event from this run shares the same UUID so the maintainer can trace "what did run X do". `$RUN_DIR` was created at the top of this phase; reuse it:
+**Generate `$RUN_ID` and capture `$START_TS`** so every event from this run shares the same UUID. `$RUN_DIR` was created at the top of this phase; reuse it:
 
 ```bash
 RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
 START_TS=$(date +%s)
 echo "$RUN_ID" > "$RUN_DIR/run-id.txt"
 echo "$START_TS" > "$RUN_DIR/start-ts.txt"
-
-"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --jd-source-mode "$JD_MODE" \
-  --resume-format "$RESUME_FORMAT"
 ```
 
-`$JD_MODE` is the value captured from `parse-job-mode` above (`file`, `url`, or `literal`). Substitute `$RESUME_FORMAT` with one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned. Substitute `$MODEL` as described in the prologue.
+**Defer `run_started` telemetry to Phase 2** — it requires `$RESUME_FORMAT`, which isn't known until after Phase 2's `discover-resume` succeeds. Firing it here with a fabricated or empty `--resume-format` would ship garbage. The exact call lives at the end of Phase 2.
 
 ---
 
@@ -453,6 +446,25 @@ Once `$RESUME_PATH` is set (either from discover-resume or from the validated fa
 
 ```bash
 "$RS" orchestration read-resume "$RESUME_PATH" > $RUN_DIR/resume.txt
+```
+
+**Fire `run_started` telemetry now** — `$RESUME_FORMAT` is the value deferred from Phase 1 (one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned). `$JD_MODE` was captured in Phase 1.
+
+```bash
+case "$RESUME_PATH" in
+  *resume.md|*resume.markdown) RESUME_FORMAT=resume_md ;;
+  *cv.md|*CV.md) RESUME_FORMAT=cv_md ;;
+  *resume.pdf|*Resume.pdf) RESUME_FORMAT=resume_pdf ;;
+  *cv.pdf|*CV.pdf) RESUME_FORMAT=cv_pdf ;;
+  *) RESUME_FORMAT=resume_md ;;  # student-named markdown via validate-resume-path
+esac
+
+"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --jd-source-mode "$JD_MODE" \
+  --resume-format "$RESUME_FORMAT"
 ```
 
 Compute the folder state hash and check the cache. When GitHub is configured, append its prose to the context before handing it to the folder-miner sub-agent. GitHub mining has its own internal cache (1-hour TTL under `.resumasher/github-cache/<username>.json`), so repeated runs are cheap.
@@ -586,7 +598,13 @@ The `cp` persists the JD (with Source URL header for URL-mode inputs) into the a
 
 Print the fit score to the terminal: `Fit score: $FIT_SCORE/10. Full assessment saved to $OUT_DIR/fit-assessment.md.`
 
-Save the fit output to `$OUT_DIR/fit-assessment.md` for the student's records.
+Save the fit output to `$OUT_DIR/fit-assessment.md` for the student's records — use Write directly with the sub-agent response as the file body, OR a heredoc with a quoted delimiter. **Never** assign the response to a single-quoted shell variable and echo it; sub-agent text often contains apostrophes (`Ana's capstone`, `client's request`) that break single-quoted assignment with `unmatched '` and leave the file empty. Same prescription as Phase 2's cache save:
+
+```bash
+cat > "$OUT_DIR/fit-assessment.md" << 'HEREDOC'
+<paste the fit-analyst sub-agent's text response here>
+HEREDOC
+```
 
 **Retry budget:** fit-analyst gets 1 retry. If the retry also returns `FAILURE: ` or a missing FIT_SCORE, hard-stop (cannot proceed without fit context).
 
@@ -606,7 +624,13 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text. Unlike the other su
 
 If the sub-agent returns a FAILURE sentinel, prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
 
-Save the research to `$OUT_DIR/company-research.md`.
+Save the research to `$OUT_DIR/company-research.md` — same heredoc-or-Write rule as fit-assessment above. Company facts often contain possessives (`OpenAI's funding round`) that would break a single-quoted shell variable.
+
+```bash
+cat > "$OUT_DIR/company-research.md" << 'HEREDOC'
+<paste the company-researcher sub-agent's text response here>
+HEREDOC
+```
 
 ---
 
@@ -620,7 +644,13 @@ PROMPT=$("$RS" orchestration build-prompt --kind tailor --cwd "$STUDENT_CWD")
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt contains the full tailoring spec — schema, length targets, multi-role tenure format, `[INSERT ...]` placeholder rules, SOFT-alternate requirement, and the non-negotiable ANCHORING RULE that forbids fabricating experience to match the JD. It also contains a pre-built contact header at the top, read from `.resumasher/config.json` — the tailor copies that header verbatim rather than inferring contact info from the resume PDF (which may lack the student's LinkedIn URL or show a stale location). Template: `scripts/prompts.py` `tailor` kind (the canonical source — edits go there, not here).
 
-Save the output to `$OUT_DIR/tailored-resume.md`.
+Save the output to `$OUT_DIR/tailored-resume.md` — same heredoc-or-Write rule. The tailored resume is dense with possessives, single-quoted clauses, dollar signs in metrics ($2M, $500K), and backticks if the candidate has technical bullets. Heredoc with a quoted delimiter is byte-literal and immune.
+
+```bash
+cat > "$OUT_DIR/tailored-resume.md" << 'HEREDOC'
+<paste the tailor sub-agent's text response here>
+HEREDOC
+```
 
 **Retry budget:** tailor gets 1 retry. If the retry also fails, hard-stop (the tailored resume is the core deliverable — a stub isn't acceptable).
 
@@ -672,7 +702,19 @@ DISPATCH_TS=$(date +%s)
 
 **Dispatch cover-letter and interview-coach in parallel** — in one orchestrator turn, issue both sub-agent calls with `$PROMPT_COVER` and `$PROMPT_PREP` respectively. Under Claude Code this is two `Task` calls in the same message; under OpenCode two `task` calls in the same message (parallel works in current builds but may serialize — see dispatch notes earlier in this doc); under Gemini two `@generalist` calls; under Codex instruct the model to spawn two sub-agents concurrently.
 
-**Take each sub-agent's text response — the markdown document it returned in its message — and use the Write tool to save it to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md` respectively.** The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
+**Take each sub-agent's text response — the markdown document it returned in its message — and save it via the Write tool OR a heredoc with a quoted delimiter. Never via single-quoted shell assignment.** Cover letters routinely contain possessives (`the company's mission`, `we're building`) that break `VAR='...'` with `unmatched '` and silently produce empty files; interview-prep bundles contain SQL with backticks and dollar-sign placeholders that break unquoted variants too. Heredoc with `<< 'HEREDOC'` is byte-literal and immune.
+
+```bash
+cat > "$OUT_DIR/cover-letter.md" << 'HEREDOC'
+<paste the cover-letter sub-agent's text response here>
+HEREDOC
+
+cat > "$OUT_DIR/interview-prep.md" << 'HEREDOC'
+<paste the interview-coach sub-agent's text response here>
+HEREDOC
+```
+
+The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
 
 **Run the post-phase cleanup scans** to remove any rogue files a misbehaving sub-agent or shell may have left behind:
 
