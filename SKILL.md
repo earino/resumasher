@@ -8,9 +8,8 @@ description: |
 
   Also investigates its own output when students report issues — if a student
   says the PDF looks wrong (missing content, stretched photo, weird section
-  order, anything off), follow the "Debugging this skill" playbook at the
-  bottom of this file to match the symptom against known failure modes and
-  draft a bug report for the maintainer.
+  order, anything off), follow `docs/DEBUGGING.md` to match the symptom
+  against known failure modes and draft a bug report for the maintainer.
 argument-hint: <job-source> [--style eu|us] [--photo <path>] [--no-photo]
 ---
 
@@ -88,17 +87,9 @@ This sets:
 - `TEL` — absolute path to `bin/resumasher-telemetry-log`, the no-op-when-tier-off event logger called at 8 pipeline boundaries below.
 - `STUDENT_CWD` — where the student is working (their resume folder, NOT the skill dir).
 
-**Telemetry identifiers you (the orchestrator) substitute literally: `$MODEL` and `$HOST`.** Many `"$TEL"` calls below pass `--model "$MODEL"` and `--host "$HOST"`. These are NOT shell variables the prologue sets — they're strings you substitute with literals before executing the command.
+**`$MODEL` and `$HOST` are literal strings you substitute, not shell variables the prologue sets.** `$MODEL` is your own model identifier (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`, `anthropic/claude-opus-4-7` for OpenCode); omit `--model` if you genuinely don't know — null beats fabricated. `$HOST` is exactly one of `claude_code` / `codex_cli` / `gemini_cli` / `opencode_cli` — the CLI that loaded this SKILL.md. Both are self-reported because bash can't reliably detect them across hosts (Codex, for instance, doesn't set a discoverable env var).
 
-- `$MODEL`: your own model identifier. Examples: `claude-opus-4-7`, `claude-sonnet-4-6`, `gpt-5-codex`, `gpt-5-mini`, `gemini-2.5-pro`, `gemini-2.5-flash`. You know what you are. If you genuinely don't, omit `--model`; null is better than fabricated.
-- `$HOST`: which AI CLI you're running in. Exactly one of `claude_code`, `codex_cli`, `gemini_cli`, or `opencode_cli`. You know this — it's literally the CLI that loaded this SKILL.md. If omitted, the log script falls back to env-var sniffing and then to `"unknown"`, which is what we want to avoid.
-
-Both are self-reported because bash can't reliably detect them across host CLIs (Codex, for instance, doesn't set a discoverable env var).
-
-The check distinguishes three failure modes:
-- **SKILL_ROOT set, success** — everything good, proceed.
-- **NEEDS_INSTALL set, SKILL_ROOT empty** — skill was cloned but `install.sh` was never run. Error message names the exact command to fix it. This is the "future Claude cloned the repo and forgot the install step" case.
-- **Both empty** — skill isn't installed at all. Point the user at the README install section.
+The prologue's check distinguishes three failure modes: SKILL_ROOT set → proceed; NEEDS_INSTALL set, SKILL_ROOT empty → cloned but install.sh wasn't run, error message names the fix; both empty → not installed, point at the README.
 
 Every helper call in this document looks like:
 
@@ -213,7 +204,7 @@ This halt-and-resume path is the ONLY acceptable fallback. Never infer name, ema
 
 Every LLM sub-agent resumasher dispatches (folder-miner, fit-analyst, company-researcher, tailor, cover-letter, interview-coach) uses a prompt built from runtime content — the student's resume, the folder summary, the JD, etc.
 
-**Do NOT build these prompts inline with string interpolation.** A previous design had the orchestrator LLM substitute `{resume_text}` / `{folder_summary}` / `{jd_text}` tokens before dispatching. Cross-host testing revealed this is unreliable: under Gemini CLI, the fit-analyst sub-agent received a prompt with `{resume_text}` unfilled and produced a fit assessment that literally said *"the resume section is a placeholder."* Claude and Codex happened to substitute, but LLM judgment is the wrong tool for a mechanical string operation.
+**Do NOT build these prompts inline with string interpolation.** LLM judgment is the wrong tool for a mechanical string operation: cross-host testing showed Gemini CLI's fit-analyst received `{resume_text}` unfilled and produced a fit assessment that said *"the resume section is a placeholder."* Use `build-prompt` instead.
 
 Instead, use `build-prompt`:
 
@@ -232,9 +223,9 @@ mkdir -p "$RUN_DIR/prompts"
 PROMPT=$(cat "$RUN_DIR/prompts/folder-miner.txt")
 ```
 
-`$RUN_DIR/prompts/` is gitignored (parent `.resumasher/` is) and gets wiped at the start of every run, so prompt staging never leaks across sessions and never lands on the student's git history. **`/tmp/` is forbidden** for prompt staging because: (1) on macOS it's world-readable to other local users until reboot, exposing the student's resume + JD + project content as plaintext PII; (2) prompt files there can outlive the run and accumulate across sessions; (3) we have no cleanup hook for `/tmp` paths the agent improvises. A defense-in-depth cleanup scan (Phase 9) catches and deletes any `/tmp/<kind>-prompt.txt` files that slip through anyway, but the SKILL.md prescription above is the first line of defense — please follow it.
+`$RUN_DIR/prompts/` is gitignored and wiped each run — staged prompts never leak across sessions or land in git history. **`/tmp/` is forbidden** for prompt staging: on macOS it's world-readable to other local users until reboot (exposing the student's resume + JD + project content as plaintext PII), files there outlive the run, and we have no cleanup hook for paths the agent improvises. A Phase 9 cleanup scan deletes `/tmp/<kind>-prompt.txt` stragglers as defense-in-depth, but the prescription above is the first line of defense.
 
-Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt has been carefully tuned per kind: it includes labeled `<<<...BEGIN>>>/<<<...END>>>` markers around resume, folder summary, JD, and company-research blocks; it includes prompt-injection defenses for UNTRUSTED content; it includes the exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt by handcrafting a shorter version (observed under qwen3.6-35b on OpenCode, run ses_235c — Qwen rewrote the cover-letter prompt and inverted "Start with" to "End with", causing the salutation to render as a giant H1 at the bottom of the PDF) ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (observed under qwen3.6-35b on OpenCode, run ses_235c — the model defaulted to Claude Code's `general-purpose` and got rejected before self-correcting to OpenCode's `general`).
+Then dispatch the sub-agent with `$PROMPT` as the instruction text. **Pass `$PROMPT` AS-IS — do not paraphrase, summarize, shorten, or rewrite it before dispatching.** The compiled prompt is tuned per kind: labeled `<<<...BEGIN>>>/<<<...END>>>` markers, prompt-injection defenses for UNTRUSTED content, exact ordering of structural instructions like "Start with a greeting H1" that downstream rendering depends on. A weak model that "improves" the prompt — observed: a Qwen run inverted "Start with" to "End with" and the cover letter's salutation rendered as a giant H1 at the bottom of the PDF — ships broken artifacts that look superficially correct. **The dispatch primitive AND the `subagent_type` value differ per host — use the entry that matches the CLI you're actually running in, not the first one listed.** Picking the wrong `subagent_type` returns `Unknown agent type: <X> is not a valid agent type` and burns a dispatch attempt (a weak model on OpenCode picked Claude Code's `general-purpose` instead of OpenCode's `general` and got rejected before self-correcting).
 
 - **Claude Code:** `Task` tool with `subagent_type="general-purpose"` and the prompt as `description`/`prompt`.
 - **OpenCode:** `task` tool (lowercase) with `subagent_type="general"` (NOT `"general-purpose"` — that's Claude Code's value) and the prompt as `description`/`prompt`. Same shape as Claude Code's `Task`. Note: same-message parallel dispatch works in current builds but has been historically flaky ([sst/opencode#14195](https://github.com/sst/opencode/issues/14195)) — if two concurrent dispatches serialize instead of running in parallel, that's known and benign.
@@ -281,122 +272,49 @@ Print the GDPR notice:
 
 Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode) to collect the remaining values. Follow the "Interactive prompt pattern (cross-host)" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
 
-Concrete question shapes. Every free-text question has EXACTLY 2 or more explicit options in `options` array (plus the auto-added Other). Anything less crashes with `InputValidationError`.
+Concrete question shapes. Every free-text question has at least 2 real options in the `options` array (plus the auto-added Other) — fewer crashes with `InputValidationError`.
 
-1. **Name** (usually extracted from PDF):
-   ```
-   Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
-     A) Yes, use '{name}' exactly as shown
-     B) Skip — no name on the resume (unusual but allowed)
-     Other: paste the exact name to use instead
-   ```
+**Pattern A canonical shape** (extraction default exists). Use this for `name`, `email`, `phone`, `linkedin`, `location`:
 
-2. **Email** (usually extracted from PDF):
-   ```
-   Question: "Email for the resume?"
-     A) Use '{email}' from your resume
-     B) Skip — no email on the resume
-     Other: paste a different email
-   ```
+```
+Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
+  A) Yes, use '{name}' exactly as shown
+  B) Skip — no {field} on the resume
+  Other: paste a different {field}
+```
 
-3. **Phone** (may or may not be in PDF):
-   ```
-   Question: "Phone number for the resume?"
-     A) Use '{phone_from_pdf}'     ← only include this option if extraction found a phone
-     B) Skip — don't include phone
-     Other: paste a different phone (e.g., +43 664 1234567)
-   ```
-   If no phone extracted, drop option A and fall back to pattern B:
-   ```
-     A) I have one — paste it in Other below
-     B) Skip — don't include phone
-     Other: paste your phone
-   ```
+**Phone special case:** if PDF extraction found nothing, drop option A and use the Pattern B shape ("A) I have one — paste in Other / B) Skip / Other: paste your phone").
 
-4. **LinkedIn** (usually extracted from PDF):
-   ```
-   Question: "LinkedIn URL for the resume?"
-     A) Use '{linkedin_url}' from your resume
-     B) Skip — don't include LinkedIn
-     Other: paste a different URL (we'll normalize to https://)
-   ```
+**Style + photo-include — genuine 2-option choices** (no Other path):
+- `default_style`: EU (DACH / EU applications) vs US (no photo).
+- `include_photo`: Yes vs No (No is more common for anglophone markets).
 
-5. **Location** (usually extracted from PDF):
-   ```
-   Question: "City, country for the resume?"
-     A) Use '{location}' from your resume
-     B) Skip — don't include location
-     Other: paste a different location
-   ```
+**Photo path** (only if `include_photo=true`): Pattern B shape with `Other: absolute path`. After the student answers, **verify the file exists with `ls -la <path>` and re-ask on missing — never silently fall through to a broken render.**
 
-6. **Style** — genuine 2-option choice (no Other path expected):
-   ```
-   Question: "Default resume style?"
-     A) EU (recommended for DACH / EU applications)
-     B) US (recommended for US applications, no photo)
-   ```
+**Photo position** (only if `include_photo=true` and the path is valid): three real options — Top right (DACH convention), Top left (French / Benelux), Centered. Save to `photo_position` in config.json as `"right"` / `"left"` / `"center"`. Default is `"right"` if the question is skipped, but the question flow answers first so the default is rarely used.
 
-7. **Photo include** — genuine 2-option choice:
-   ```
-   Question: "Include a photo on EU-style resumes by default?"
-     A) Yes, include a photo
-     B) No photo (more common for anglophone markets)
-   ```
+**GitHub profile:** Pattern B shape ("A) I have one / B) Skip — sets `github_prompted=true` so we don't re-ask"). Other accepts username or profile URL; we'll strip the prefix.
 
-8. **Photo path** (only if include-photo=yes):
-   ```
-   Question: "Where's the photo file? Paste the absolute path in Other."
-     A) I have one — paste the absolute path in Other below
-     B) Skip photo for this run — I'll add a path later by editing .resumasher/config.json
-     Other: absolute path (e.g., /Users/you/Desktop/headshot.png)
-   ```
-   After the student answers, verify the file exists with `ls -la <path>`. If missing, re-ask; don't silently fall through.
+**Usage analytics consent** — the LAST question of first-run setup, before config.json is written.
 
-8a. **Photo position** (only if include-photo=yes and the photo path is valid):
-   ```
-   Question: "Where should your photo go on the resume?"
-     A) Top right (DACH / German-speaking markets convention)
-     B) Top left (French / Benelux convention)
-     C) Centered (unusual but supported)
-   ```
-   Save the answer to `photo_position` in `.resumasher/config.json` ("right", "left", or "center"). Default is "right" if the question is skipped, but the question flow answers first so the default is rarely used at first-run.
+**GDPR compliance requires Off to be the pass-through default.** Under GDPR Article 7, "consent" means an active, affirmative action. A pre-selected "yes" option that the student accepts by pressing Enter is NOT valid consent. Therefore: Off is listed FIRST (so it's the highlighted default choice in the host's question UI) and NO option carries a "(Recommended)" label. The student has to actively move the cursor to Anonymous or Community to opt in.
 
-9. **GitHub profile**:
-   ```
-   Question: "Do you have a GitHub? We can leverage it for this."
-     A) I have one — paste the username or profile URL in Other
-     B) Skip — leave blank (sets github_prompted=true so we don't re-ask)
-     Other: username (e.g., earino) or profile URL (we'll strip the prefix)
-   ```
+```
+Question: "Help us improve resumasher?
 
-10. **Usage analytics consent** — this is the LAST question of first-run setup, before config.json is written.
+resumasher is a research tool. If you opt in, we log anonymous usage events
+so the maintainer can see what's breaking and what students actually use.
+See PRIVACY.md for the full list of what's logged and what isn't. You can
+change this anytime with 'resumasher telemetry set-tier <tier>'."
+  A) Off. Nothing is logged or sent. This is the default.
+  B) Anonymous. Logs events to the backend without an installation identifier.
+     Runs cannot be correlated.
+  C) Community. Logs events plus a random installation ID so the maintainer
+     can see 'this user is hitting the same bug repeatedly'. No names, no
+     resume content, no JD text.
+```
 
-    **GDPR compliance requires Off to be the pass-through default.** Under GDPR
-    Article 7, "consent" means an active, affirmative action. A pre-selected
-    "yes" option that the student accepts by pressing Enter is NOT valid
-    consent. Therefore: Off is listed FIRST (so it's the highlighted default
-    choice in the host's question UI) and NO option carries a "(Recommended)"
-    label. The student has to actively move the cursor to Anonymous or
-    Community to opt in.
-    ```
-    Question: "Help us improve resumasher?
-
-    resumasher is a research tool. If you opt in, we log anonymous usage events
-    so the maintainer can see what's breaking and what students actually use.
-    See PRIVACY.md for the full list of what's logged and what isn't. You can
-    change this anytime with 'resumasher telemetry set-tier <tier>'."
-      A) Off. Nothing is logged or sent. This is the default.
-      B) Anonymous. Logs events to the backend without an installation identifier.
-         Runs cannot be correlated.
-      C) Community. Logs events plus a random installation ID so the maintainer
-         can see 'this user is hitting the same bug repeatedly'. No names, no
-         resume content, no JD text.
-    ```
-    Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or
-    `"community"`. **If the student presses Enter on the highlighted default,
-    that selects Off — which is GDPR's required "no consent given" state.** Do
-    NOT re-order, do NOT add "(Recommended)" to Anonymous or Community, do NOT
-    pre-select a non-Off option in any way. Active opt-in only.
+Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or `"community"`. **If the student presses Enter on the highlighted default, that selects Off — which is GDPR's required "no consent given" state.** Do NOT re-order, do NOT add "(Recommended)" to Anonymous or Community, do NOT pre-select a non-Off option in any way. Active opt-in only.
 
 If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
 
@@ -471,23 +389,16 @@ If `mode == "url"`: fetch the page with the WebFetch tool (Claude Code) or the e
 
 **Language detection.** If the JD text is not English, block with a clear message: "resumasher v0.1 supports English JDs only. Detected: <lang>. Please paste an English translation and retry." (Use your own judgment to detect the language — no external detector needed.)
 
-**Generate `$RUN_ID`, capture `$START_TS`, and fire telemetry (start of Phase 1).** Every event from this run shares the same UUID so the maintainer can trace "what did run X do". `$RUN_DIR` was created at the top of this phase; reuse it:
+**Generate `$RUN_ID` and capture `$START_TS`** so every event from this run shares the same UUID. `$RUN_DIR` was created at the top of this phase; reuse it:
 
 ```bash
 RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)
 START_TS=$(date +%s)
 echo "$RUN_ID" > "$RUN_DIR/run-id.txt"
 echo "$START_TS" > "$RUN_DIR/start-ts.txt"
-
-"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --jd-source-mode "$JD_MODE" \
-  --resume-format "$RESUME_FORMAT"
 ```
 
-`$JD_MODE` is the value captured from `parse-job-mode` above (`file`, `url`, or `literal`). Substitute `$RESUME_FORMAT` with one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned. Substitute `$MODEL` as described in the prologue.
+**Defer `run_started` telemetry to Phase 2** — it requires `$RESUME_FORMAT`, which isn't known until after Phase 2's `discover-resume` succeeds. Firing it here with a fabricated or empty `--resume-format` would ship garbage. The exact call lives at the end of Phase 2.
 
 ---
 
@@ -535,6 +446,25 @@ Once `$RESUME_PATH` is set (either from discover-resume or from the validated fa
 
 ```bash
 "$RS" orchestration read-resume "$RESUME_PATH" > $RUN_DIR/resume.txt
+```
+
+**Fire `run_started` telemetry now** — `$RESUME_FORMAT` is the value deferred from Phase 1 (one of `resume_md`, `resume_pdf`, `cv_md`, `cv_pdf` based on the filename `discover-resume` returned). `$JD_MODE` was captured in Phase 1.
+
+```bash
+case "$RESUME_PATH" in
+  *resume.md|*resume.markdown) RESUME_FORMAT=resume_md ;;
+  *cv.md|*CV.md) RESUME_FORMAT=cv_md ;;
+  *resume.pdf|*Resume.pdf) RESUME_FORMAT=resume_pdf ;;
+  *cv.pdf|*CV.pdf) RESUME_FORMAT=cv_pdf ;;
+  *) RESUME_FORMAT=resume_md ;;  # student-named markdown via validate-resume-path
+esac
+
+"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
+  --model "$MODEL" \
+  --run-id "$RUN_ID" \
+  --jd-source-mode "$JD_MODE" \
+  --resume-format "$RESUME_FORMAT"
 ```
 
 Compute the folder state hash and check the cache. When GitHub is configured, append its prose to the context before handing it to the folder-miner sub-agent. GitHub mining has its own internal cache (1-hour TTL under `.resumasher/github-cache/<username>.json`), so repeated runs are cheap.
@@ -586,7 +516,7 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text (see the "Sub-agent 
 
 > Evidence extraction failed after 3 attempts. Please run /resumasher again, or paste your project list manually into `resume.md` and retry.
 
-Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains a name like `Ana's capstone` or any other apostrophe, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'` (observed under qwen3.6-35b on OpenCode, run `ses_236d`). Heredoc with a single-quoted delimiter is byte-literal and immune.
+Cache the successful summary. **Save the sub-agent's text response via the Write tool, OR via a heredoc with a quoted delimiter** (`<< 'HEREDOC'`) — never by assigning the response to a single-quoted shell variable and echoing it. Single-quoted shell assignment cannot contain a literal `'` (no `\'` escape inside `'...'`); the moment the sub-agent text contains an apostrophe like `Ana's capstone`, zsh dies with `unmatched '` and `$CACHE_PATH` is left empty — the next phase then fails with `FAILURE: ... requires variable 'folder_summary'`. Heredoc with a single-quoted delimiter is byte-literal and immune.
 
 ```bash
 # Recommended — heredoc with quoted delimiter, byte-literal:
@@ -611,7 +541,7 @@ PROMPT=$("$RS" orchestration build-prompt --kind fit-analyst --cwd "$STUDENT_CWD
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt wraps the resume (from `$RUN_DIR/resume.txt`), folder summary (from `.resumasher/cache.txt`), and JD (from `$RUN_DIR/jd.txt`) in labeled markers and asks for a prose fit assessment ending with `FIT_SCORE: N` and `COMPANY: <name>` sentinel lines. Template: `scripts/prompts.py` `fit-analyst` kind.
 
-**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` (observed under qwen3.6-35b on OpenCode, run ses_235c) bypasses both gates and ships freeform strings to the public dashboard, where they don't fit any aggregation bucket. The fit-analyst sub-agent's output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
+**You MUST pipe the fit-analyst output through `extract-fit-fields` — do NOT write the per-field files manually with `echo`.** The extractor enforces enum validation that prevents garbage values from landing in telemetry: `seniority.txt` only gets populated if the value is in the canonical enum (`intern`/`junior`/`mid`/`senior`/`staff`/`manager`/`director`/`vp`/`cxo`); `recommendation.txt` only gets populated if the value normalizes to `yes` / `yes_with_caveats` / `no`. Manual `echo "Entry/Junior" > seniority.txt` bypasses both gates and ships freeform strings to the dashboard, where they don't fit any aggregation bucket. The fit-analyst output may also contain markdown-bold variants like `**ROLE:** Data Analyst` instead of plain `ROLE: Data Analyst`; the extractor handles both forms but a manual `grep` you write yourself usually doesn't. Pipe the output and trust the extractor.
 
 The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS_COUNT, GAPS_COUNT, RECOMMENDATION are all extracted. Each field is persisted to its own file under `$RUN_DIR/fit/` so Phase 9 (a separate Bash tool call with no inherited shell state) can read them back without shell-source hazards:
 
@@ -619,8 +549,7 @@ The extractor reads more than just fit_score/company: ROLE, SENIORITY, STRENGTHS
 mkdir -p "$RUN_DIR/fit"
 # REQUIRED: pipe the fit-analyst output through extract-fit-fields.
 # DO NOT replace this with `echo "8" > $RUN_DIR/fit/score.txt` etc. —
-# manual writes bypass enum validation. See run ses_235c for what
-# happens when the agent improvises this step.
+# manual writes bypass enum validation and ship garbage to telemetry.
 echo "$FIT_OUTPUT" | "$RS" orchestration extract-fit-fields --output-dir "$RUN_DIR/fit"
 
 # Capture into shell variables for inline use within this Phase 3 block.
@@ -635,7 +564,7 @@ GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
 RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
 ```
 
-**Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** That shape was the original bug in issue #50: `COMPANY=Elevation Capital` (unquoted) on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command, leaves COMPANY empty. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect. Same belt-and-suspenders shape as the rest of `$RUN_DIR/`'s scratch state (`run-id.txt`, `start-ts.txt`, `dispatch-ts.txt`, `out-dir.txt`).
+**Do NOT improvise an `fit-extracted.env` heredoc + `source` pattern.** Unquoted `COMPANY=Elevation Capital` on its own line, then `. fit-extracted.env`, makes bash parse `Capital` as a command and leaves `COMPANY` empty whenever the company name has a space. The per-field-files pattern above is structurally immune — `$(cat file)` strips the trailing newline but preserves every interior character (spaces, ampersands, single quotes, dollar signs, backticks) byte-perfect.
 
 If `COMPANY` is empty (fit-analyst returned `UNKNOWN` or no line): prompt the student once via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "I couldn't identify the company from the JD. What company is this role at?" Use the response as `COMPANY`.
 
@@ -669,7 +598,13 @@ The `cp` persists the JD (with Source URL header for URL-mode inputs) into the a
 
 Print the fit score to the terminal: `Fit score: $FIT_SCORE/10. Full assessment saved to $OUT_DIR/fit-assessment.md.`
 
-Save the fit output to `$OUT_DIR/fit-assessment.md` for the student's records.
+Save the fit output to `$OUT_DIR/fit-assessment.md` for the student's records — use Write directly with the sub-agent response as the file body, OR a heredoc with a quoted delimiter. **Never** assign the response to a single-quoted shell variable and echo it; sub-agent text often contains apostrophes (`Ana's capstone`, `client's request`) that break single-quoted assignment with `unmatched '` and leave the file empty. Same prescription as Phase 2's cache save:
+
+```bash
+cat > "$OUT_DIR/fit-assessment.md" << 'HEREDOC'
+<paste the fit-analyst sub-agent's text response here>
+HEREDOC
+```
 
 **Retry budget:** fit-analyst gets 1 retry. If the retry also returns `FAILURE: ` or a missing FIT_SCORE, hard-stop (cannot proceed without fit context).
 
@@ -689,7 +624,13 @@ Dispatch a sub-agent with `$PROMPT` as its instruction text. Unlike the other su
 
 If the sub-agent returns a FAILURE sentinel, prompt the student via the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode): "Company research failed (<reason>). Paste 2-3 bullets of what you already know about {company}, or leave blank to accept a generic cover letter."
 
-Save the research to `$OUT_DIR/company-research.md`.
+Save the research to `$OUT_DIR/company-research.md` — same heredoc-or-Write rule as fit-assessment above. Company facts often contain possessives (`OpenAI's funding round`) that would break a single-quoted shell variable.
+
+```bash
+cat > "$OUT_DIR/company-research.md" << 'HEREDOC'
+<paste the company-researcher sub-agent's text response here>
+HEREDOC
+```
 
 ---
 
@@ -703,7 +644,13 @@ PROMPT=$("$RS" orchestration build-prompt --kind tailor --cwd "$STUDENT_CWD")
 
 Dispatch a sub-agent with `$PROMPT` as its instruction text. The compiled prompt contains the full tailoring spec — schema, length targets, multi-role tenure format, `[INSERT ...]` placeholder rules, SOFT-alternate requirement, and the non-negotiable ANCHORING RULE that forbids fabricating experience to match the JD. It also contains a pre-built contact header at the top, read from `.resumasher/config.json` — the tailor copies that header verbatim rather than inferring contact info from the resume PDF (which may lack the student's LinkedIn URL or show a stale location). Template: `scripts/prompts.py` `tailor` kind (the canonical source — edits go there, not here).
 
-Save the output to `$OUT_DIR/tailored-resume.md`.
+Save the output to `$OUT_DIR/tailored-resume.md` — same heredoc-or-Write rule. The tailored resume is dense with possessives, single-quoted clauses, dollar signs in metrics ($2M, $500K), and backticks if the candidate has technical bullets. Heredoc with a quoted delimiter is byte-literal and immune.
+
+```bash
+cat > "$OUT_DIR/tailored-resume.md" << 'HEREDOC'
+<paste the tailor sub-agent's text response here>
+HEREDOC
+```
 
 **Retry budget:** tailor gets 1 retry. If the retry also fails, hard-stop (the tailored resume is the core deliverable — a stub isn't acceptable).
 
@@ -755,7 +702,19 @@ DISPATCH_TS=$(date +%s)
 
 **Dispatch cover-letter and interview-coach in parallel** — in one orchestrator turn, issue both sub-agent calls with `$PROMPT_COVER` and `$PROMPT_PREP` respectively. Under Claude Code this is two `Task` calls in the same message; under OpenCode two `task` calls in the same message (parallel works in current builds but may serialize — see dispatch notes earlier in this doc); under Gemini two `@generalist` calls; under Codex instruct the model to spawn two sub-agents concurrently.
 
-**Take each sub-agent's text response — the markdown document it returned in its message — and use the Write tool to save it to `$OUT_DIR/cover-letter.md` and `$OUT_DIR/interview-prep.md` respectively.** The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
+**Take each sub-agent's text response — the markdown document it returned in its message — and save it via the Write tool OR a heredoc with a quoted delimiter. Never via single-quoted shell assignment.** Cover letters routinely contain possessives (`the company's mission`, `we're building`) that break `VAR='...'` with `unmatched '` and silently produce empty files; interview-prep bundles contain SQL with backticks and dollar-sign placeholders that break unquoted variants too. Heredoc with `<< 'HEREDOC'` is byte-literal and immune.
+
+```bash
+cat > "$OUT_DIR/cover-letter.md" << 'HEREDOC'
+<paste the cover-letter sub-agent's text response here>
+HEREDOC
+
+cat > "$OUT_DIR/interview-prep.md" << 'HEREDOC'
+<paste the interview-coach sub-agent's text response here>
+HEREDOC
+```
+
+The sub-agents were explicitly instructed not to write files themselves. If a sub-agent disobeyed and wrote a file anyway (observed on weaker models, see issue #29), ignore that file — rely on the text response from the sub-agent's message and let the cleanup scan below remove the rogue file. Do NOT scan the filesystem looking for sub-agent-written files; that is the bug, not the recovery.
 
 **Run the post-phase cleanup scans** to remove any rogue files a misbehaving sub-agent or shell may have left behind:
 
@@ -777,7 +736,7 @@ DISPATCH_TS=$(date +%s)
     --since-timestamp "$START_TS"
 ```
 
-This is defense-in-depth — the prompt and orchestration changes above should keep sub-agents from writing rogue files in the first place, but a future weaker model could regress. The first scan only touches files newer than `$DISPATCH_TS` whose names look like interview-prep output (case-insensitive substring match on `interview`, `prep`, or `bundle`); student-owned content is not at risk. The second scan only touches files in `/tmp` whose basenames match `<kind>-prompt.{txt,md}` for one of the registered prompt kinds; it never recurses, never touches files outside `/tmp`, and never touches files older than the run's `$START_TS`.
+Defense-in-depth — the prompt + orchestration changes should prevent rogue files in the first place, but a future weaker model could regress. The first scan is narrow by design: only files newer than `$DISPATCH_TS` whose names match `interview` / `prep` / `bundle` (case-insensitive); student content is never at risk. The second scan is similarly narrow: only `/tmp` (no recursion, never outside `/tmp`), only basenames matching `<kind>-prompt.{txt,md}` for a registered kind, only files newer than `$START_TS`.
 
 **Retry budget:** each gets 1 retry. On second failure, write a stub file:
 
@@ -786,7 +745,7 @@ This is defense-in-depth — the prompt and orchestration changes above should k
 
 This document was not generated. Re-run /resumasher <job-source> to regenerate
 the full bundle, OR edit this file manually and ask Claude to re-render the
-PDF from it (see "Re-rendering PDFs after edits" near the end of SKILL.md).
+PDF from it (see "Re-rendering after manual edits" in Phase 8).
 ```
 
 and continue. The student still gets the resume PDF.
@@ -909,6 +868,24 @@ fi
 ```
 
 If a markdown input was a stub (cover letter or interview prep generation failed), skip the corresponding PDF render and note it in the summary.
+
+#### Re-rendering after manual edits
+
+When a student says "I edited tailored-resume.md, re-render the PDF" or similar, do NOT re-run `/resumasher <job>` from scratch — that re-dispatches the sub-agents and overwrites their edits. Instead, jump directly to the render commands above with `$OUT_DIR` pointing at the already-existing application folder. Constraints:
+
+- **Only re-render what they edited.** "Re-render the resume" means the resume — don't also regenerate cover-letter.pdf.
+- **Do not re-run tailor / cover-letter / interview-coach sub-agents.** The student's manual edits are authoritative; sub-agents would overwrite them.
+- **Warn on remaining `[INSERT ...]` placeholders.** Grep the .md before rendering; if any remain, ask "Your edited markdown still has N `[INSERT ...]` placeholders. Render anyway, or fill them first?"
+- **Print path + size after each re-render** so the student sees confirmation: `Re-rendered resume.pdf ({size} bytes). Your edits are in the PDF.`
+
+Then fire the rerender telemetry event (`$KIND` is one of `resume`, `cover`, `prep`):
+
+```bash
+"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
+  --model "$MODEL" \
+  --rerender-kind "$KIND"
+```
 
 ---
 
@@ -1050,7 +1027,7 @@ If `PH_RESUME > 0` OR `PH_COVER > 0`, print this ERROR block — it means Phase 
 
    Open each file and search for "[INSERT". Either the Phase 7 fill-in
    was skipped or had a bug. Edit the .md manually, then ask Claude to
-   re-render the PDF (see "Re-rendering PDFs after edits" in SKILL.md).
+   re-render the PDF (see "Re-rendering after manual edits" in Phase 8).
 ```
 
 If `PH_PREP > 0`, print this NOTE block (this is expected — interview-prep placeholders are prep prompts, not substitution values):
@@ -1091,109 +1068,6 @@ I'll investigate. See "Debugging this skill" in SKILL.md for the playbook.
 
 ---
 
-## Re-rendering PDFs after manual edits
-
-Students often want to tweak the generated markdown (fix a bullet, add a missing detail, change a word) and get the PDF updated WITHOUT re-running the full pipeline. The full pipeline would re-dispatch all the sub-agents and overwrite their edits.
-
-When a student asks to "re-render the resume" or "update the PDF after I edited the markdown," follow this flow. Do NOT re-run `/resumasher <job>` from scratch.
-
-**Path prologue (required — shell state doesn't persist between Bash tool calls):**
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-for c in \
-  "$HOME/.claude/skills/resumasher" \
-  "$PWD/.claude/skills/resumasher" \
-  "$REPO_ROOT/.claude/skills/resumasher" \
-  "$HOME/.codex/skills/resumasher" \
-  "$PWD/.codex/skills/resumasher" \
-  "$REPO_ROOT/.codex/skills/resumasher" \
-  "$HOME/.gemini/skills/resumasher" \
-  "$PWD/.gemini/skills/resumasher" \
-  "$REPO_ROOT/.gemini/skills/resumasher" \
-  "$HOME/.opencode/skills/resumasher" \
-  "$PWD/.opencode/skills/resumasher" \
-  "$REPO_ROOT/.opencode/skills/resumasher"; do
-  [ -n "$c" ] || continue
-  [ -f "$c/SKILL.md" ] || continue
-  { [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; } && SKILL_ROOT="$c" && break
-done
-RS="$SKILL_ROOT/bin/resumasher-exec"
-TEL="$SKILL_ROOT/bin/resumasher-telemetry-log"
-STUDENT_CWD="$PWD"
-```
-
-**Locate the target output directory.** Ask the student which application they edited, or infer from context (most recent `applications/<slug>-<date>/`). Then:
-
-```bash
-OUT_DIR="$STUDENT_CWD/applications/<slug>-<date>"   # substitute the real path
-```
-
-**Read config for style and photo:**
-
-```bash
-STYLE=$(jq -r '.default_style // "eu"' "$STUDENT_CWD/.resumasher/config.json")
-INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
-PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
-PHOTO_POSITION=$(jq -r '.photo_position // "right"' "$STUDENT_CWD/.resumasher/config.json")
-```
-
-**Re-render the one(s) the student edited:**
-
-For the **resume** — pass `--photo` only if style is EU and include_photo is true. Use a bash array, not an unquoted string variable — the latter mis-expands on paths with spaces and has been seen to fail silently in some shell environments.
-
-```bash
-PHOTO_ARGS=()
-if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
-  PHOTO_ARGS=(--photo "$PHOTO_PATH" --photo-position "$PHOTO_POSITION")
-fi
-"$RS" render_pdf \
-  --input "$OUT_DIR/tailored-resume.md" \
-  --kind resume \
-  --style "$STYLE" \
-  --output "$OUT_DIR/resume.pdf" \
-  "${PHOTO_ARGS[@]}"
-```
-
-For the **cover letter**:
-
-```bash
-"$RS" render_pdf \
-  --input "$OUT_DIR/cover-letter.md" \
-  --kind cover-letter \
-  --output "$OUT_DIR/cover-letter.pdf"
-```
-
-For the **interview prep**:
-
-```bash
-"$RS" render_pdf \
-  --input "$OUT_DIR/interview-prep.md" \
-  --kind interview-prep \
-  --output "$OUT_DIR/interview-prep.pdf"
-```
-
-**Fire telemetry after a re-render.** `$KIND` is one of `resume`, `cover`, `prep` depending on which file the student asked to re-render:
-
-```bash
-"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --rerender-kind "$KIND"
-```
-
-**Important constraints:**
-
-- Only re-render the files the student actually edited. If they said "re-render the resume," don't also regenerate the cover letter — that's 20 extra seconds and tempts you to wonder if you should run the tailor sub-agent again (you shouldn't).
-- Do NOT re-run the tailor, cover-letter, or interview-coach sub-agents. The point of this flow is that the student's manual edits are authoritative.
-- After rendering, print the output path and file size:
-  ```
-  Re-rendered resume.pdf ({size} bytes). Your edits are in the PDF.
-  ```
-- If the `.md` file still contains `[INSERT ...]` placeholders, warn the student before rendering: "Your edited markdown still has N `[INSERT ...]` placeholders. Render anyway, or do you want to fill them first?"
-
----
-
 ## Error recovery
 
 If any phase returns `FAILURE: ` twice, the skill falls back per the retry
@@ -1214,374 +1088,17 @@ photo is suppressed regardless of `--photo` or config photo settings.
 
 ## Usage analytics (telemetry)
 
-If the student opted in during Phase 0 first-run setup, the orchestrator fires
-telemetry events at 8 pipeline boundaries. The `resumasher-telemetry-log`
-script is a no-op when `config.json` has `"telemetry": "off"` (which is the
-default), so it's safe to call unconditionally.
+The orchestrator fires `"$TEL"` events at 8 pipeline boundaries — the calls are documented inline at each phase, not duplicated here. Behavior worth knowing:
 
-**Do not block on telemetry.** The log script is `set -uo pipefail` (no `-e`)
-and exits 0 on any internal error. Telemetry failures never surface to the
-student.
-
-**Sync behavior.** The log script writes to a local JSONL file on every call.
-The HTTP sync to Supabase only fires when event_type is "terminal":
-`first_run_setup_completed`, `run_completed`, `run_failed`, or `rerender_used`.
-Terminal events flush the whole queue of mid-run events in a single POST.
-Measured against the live Supabase Ireland backend:
-
-- Mid-run events (`run_started`, `fit_computed`, `tailor_completed`,
-  `placeholder_fill_choice`): ~30ms per call (write-only, imperceptible).
-- Terminal events: ~500ms (flushes the batch in one round-trip).
-
-A typical full run costs ~1.6s of telemetry latency total, concentrated at
-Phase 0 end and Phase 9 end where a half-second pause reads as "saving"
-rather than "why is this hanging."
-
-If the student kills the process mid-run before a terminal event fires,
-queued mid-run events sit in the JSONL file and ship on the next run via
-cursor-based catch-up. "Best of our abilities" — no shutdown hooks across
-three host CLIs.
-
-### Run correlation
-
-At the start of Phase 1, generate a `run_id` (UUID v4) and save it so all
-events from the run share the same ID:
-
-```bash
-RUN_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-mkdir -p "$STUDENT_CWD/.resumasher/run"
-echo "$RUN_ID" > "$STUDENT_CWD/.resumasher/run/run-id.txt"
-```
-
-Subsequent phases read `$STUDENT_CWD/.resumasher/run/run-id.txt` to get the
-run_id.
-
-### The 8 call-sites
-
-Resolve `$TEL` once per Bash tool call, just like `$RS`:
-
-```bash
-TEL="$RS_DIR/bin/resumasher-telemetry-log"
-```
-
-**Every call-site below should include both `--host "$HOST"` and `--model "$MODEL"`.** `$HOST` is the AI CLI you're running in (one of `claude_code`, `codex_cli`, `gemini_cli`, `opencode_cli`); `$MODEL` is your own model identifier. You substitute both as literal strings — you know what CLI you are and what model you are. Examples by host:
-
-- Claude Code: `--host claude_code --model claude-opus-4-7` (or `claude-sonnet-4-6`, `claude-haiku-4-5`)
-- Codex CLI: `--host codex_cli --model gpt-5-codex` (or `gpt-5`, `gpt-5-mini`)
-- Gemini CLI: `--host gemini_cli --model gemini-2.5-pro` (or `gemini-2.5-flash`)
-- OpenCode: `--host opencode_cli --model anthropic/claude-opus-4-7` (or whichever provider/model you're configured against — OpenCode uses the `provider/model` format)
-
-If you genuinely don't know the model ID, omit `--model` (null is better than fabricated). Same rule for `--host`: omit rather than guess. The edge function caps both at 40 chars; no enum validation on model (space moves too fast), but host should match the four canonical values above.
-
-**Phase 0 (end) — first_run_setup_completed.** Fired right after config.json
-is written:
-
-```bash
-"$TEL" --event-type first_run_setup_completed --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --setup-duration "$SETUP_DURATION_SECONDS" \
-  --setup-outcome completed \
-  --style "$STYLE" \
-  --photo-included "$PHOTO_INCLUDED" \
-  --github-configured "$GITHUB_CONFIGURED"
-```
-
-`install_scope_path` is auto-detected by the log script from the skill's own
-installation path — user-scope (`$HOME/.claude/skills/`, `.codex/skills/`, or
-`.gemini/skills/`) → `user_home`; anywhere else → `project_local`. No orchestrator
-substitution needed. `$SETUP_DURATION_SECONDS` is time elapsed since the consent
-prompt started.
-
-**Phase 1 (start) — run_started.** Fired right after `parse-job-mode` /
-`parse-job-content` and `discover-resume` succeed:
-
-```bash
-"$TEL" --event-type run_started --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --jd-source-mode "$JD_MODE" \
-  --resume-format "$RESUME_FORMAT"
-```
-
-`$JD_MODE` is the value captured from `parse-job-mode` (`file`, `url`,
-or `literal`). `$RESUME_FORMAT` is one of `resume_md`, `resume_pdf`, `cv_md`,
-`cv_pdf` based on the `discover-resume` filename.
-
-**Phase 3 (end) — fit_computed.** Fired after fit-assessment.md is written
-and `extract-fit-fields` has persisted the structured fields to
-`$RUN_DIR/fit/`:
-
-```bash
-FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
-STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
-GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
-RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
-
-"$TEL" --event-type fit_computed --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --fit-score "$FIT_SCORE" \
-  --fit-strengths-count "$STRENGTHS_COUNT" \
-  --fit-gaps-count "$GAPS_COUNT" \
-  --fit-recommendation "$RECOMMENDATION"
-```
-
-**Phase 5 (end) — tailor_completed.** Fired after tailored-resume.md is
-written:
-
-```bash
-NUM_PLACEHOLDERS=$(grep -c '\[INSERT' "$OUT_DIR/tailored-resume.md" 2>/dev/null || echo 0)
-USED_MULTIROLE=$(grep -q 'sub-role\|- \*\*.*\*\* ·' "$OUT_DIR/tailored-resume.md" && echo true || echo false)
-
-"$TEL" --event-type tailor_completed --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --num-placeholders "$NUM_PLACEHOLDERS" \
-  --used-multirole-format "$USED_MULTIROLE"
-```
-
-**Phase 7 (per placeholder) — placeholder_fill_choice.** Fired after EACH
-placeholder is resolved (once per student answer):
-
-```bash
-"$TEL" --event-type placeholder_fill_choice --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --choice-type "$CHOICE"
-```
-
-`$CHOICE` is one of `specifics`, `soften`, `drop`.
-
-**Phase 9 (end) — run_completed.** Fired after all PDFs render and history
-is appended. Include all the fields from the fit event plus configuration.
-
-Phase 9 runs in a different Bash tool call than Phase 3 — shell variables
-do NOT persist across calls. Read each fit field by `cat`-ing the
-corresponding file under `$RUN_DIR/fit/` (written by Phase 3's
-`extract-fit-fields`). **Never** improvise a heredoc env file +
-`source` step here — see issue #50 for why that shape silently empties
-`COMPANY` when the company name has a space.
-
-```bash
-RUN_ID=$(cat "$RUN_DIR/run-id.txt")
-START_TS=$(cat "$RUN_DIR/start-ts.txt")
-DURATION=$(( $(date +%s) - START_TS ))
-
-# Re-read fit fields from per-field files (issue #50 — no shell-source).
-FIT_SCORE=$(cat "$RUN_DIR/fit/score.txt")
-COMPANY=$(cat "$RUN_DIR/fit/company.txt")
-ROLE=$(cat "$RUN_DIR/fit/role.txt")
-SENIORITY=$(cat "$RUN_DIR/fit/seniority.txt")
-STRENGTHS_COUNT=$(cat "$RUN_DIR/fit/strengths.txt")
-GAPS_COUNT=$(cat "$RUN_DIR/fit/gaps.txt")
-RECOMMENDATION=$(cat "$RUN_DIR/fit/recommendation.txt")
-
-"$TEL" --event-type run_completed --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --duration "$DURATION" \
-  --outcome success \
-  --company "$COMPANY" \
-  --job-title "$ROLE" \
-  --seniority "$SENIORITY" \
-  --fit-score "$FIT_SCORE" \
-  --fit-strengths-count "$STRENGTHS_COUNT" \
-  --fit-gaps-count "$GAPS_COUNT" \
-  --fit-recommendation "$RECOMMENDATION" \
-  --num-placeholders "$NUM_PLACEHOLDERS" \
-  --used-multirole-format "$USED_MULTIROLE" \
-  --style "$STYLE" \
-  --photo-included "$PHOTO_INCLUDED" \
-  --github-configured "$GITHUB_CONFIGURED" \
-  --used-github-evidence "$USED_GITHUB_EVIDENCE" \
-  --used-folder-evidence true \
-  --github-repos-count "$GITHUB_REPOS_COUNT" \
-  --folder-files-count "$FOLDER_FILES_COUNT" \
-  --all-pdfs-rendered "$ALL_PDFS_RENDERED"
-```
-
-Use the same `$(cat "$RUN_DIR/fit/company.txt")` pattern when constructing the `history.jsonl` record (Phase 9's `append-history` call). Pre-fix, the agent that improvised an env-file shell-source pattern shipped a `"company": ""` to `history.jsonl` whenever the company name had a space — `$(cat file)` makes that impossible.
-
-**Any phase (failure) — run_failed.** Fired from the hard-stop path of any
-phase. Include whatever fields are already known at that point:
-
-```bash
-"$TEL" --event-type run_failed --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --run-id "$RUN_ID" \
-  --duration "$DURATION" \
-  --failed-phase "$PHASE_NUMBER" \
-  --error-class "$ERROR_CLASS" \
-  ${COMPANY:+--company "$COMPANY"} \
-  ${ROLE:+--job-title "$ROLE"} \
-  ${SENIORITY:+--seniority "$SENIORITY"}
-```
-
-`$ERROR_CLASS` comes from a pre-declared enum: `no_resume`, `non_english_jd`,
-`folder_miner_failed`, `fit_analyst_failed`, `tailor_failed`, `pdf_render_failed`,
-`timeout`, `unknown`.
-
-**Re-render flow — rerender_used.** Fired when a student invokes the
-"re-render the PDF" shortcut from the "Re-rendering PDFs after manual edits"
-section:
-
-```bash
-"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --rerender-kind "$KIND"
-```
-
-`$KIND` is one of `resume`, `cover`, `prep`.
-
-### Field whitelist
-
-The edge function validates every event against a fixed schema and silently
-drops anything that doesn't match. Don't add new `--flag` values without
-also adding the matching column + whitelist entry to
-`supabase/migrations/001_telemetry.sql` and
-`supabase/functions/telemetry-ingest/index.ts`.
+- **No-op when off.** `resumasher-telemetry-log` reads tier from `config.json`. When tier is `off` (the default) the script writes nothing and exits 0. Safe to call unconditionally.
+- **Don't block on telemetry.** The script is `set -uo pipefail` (no `-e`) and exits 0 on any internal error. Telemetry failures never surface to the student.
+- **Sync semantics.** Mid-run events (`run_started`, `fit_computed`, `tailor_completed`, `placeholder_fill_choice`) write to a local JSONL queue: ~30ms per call. Terminal events (`first_run_setup_completed`, `run_completed`, `run_failed`, `rerender_used`) flush the queue to Supabase in one POST: ~500ms. A typical full run costs ~1.6s of telemetry latency total. If the student kills mid-run, queued events ship on the next run via cursor-based catch-up.
+- **`install_scope_path` is auto-detected** from the skill's own path (`$HOME/<host-skill-dir>/...` → `user_home`; anywhere else → `project_local`). No orchestrator substitution needed.
+- **`$ERROR_CLASS` enum** for `run_failed`: `no_resume`, `non_english_jd`, `folder_miner_failed`, `fit_analyst_failed`, `tailor_failed`, `pdf_render_failed`, `timeout`, `unknown`.
+- **Field whitelist.** The edge function silently drops fields that don't match `supabase/migrations/001_telemetry.sql`. Don't add new `--flag` values here without adding the matching column + ingest whitelist entry too.
 
 ---
 
 ## Debugging this skill
 
-If a student reports something wrong with a resumasher output — "my name's
-missing from the PDF," "the photo looks squished," "the sections are in
-the wrong order," or even a vague "something looks off" — follow this
-playbook. Do NOT just apologize or guess. The artifacts on disk plus the
-inspection helpers will tell you exactly what happened.
-
-This playbook is agent-first: it assumes you (the AI CLI running
-resumasher) are right there in the same session, with full tool access.
-You are the diagnostic tool. The student only has to describe what they
-see.
-
-### Step 1 — Find the artifacts
-
-The student's most recent run lives in `applications/<company-slug>-<date>/`
-at their working directory. Key files:
-
-- `tailored-resume.md` — what the tailor produced (source of truth)
-- `resume.pdf` — what the student actually got
-- `cover-letter.md` + `cover-letter.pdf`
-- `interview-prep.md` + `interview-prep.pdf`
-- `fit-assessment.md`, `company-research.md`
-- `jd.md` (persisted as of v0.4, issue #15) — the JD this run targeted
-
-If multiple application folders exist, pick the most recent by mtime or
-by the folder name's date suffix. Ask the student if it's ambiguous.
-
-### Step 2 — Read the student's report literally
-
-Quote the student's own words in your internal reasoning. Don't
-paraphrase into your own technical vocabulary before you've investigated.
-"Something's weird with the photo" is different from "the photo is
-stretched" is different from "the photo is the wrong photo." Each points
-at a different failure.
-
-### Step 3 — Inspect the artifacts
-
-Use `scripts/orchestration.py inspect` to get structured JSON views:
-
-```bash
-"$RS" orchestration inspect --resume "$OUT_DIR/tailored-resume.md"
-"$RS" orchestration inspect --pdf    "$OUT_DIR/resume.pdf"
-"$RS" orchestration inspect --photo  "<path-to-source-photo>"
-```
-
-Each command returns JSON with counts, contents, and light warnings for
-the most common bug signatures. The `warnings` field flags:
-
-- `EMPTY_NAME` / `EMPTY_CONTACT_LINE` — parser found no candidate name
-- `ORPHANED_BULLETS` — bullets floating at the end of a section with
-  title-like paragraphs stacked before them
-- `PHOTO_ASPECT_STRETCH` — source photo aspect differs from render box
-
-Warnings are shortcuts, not the full story. Read the raw parse tree too —
-section counts, block structure, paragraph previews — because novel bugs
-won't trip any warning but their signature will be visible in the data.
-
-### Step 4 — Match against known failure modes
-
-Read `docs/KNOWN_FAILURE_MODES.md`. It lists every catalogued bug with:
-
-- Symptom description
-- Signature (how to detect it from the inspection output)
-- Root cause
-- Where in the code the fix lives
-- Reference repro in `examples/`
-
-If the student's symptom + inspection signature match an entry, you have
-a confident hypothesis without further investigation. State the match
-clearly: "This matches KNOWN_FAILURE_MODES.md #2 (orphaned bullets)."
-
-If nothing matches, proceed to Step 5.
-
-### Step 5 — Investigate novel bugs
-
-For unknown failures, do the usual root-cause work:
-
-- Read `scripts/render_pdf.py` and trace the path from markdown input to
-  the broken output
-- Check recent commits on the relevant files for regressions
-- Cross-reference with git log, CHANGELOG entries, and prior learnings
-- Form a hypothesis and verify it by reading the code (don't guess)
-
-After diagnosis, add a new entry to `docs/KNOWN_FAILURE_MODES.md` so the
-next agent (and the next student) benefits. Save the repro pair to
-`examples/<short-bug-name>/` (already gitignored).
-
-### Step 6 — Write the bug report
-
-Use the template in `docs/BUG_REPORT_TEMPLATE.md`. Fill in:
-
-- What the student reported (verbatim)
-- What you found (specific evidence from inspection)
-- Match to known failure mode, or "novel"
-- Environment (version, host, model, style, Python, OS)
-- Anonymized artifacts (see anonymization guide in the template)
-- Suggested fix location (from KNOWN_FAILURE_MODES.md or your own
-  investigation)
-
-Anonymize the easy tier by default: name, email, phone, LinkedIn,
-GitHub username. Pull these from the student's `.resumasher/config.json`
-if available, or from the markdown directly. Leave company names, metrics,
-project names, and technical keywords intact unless the student
-specifically asks otherwise — these are load-bearing for reproduction.
-
-### Step 7 — File it (with consent)
-
-Show the final report to the student. Read back the redactions you
-applied. Ask explicitly: "Ready to file this as a GitHub issue? I can
-submit it for you via `gh issue create`." Only proceed if they say yes.
-
-```bash
-gh issue create --repo earino/resumasher \
-  --title "<concise-symptom>" \
-  --label bug \
-  --body-file "$OUT_DIR/bug-report.md"
-```
-
-Give the student the resulting issue URL so they can follow it.
-
-### What NOT to do
-
-- **Don't build a pre-flight `--debug` mode.** The playbook is post-hoc
-  and runs against artifacts already on disk. You don't need the student
-  to re-run anything.
-- **Don't paste raw parse-tree JSON as the bug report.** That's input to
-  your diagnosis, not output to the maintainer. Write prose that names
-  the specific failure.
-- **Don't auto-file.** Always get explicit consent before
-  `gh issue create` — the student owns their data.
-- **Don't anonymize company names or metrics without asking.** These are
-  needed for reproduction. Only redact if the student flags them as
-  sensitive.
+When a student reports something wrong with a resumasher output (missing name, squished photo, wrong section order, vague "something looks off") — follow `docs/DEBUGGING.md`. Seven-step playbook: find the artifacts in `applications/<slug>-<date>/`, quote the student's report literally, run `"$RS" orchestration inspect` on the resume / PDF / photo, match against `docs/KNOWN_FAILURE_MODES.md`, investigate novel bugs by tracing through `scripts/render_pdf.py`, write the bug report from `docs/BUG_REPORT_TEMPLATE.md`, file it with the student's explicit consent. Anonymize PII (name/email/phone/LinkedIn/GitHub) by default; leave company names + metrics + project names intact (load-bearing for reproduction). Don't build a `--debug` mode, don't paste raw parse-tree JSON, don't auto-file.
