@@ -1,51 +1,41 @@
 """
-Drift-detection for the two SKILL.md path prologue blocks.
+Drift-detection for the SKILL.md path prologue.
 
-SKILL.md contains the skill-root discovery prologue in two places: once at
-the top (for every Bash call the main pipeline makes) and once inside the
-"Re-rendering PDFs after manual edits" section (for re-render flows that
-enter SKILL.md without going through the main pipeline). Shell state does
-not persist between Bash tool calls, so both entry points need their own
-bootstrapping block.
+SKILL.md contains exactly one skill-root discovery prologue, at the top of
+the Workflow section. Every Bash tool call the orchestrator issues must
+begin with that prologue (shell state does not persist across calls).
 
-The two copies are *not* required to be byte-identical — Copy A carries a
-friendly "venv missing → run install.sh" error branch that Copy B
-intentionally omits (re-render is always triggered after a successful
-install, so the error case is less interesting there). But they MUST stay
-aligned on the venv-Python discovery itself. Issue #32 exposed what
-happens when they don't: a Windows venv-layout fix has to be applied to
-both, and "forget the second copy" is a silent-break class of bug.
+The prologue MUST check both the POSIX (`.venv/bin/python`) and Windows
+(`.venv/Scripts/python.exe`) venv layouts. Issue #32 was a Windows install
+that broke because the prologue only checked the POSIX path. This test
+pins both checks so the regression can't ship.
 
-This test pins the invariant: both prologues check both venv-Python paths
-(POSIX `.venv/bin/python` AND Windows `.venv/Scripts/python.exe`). Any
-future cross-cutting change to the discovery logic that touches one copy
-without the other will fail here instead of shipping.
-
-If one day the two prologues get factored into a shared helper (a shell
-function, a `bin/resumasher-locate` script, whatever), delete this test —
-it will have done its job.
+Historical note: prior to issue #58 (the v0.5 simplification PR) there
+were TWO prologues in SKILL.md — one for the main pipeline and one inside
+a separate "Re-rendering PDFs" section that students hit when asking the
+agent to re-render after manual edits. Re-rendering was folded into
+Phase 8, eliminating the duplicate prologue and the cross-prologue drift
+class of bug. The test was rewritten to assert ONE prologue accordingly.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
 SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
 
-# The fingerprint of a path prologue: the candidate-scan loop header. Both
-# copies start with this exact line, and nothing else in SKILL.md does.
-PROLOGUE_LOOP_SENTINEL = 'for c in \\'
+# The fingerprint of the path prologue: the candidate-scan loop header.
+# Nothing else in SKILL.md should match this exact line.
+PROLOGUE_LOOP_SENTINEL = "for c in \\"
 
 
 def _extract_prologues(text: str) -> list[str]:
-    """Return the two prologue blocks as strings.
+    """Return every prologue block in SKILL.md.
 
     A prologue is the block from ``for c in \\`` through the closing
-    ``done`` line. We slice forward from each sentinel until we hit the
-    loop body's terminator.
+    ``done`` line.
     """
     blocks: list[str] = []
     lines = text.splitlines()
@@ -53,7 +43,6 @@ def _extract_prologues(text: str) -> list[str]:
     while i < len(lines):
         if lines[i].strip() == PROLOGUE_LOOP_SENTINEL:
             start = i
-            # Walk forward until we find the `done` that closes the loop.
             j = i + 1
             while j < len(lines) and lines[j].strip() != "done":
                 j += 1
@@ -69,73 +58,37 @@ def _extract_prologues(text: str) -> list[str]:
     return blocks
 
 
-def test_skill_md_has_exactly_two_prologues():
-    """If this count changes, the duplication assumption in this test
-    file is out of date. Update the test; don't silently paper over it."""
+def test_skill_md_has_exactly_one_prologue():
+    """One prologue, used by the orchestrator for every Bash tool call.
+    If a second prologue is reintroduced (e.g., a future maintainer copy-
+    pastes it into a new section), update this test consciously rather than
+    silently. The whole-file `for c in \\` sentinel is unique enough to
+    catch accidental duplication."""
     text = SKILL_MD.read_text(encoding="utf-8")
     prologues = _extract_prologues(text)
-    assert len(prologues) == 2, (
-        f"Expected exactly 2 path prologues in SKILL.md; found {len(prologues)}. "
+    assert len(prologues) == 1, (
+        f"Expected exactly 1 path prologue in SKILL.md; found {len(prologues)}. "
         f"If you added or removed a prologue, update this test to match."
     )
 
 
-def test_both_prologues_check_posix_venv_python():
-    """POSIX layout: .venv/bin/python. Required on macOS/Linux."""
+def test_prologue_checks_posix_venv_python():
+    """POSIX layout: `.venv/bin/python`. Required on macOS/Linux."""
     text = SKILL_MD.read_text(encoding="utf-8")
-    for idx, block in enumerate(_extract_prologues(text)):
-        assert ".venv/bin/python" in block, (
-            f"SKILL.md prologue #{idx + 1} is missing the .venv/bin/python "
-            f"check. Both prologues must check the POSIX venv layout.\n\n"
-            f"Block was:\n{block}"
-        )
-
-
-def test_both_prologues_check_windows_venv_python():
-    """Windows layout: .venv/Scripts/python.exe. Required on Git Bash
-    (see issue #32)."""
-    text = SKILL_MD.read_text(encoding="utf-8")
-    for idx, block in enumerate(_extract_prologues(text)):
-        assert ".venv/Scripts/python.exe" in block, (
-            f"SKILL.md prologue #{idx + 1} is missing the "
-            f".venv/Scripts/python.exe check. Both prologues must check the "
-            f"Windows venv layout so Git Bash installs keep working "
-            f"(regression guard for issue #32).\n\nBlock was:\n{block}"
-        )
-
-
-def _extract_candidate_roots(block: str) -> tuple[str, ...]:
-    """Parse the ``for c in ... ; do`` header of a prologue and return the
-    ordered tuple of candidate install directories. Stops at ``; do`` so
-    loop-body variables like ``$c`` aren't mistaken for candidates."""
-    lines = block.splitlines()
-    # Find the terminator: the line containing `; do` closes the for-list.
-    header_end = None
-    for idx, line in enumerate(lines):
-        if "; do" in line:
-            header_end = idx
-            break
-    assert header_end is not None, (
-        f"Prologue loop header has no '; do' terminator:\n{block}"
+    [block] = _extract_prologues(text)
+    assert ".venv/bin/python" in block, (
+        f"SKILL.md prologue is missing the `.venv/bin/python` check.\n\n"
+        f"Block was:\n{block}"
     )
-    header = "\n".join(lines[: header_end + 1])
-    return tuple(re.findall(r'"(\$[^"]+)"', header))
 
 
-def test_both_prologues_scan_same_candidate_roots():
-    """The list of candidate install locations (user-scope + project-scope
-    across Claude / Codex / Gemini CLIs) must be identical between the two
-    prologues. If the main pipeline can find a skill at
-    ``$HOME/.gemini/skills/resumasher`` but the re-render path can't, the
-    student gets mysterious behavior — a re-render that "can't find the
-    skill" on an install that clearly works."""
+def test_prologue_checks_windows_venv_python():
+    """Windows layout: `.venv/Scripts/python.exe`. Required on Git Bash
+    (regression guard for issue #32)."""
     text = SKILL_MD.read_text(encoding="utf-8")
-    prologues = _extract_prologues(text)
-    candidate_sets = [_extract_candidate_roots(block) for block in prologues]
-    assert candidate_sets[0] == candidate_sets[1], (
-        "The two SKILL.md prologues scan DIFFERENT sets of candidate "
-        "install directories. They must stay aligned or the re-render "
-        "flow will diverge from the main pipeline.\n\n"
-        f"Copy A candidates: {candidate_sets[0]}\n"
-        f"Copy B candidates: {candidate_sets[1]}"
+    [block] = _extract_prologues(text)
+    assert ".venv/Scripts/python.exe" in block, (
+        f"SKILL.md prologue is missing the `.venv/Scripts/python.exe` "
+        f"check. Required so Git Bash installs keep working "
+        f"(regression guard for issue #32).\n\nBlock was:\n{block}"
     )

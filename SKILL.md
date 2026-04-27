@@ -280,122 +280,49 @@ Print the GDPR notice:
 
 Use the platform's question tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex, `ask_user` in Gemini, `question` in OpenCode) to collect the remaining values. Follow the "Interactive prompt pattern (cross-host)" section above: every free-text field uses a 2-option question where the student pastes the answer in Other. Do NOT create a three-option "I'll provide it" middleman.
 
-Concrete question shapes. Every free-text question has EXACTLY 2 or more explicit options in `options` array (plus the auto-added Other). Anything less crashes with `InputValidationError`.
+Concrete question shapes. Every free-text question has at least 2 real options in the `options` array (plus the auto-added Other) — fewer crashes with `InputValidationError`.
 
-1. **Name** (usually extracted from PDF):
-   ```
-   Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
-     A) Yes, use '{name}' exactly as shown
-     B) Skip — no name on the resume (unusual but allowed)
-     Other: paste the exact name to use instead
-   ```
+**Pattern A canonical shape** (extraction default exists). Use this for `name`, `email`, `phone`, `linkedin`, `location`:
 
-2. **Email** (usually extracted from PDF):
-   ```
-   Question: "Email for the resume?"
-     A) Use '{email}' from your resume
-     B) Skip — no email on the resume
-     Other: paste a different email
-   ```
+```
+Question: "Your resume extract shows '{name}'. Use this on the tailored resume?"
+  A) Yes, use '{name}' exactly as shown
+  B) Skip — no {field} on the resume
+  Other: paste a different {field}
+```
 
-3. **Phone** (may or may not be in PDF):
-   ```
-   Question: "Phone number for the resume?"
-     A) Use '{phone_from_pdf}'     ← only include this option if extraction found a phone
-     B) Skip — don't include phone
-     Other: paste a different phone (e.g., +43 664 1234567)
-   ```
-   If no phone extracted, drop option A and fall back to pattern B:
-   ```
-     A) I have one — paste it in Other below
-     B) Skip — don't include phone
-     Other: paste your phone
-   ```
+**Phone special case:** if PDF extraction found nothing, drop option A and use the Pattern B shape ("A) I have one — paste in Other / B) Skip / Other: paste your phone").
 
-4. **LinkedIn** (usually extracted from PDF):
-   ```
-   Question: "LinkedIn URL for the resume?"
-     A) Use '{linkedin_url}' from your resume
-     B) Skip — don't include LinkedIn
-     Other: paste a different URL (we'll normalize to https://)
-   ```
+**Style + photo-include — genuine 2-option choices** (no Other path):
+- `default_style`: EU (DACH / EU applications) vs US (no photo).
+- `include_photo`: Yes vs No (No is more common for anglophone markets).
 
-5. **Location** (usually extracted from PDF):
-   ```
-   Question: "City, country for the resume?"
-     A) Use '{location}' from your resume
-     B) Skip — don't include location
-     Other: paste a different location
-   ```
+**Photo path** (only if `include_photo=true`): Pattern B shape with `Other: absolute path`. After the student answers, **verify the file exists with `ls -la <path>` and re-ask on missing — never silently fall through to a broken render.**
 
-6. **Style** — genuine 2-option choice (no Other path expected):
-   ```
-   Question: "Default resume style?"
-     A) EU (recommended for DACH / EU applications)
-     B) US (recommended for US applications, no photo)
-   ```
+**Photo position** (only if `include_photo=true` and the path is valid): three real options — Top right (DACH convention), Top left (French / Benelux), Centered. Save to `photo_position` in config.json as `"right"` / `"left"` / `"center"`. Default is `"right"` if the question is skipped, but the question flow answers first so the default is rarely used.
 
-7. **Photo include** — genuine 2-option choice:
-   ```
-   Question: "Include a photo on EU-style resumes by default?"
-     A) Yes, include a photo
-     B) No photo (more common for anglophone markets)
-   ```
+**GitHub profile:** Pattern B shape ("A) I have one / B) Skip — sets `github_prompted=true` so we don't re-ask"). Other accepts username or profile URL; we'll strip the prefix.
 
-8. **Photo path** (only if include-photo=yes):
-   ```
-   Question: "Where's the photo file? Paste the absolute path in Other."
-     A) I have one — paste the absolute path in Other below
-     B) Skip photo for this run — I'll add a path later by editing .resumasher/config.json
-     Other: absolute path (e.g., /Users/you/Desktop/headshot.png)
-   ```
-   After the student answers, verify the file exists with `ls -la <path>`. If missing, re-ask; don't silently fall through.
+**Usage analytics consent** — the LAST question of first-run setup, before config.json is written.
 
-8a. **Photo position** (only if include-photo=yes and the photo path is valid):
-   ```
-   Question: "Where should your photo go on the resume?"
-     A) Top right (DACH / German-speaking markets convention)
-     B) Top left (French / Benelux convention)
-     C) Centered (unusual but supported)
-   ```
-   Save the answer to `photo_position` in `.resumasher/config.json` ("right", "left", or "center"). Default is "right" if the question is skipped, but the question flow answers first so the default is rarely used at first-run.
+**GDPR compliance requires Off to be the pass-through default.** Under GDPR Article 7, "consent" means an active, affirmative action. A pre-selected "yes" option that the student accepts by pressing Enter is NOT valid consent. Therefore: Off is listed FIRST (so it's the highlighted default choice in the host's question UI) and NO option carries a "(Recommended)" label. The student has to actively move the cursor to Anonymous or Community to opt in.
 
-9. **GitHub profile**:
-   ```
-   Question: "Do you have a GitHub? We can leverage it for this."
-     A) I have one — paste the username or profile URL in Other
-     B) Skip — leave blank (sets github_prompted=true so we don't re-ask)
-     Other: username (e.g., earino) or profile URL (we'll strip the prefix)
-   ```
+```
+Question: "Help us improve resumasher?
 
-10. **Usage analytics consent** — this is the LAST question of first-run setup, before config.json is written.
+resumasher is a research tool. If you opt in, we log anonymous usage events
+so the maintainer can see what's breaking and what students actually use.
+See PRIVACY.md for the full list of what's logged and what isn't. You can
+change this anytime with 'resumasher telemetry set-tier <tier>'."
+  A) Off. Nothing is logged or sent. This is the default.
+  B) Anonymous. Logs events to the backend without an installation identifier.
+     Runs cannot be correlated.
+  C) Community. Logs events plus a random installation ID so the maintainer
+     can see 'this user is hitting the same bug repeatedly'. No names, no
+     resume content, no JD text.
+```
 
-    **GDPR compliance requires Off to be the pass-through default.** Under GDPR
-    Article 7, "consent" means an active, affirmative action. A pre-selected
-    "yes" option that the student accepts by pressing Enter is NOT valid
-    consent. Therefore: Off is listed FIRST (so it's the highlighted default
-    choice in the host's question UI) and NO option carries a "(Recommended)"
-    label. The student has to actively move the cursor to Anonymous or
-    Community to opt in.
-    ```
-    Question: "Help us improve resumasher?
-
-    resumasher is a research tool. If you opt in, we log anonymous usage events
-    so the maintainer can see what's breaking and what students actually use.
-    See PRIVACY.md for the full list of what's logged and what isn't. You can
-    change this anytime with 'resumasher telemetry set-tier <tier>'."
-      A) Off. Nothing is logged or sent. This is the default.
-      B) Anonymous. Logs events to the backend without an installation identifier.
-         Runs cannot be correlated.
-      C) Community. Logs events plus a random installation ID so the maintainer
-         can see 'this user is hitting the same bug repeatedly'. No names, no
-         resume content, no JD text.
-    ```
-    Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or
-    `"community"`. **If the student presses Enter on the highlighted default,
-    that selects Off — which is GDPR's required "no consent given" state.** Do
-    NOT re-order, do NOT add "(Recommended)" to Anonymous or Community, do NOT
-    pre-select a non-Off option in any way. Active opt-in only.
+Write the chosen value to `telemetry` in config.json: `"off"`, `"anonymous"`, or `"community"`. **If the student presses Enter on the highlighted default, that selects Off — which is GDPR's required "no consent given" state.** Do NOT re-order, do NOT add "(Recommended)" to Anonymous or Community, do NOT pre-select a non-Off option in any way. Active opt-in only.
 
 If the student already has a `config.json` from before GitHub was a field, AND does not have `github_prompted: true`, ask the GitHub question once at the top of the current run and rewrite the config. One-time upgrade prompt.
 
@@ -785,7 +712,7 @@ This is defense-in-depth — the prompt and orchestration changes above should k
 
 This document was not generated. Re-run /resumasher <job-source> to regenerate
 the full bundle, OR edit this file manually and ask Claude to re-render the
-PDF from it (see "Re-rendering PDFs after edits" near the end of SKILL.md).
+PDF from it (see "Re-rendering after manual edits" in Phase 8).
 ```
 
 and continue. The student still gets the resume PDF.
@@ -908,6 +835,24 @@ fi
 ```
 
 If a markdown input was a stub (cover letter or interview prep generation failed), skip the corresponding PDF render and note it in the summary.
+
+#### Re-rendering after manual edits
+
+When a student says "I edited tailored-resume.md, re-render the PDF" or similar, do NOT re-run `/resumasher <job>` from scratch — that re-dispatches the sub-agents and overwrites their edits. Instead, jump directly to the render commands above with `$OUT_DIR` pointing at the already-existing application folder. Constraints:
+
+- **Only re-render what they edited.** "Re-render the resume" means the resume — don't also regenerate cover-letter.pdf.
+- **Do not re-run tailor / cover-letter / interview-coach sub-agents.** The student's manual edits are authoritative; sub-agents would overwrite them.
+- **Warn on remaining `[INSERT ...]` placeholders.** Grep the .md before rendering; if any remain, ask "Your edited markdown still has N `[INSERT ...]` placeholders. Render anyway, or fill them first?"
+- **Print path + size after each re-render** so the student sees confirmation: `Re-rendered resume.pdf ({size} bytes). Your edits are in the PDF.`
+
+Then fire the rerender telemetry event (`$KIND` is one of `resume`, `cover`, `prep`):
+
+```bash
+"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
+  --host "$HOST" \
+  --model "$MODEL" \
+  --rerender-kind "$KIND"
+```
 
 ---
 
@@ -1049,7 +994,7 @@ If `PH_RESUME > 0` OR `PH_COVER > 0`, print this ERROR block — it means Phase 
 
    Open each file and search for "[INSERT". Either the Phase 7 fill-in
    was skipped or had a bug. Edit the .md manually, then ask Claude to
-   re-render the PDF (see "Re-rendering PDFs after edits" in SKILL.md).
+   re-render the PDF (see "Re-rendering after manual edits" in Phase 8).
 ```
 
 If `PH_PREP > 0`, print this NOTE block (this is expected — interview-prep placeholders are prep prompts, not substitution values):
@@ -1087,109 +1032,6 @@ you already know.
 looks stretched, sections in a strange order — just tell me what you see and
 I'll investigate. See "Debugging this skill" in SKILL.md for the playbook.
 ```
-
----
-
-## Re-rendering PDFs after manual edits
-
-Students often want to tweak the generated markdown (fix a bullet, add a missing detail, change a word) and get the PDF updated WITHOUT re-running the full pipeline. The full pipeline would re-dispatch all the sub-agents and overwrite their edits.
-
-When a student asks to "re-render the resume" or "update the PDF after I edited the markdown," follow this flow. Do NOT re-run `/resumasher <job>` from scratch.
-
-**Path prologue (required — shell state doesn't persist between Bash tool calls):**
-
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-for c in \
-  "$HOME/.claude/skills/resumasher" \
-  "$PWD/.claude/skills/resumasher" \
-  "$REPO_ROOT/.claude/skills/resumasher" \
-  "$HOME/.codex/skills/resumasher" \
-  "$PWD/.codex/skills/resumasher" \
-  "$REPO_ROOT/.codex/skills/resumasher" \
-  "$HOME/.gemini/skills/resumasher" \
-  "$PWD/.gemini/skills/resumasher" \
-  "$REPO_ROOT/.gemini/skills/resumasher" \
-  "$HOME/.opencode/skills/resumasher" \
-  "$PWD/.opencode/skills/resumasher" \
-  "$REPO_ROOT/.opencode/skills/resumasher"; do
-  [ -n "$c" ] || continue
-  [ -f "$c/SKILL.md" ] || continue
-  { [ -x "$c/.venv/bin/python" ] || [ -x "$c/.venv/Scripts/python.exe" ]; } && SKILL_ROOT="$c" && break
-done
-RS="$SKILL_ROOT/bin/resumasher-exec"
-TEL="$SKILL_ROOT/bin/resumasher-telemetry-log"
-STUDENT_CWD="$PWD"
-```
-
-**Locate the target output directory.** Ask the student which application they edited, or infer from context (most recent `applications/<slug>-<date>/`). Then:
-
-```bash
-OUT_DIR="$STUDENT_CWD/applications/<slug>-<date>"   # substitute the real path
-```
-
-**Read config for style and photo:**
-
-```bash
-STYLE=$(jq -r '.default_style // "eu"' "$STUDENT_CWD/.resumasher/config.json")
-INCLUDE_PHOTO=$(jq -r '.include_photo // false' "$STUDENT_CWD/.resumasher/config.json")
-PHOTO_PATH=$(jq -r '.photo_path // ""' "$STUDENT_CWD/.resumasher/config.json")
-PHOTO_POSITION=$(jq -r '.photo_position // "right"' "$STUDENT_CWD/.resumasher/config.json")
-```
-
-**Re-render the one(s) the student edited:**
-
-For the **resume** — pass `--photo` only if style is EU and include_photo is true. Use a bash array, not an unquoted string variable — the latter mis-expands on paths with spaces and has been seen to fail silently in some shell environments.
-
-```bash
-PHOTO_ARGS=()
-if [ "$STYLE" = "eu" ] && [ "$INCLUDE_PHOTO" = "true" ] && [ -f "$PHOTO_PATH" ]; then
-  PHOTO_ARGS=(--photo "$PHOTO_PATH" --photo-position "$PHOTO_POSITION")
-fi
-"$RS" render_pdf \
-  --input "$OUT_DIR/tailored-resume.md" \
-  --kind resume \
-  --style "$STYLE" \
-  --output "$OUT_DIR/resume.pdf" \
-  "${PHOTO_ARGS[@]}"
-```
-
-For the **cover letter**:
-
-```bash
-"$RS" render_pdf \
-  --input "$OUT_DIR/cover-letter.md" \
-  --kind cover-letter \
-  --output "$OUT_DIR/cover-letter.pdf"
-```
-
-For the **interview prep**:
-
-```bash
-"$RS" render_pdf \
-  --input "$OUT_DIR/interview-prep.md" \
-  --kind interview-prep \
-  --output "$OUT_DIR/interview-prep.pdf"
-```
-
-**Fire telemetry after a re-render.** `$KIND` is one of `resume`, `cover`, `prep` depending on which file the student asked to re-render:
-
-```bash
-"$TEL" --event-type rerender_used --cwd "$STUDENT_CWD" \
-  --host "$HOST" \
-  --model "$MODEL" \
-  --rerender-kind "$KIND"
-```
-
-**Important constraints:**
-
-- Only re-render the files the student actually edited. If they said "re-render the resume," don't also regenerate the cover letter — that's 20 extra seconds and tempts you to wonder if you should run the tailor sub-agent again (you shouldn't).
-- Do NOT re-run the tailor, cover-letter, or interview-coach sub-agents. The point of this flow is that the student's manual edits are authoritative.
-- After rendering, print the output path and file size:
-  ```
-  Re-rendered resume.pdf ({size} bytes). Your edits are in the PDF.
-  ```
-- If the `.md` file still contains `[INSERT ...]` placeholders, warn the student before rendering: "Your edited markdown still has N `[INSERT ...]` placeholders. Render anyway, or do you want to fill them first?"
 
 ---
 
