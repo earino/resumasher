@@ -4,7 +4,15 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 `Unreleased` covers work in progress on `main`. Tagged versions will appear below it once we start cutting releases.
 
-## [Unreleased]
+## [0.4.5] — 2026-04-28
+
+v0.4.5 lands two changes that share a theme: the tool was already doing the right thing, but the surface kept burying it.
+
+**The post-run summary reframe** ([#60](https://github.com/earino/resumasher/issues/60)) came from [@JamieP44](https://github.com/JamieP44), whose framing was sharper than how we'd been describing the tool: AI-generated resumes and cover letters should not be considered final — they need a personal touch. The Phase 9 summary already saved `tailored-resume.md` and `cover-letter.md` alongside each PDF and already documented the re-render flow, but the framing buried both behind a "tweak the look" angle that pointed at fonts and spacing. Reframed to lead with editing the wording: the editable .md sources are now named with arrow callouts at the top of the editing block. The Google Docs / Pages / Word / Canva path stays as a secondary option for anyone who prefers a rendered view, with the re-export-to-PDF step spelled out. No new features — discoverability and framing fix on existing functionality.
+
+**SKILL.md compression** ([#58](https://github.com/earino/resumasher/issues/58)) — 1,587 → 1,062 lines (-33%) without dropping a single weak-model prescription, freeing headroom inside OpenCode's 51,200-byte tool-output cap. Verified by the same weak-model guard tests that locked in v0.4.4's fixes. Methodology was multi-LLM: Claude Opus 4.7 produced the draft, with GPT-5 Pro and Kimi K2 producing parallel independent rewrites for cross-model adversarial review, and a qwen3.6-35b audience-poll on the maintainer's local Ollama as the reliability gate before the final synthesis shipped. See #58 for the full pipeline.
+
+No breaking changes; students on v0.4.4 upgrade in-place.
 
 ### Changed
 
