@@ -1054,12 +1054,20 @@ Applied through Workday or Greenhouse? Upload resume.pdf to jobscan.co
 (free preview) with this JD pasted in, and verify the sections parse cleanly
 before sending.
 
-💡 Edited a markdown file after this run? Ask me to "re-render the {resume|cover|prep} PDF"
-and I'll regenerate just that PDF without re-running the full pipeline.
+✏️  These PDFs are a strong starting draft, not the final artifact — they
+need a personal touch before sending. The editable source is saved alongside
+each PDF:
 
-✨ Want to tweak the look? Open resume.pdf in Google Docs, Pages, Word, or Canva —
-they all import PDFs and let you adjust fonts, spacing, and colors with tools
-you already know.
+   tailored-resume.md  ← your resume, in plain markdown
+   cover-letter.md     ← your cover letter, in plain markdown
+
+Edit either file in any text editor (VS Code, TextEdit, Notepad, Vim, the
+editor inside this CLI), then ask me to "re-render the {resume|cover|prep}
+PDF" — I'll regenerate just that PDF, no AI second pass on your edits.
+
+🎨 Prefer editing in a rendered view? Open resume.pdf in Google Docs, Pages,
+Word, or Canva — they all import PDFs directly. Re-export to PDF before
+submitting (Google Docs: File → Download → PDF Document).
 
 🐛 If anything in these PDFs looks off — missing content, weird layout, photo
 looks stretched, sections in a strange order — just tell me what you see and
