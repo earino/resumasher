@@ -76,19 +76,25 @@ def test_tailor_substitutes_all_four():
     assert "{jd_text}" not in p
 
 
-def test_cover_letter_substitutes_all_three():
+def test_cover_letter_substitutes_all_required_vars():
     p = build_prompt(
         "cover-letter",
+        contact_info="# Eduardo\ne@x.com | +43 1",
+        today_date="May 2, 2026",
         tailored_resume="TAILORED_MARKER",
         jd_text="JD_MARKER",
         company_research="RESEARCH_MARKER",
     )
+    assert "Eduardo" in p
+    assert "May 2, 2026" in p
     assert "TAILORED_MARKER" in p
     assert "JD_MARKER" in p
     assert "RESEARCH_MARKER" in p
     assert "{tailored_resume}" not in p
     assert "{jd_text}" not in p
     assert "{company_research}" not in p
+    assert "{contact_info}" not in p
+    assert "{today_date}" not in p
 
 
 def test_interview_coach_substitutes_all_three():
@@ -134,12 +140,16 @@ def test_tailor_preserves_schema_literals():
 def test_cover_letter_preserves_schema_literals():
     p = build_prompt(
         "cover-letter",
+        contact_info="# Test\nt@x.com",
+        today_date="May 2, 2026",
         tailored_resume="R",
         jd_text="J",
         company_research="C",
     )
-    # The greeting line template: "# Dear {Company} Hiring Team,"
+    # Greeting and Re: template markers must survive untouched as
+    # instructions to the downstream LLM.
     assert "{Company}" in p
+    assert "{Position Title}" in p
 
 
 def test_interview_coach_preserves_schema_literals():
@@ -168,7 +178,13 @@ KIND_FIXTURES: dict[str, dict[str, str]] = {
         "folder_summary": "E",
         "jd_text": "J",
     },
-    "cover-letter": {"tailored_resume": "R", "jd_text": "J", "company_research": "C"},
+    "cover-letter": {
+        "contact_info": "# Test\nt@x.com",
+        "today_date": "May 2, 2026",
+        "tailored_resume": "R",
+        "jd_text": "J",
+        "company_research": "C",
+    },
     "interview-coach": {"tailored_resume": "R", "folder_summary": "E", "jd_text": "J"},
 }
 
@@ -549,15 +565,29 @@ def test_cli_build_prompt_company_researcher(skill_tree: Path):
 
 
 def test_cli_build_prompt_cover_letter(skill_tree: Path):
+    # Cover-letter now requires config.json for contact_info — write a
+    # minimal one so the CLI can read it.
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps({
+            "name": "Test Candidate",
+            "email": "t@x.com",
+            "phone": "+43 1",
+        }),
+        encoding="utf-8",
+    )
     r = _run_build_prompt(
         "--kind", "cover-letter",
         "--cwd", str(skill_tree),
         "--out-dir", str(skill_tree / "applications" / "biohub-20260418"),
+        "--today", "2026-05-02",
     )
     assert r.returncode == 0, r.stderr
     assert "TAILORED_FILE_CONTENT" in r.stdout
     assert "JD_FILE_CONTENT" in r.stdout
     assert "RESEARCH_FILE_CONTENT" in r.stdout
+    assert "Test Candidate" in r.stdout
+    assert "May 2, 2026" in r.stdout
+    assert "t@x.com" in r.stdout
 
 
 def test_cli_build_prompt_interview_coach(skill_tree: Path):
@@ -606,6 +636,12 @@ def test_cli_build_prompt_missing_company_exits_2(skill_tree: Path):
 
 
 def test_cli_build_prompt_missing_out_dir_exits_2(skill_tree: Path):
+    # Provide config.json so the loop gets past the contact_info check
+    # and hits the --out-dir check we're actually exercising here.
+    (skill_tree / ".resumasher" / "config.json").write_text(
+        json.dumps({"name": "Test", "email": "t@x.com"}),
+        encoding="utf-8",
+    )
     r = _run_build_prompt("--kind", "cover-letter", "--cwd", str(skill_tree))
     assert r.returncode == 2
     assert "--out-dir" in r.stderr

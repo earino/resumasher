@@ -92,13 +92,26 @@ I love A & B testing; I ship code <fast> and <safely>.
 """
 
 
-SAMPLE_COVER_MD = """# Dear Deloitte Hiring Team,
+SAMPLE_COVER_MD = """# Eduardo Test
+test@example.com | +43 000 | linkedin.com/in/test | Vienna, Austria
+
+May 2, 2026
+
+Deloitte
+
+**Re:** Data Analyst
+
+Dear Deloitte Hiring Team,
 
 I'm writing to apply for the Data Analyst role at Deloitte. My MSc capstone on inventory optimization for FirmX gives me direct experience with the kind of consulting engagement your Vienna practice runs.
 
 I was excited to read Deloitte's recent announcement of the expanded AI advisory practice (press release, 2026-02-08). My deployment work on a Flask-served churn model aligns with the kind of ML productionisation your team is scaling.
 
 Thank you for considering my application. I would love the opportunity to discuss how my analytics background could contribute to your team.
+
+Sincerely,
+
+Eduardo Test
 """
 
 
@@ -360,11 +373,21 @@ def test_render_cover_letter_roundtrip(tmp_path: Path):
     out = tmp_path / "cover.pdf"
     render_cover_letter(SAMPLE_COVER_MD, out)
     assert out.exists()
+    # All structural elements from issue #64 must be present in the
+    # rendered PDF: applicant header, date, company name, Re: subject,
+    # greeting, body content, closing, and printed name.
     assert_ats_roundtrip(out, [
-        "Dear Deloitte Hiring Team",
+        "Eduardo Test",
+        "test@example.com",
+        "Vienna, Austria",
+        "May 2, 2026",
+        "Deloitte",
+        "Re:",
         "Data Analyst",
+        "Dear Deloitte Hiring Team",
         "FirmX",
         "AI advisory practice",
+        "Sincerely",
     ])
 
 
@@ -534,11 +557,26 @@ def test_render_interprets_markdown_bold_as_bold_not_asterisks(tmp_path: Path):
 
 
 def test_render_bold_in_cover_letter(tmp_path: Path):
-    md = """# Dear Hiring Team,
+    md = """# Test User
+test@example.com
+
+May 2, 2026
+
+Acme Corp
+
+**Re:** Senior Engineer
+
+Dear Acme Hiring Team,
 
 I lead with **specific evidence** and skip the fluff.
 
 My **Meta tenure** gave me the altitude the role requires.
+
+Thanks for your consideration.
+
+Sincerely,
+
+Test User
 """
     out = tmp_path / "cover.pdf"
     render_cover_letter(md, out)
@@ -546,7 +584,10 @@ My **Meta tenure** gave me the altitude the role requires.
     extracted = extract_text(str(out))
     assert "specific evidence" in extracted
     assert "Meta tenure" in extracted
+    # Both the **Re:** subject prefix AND the inline body bold markers
+    # must convert to bold formatting — no literal "**" should leak.
     assert "**" not in extracted
+    assert "Re:" in extracted
 
 
 def test_escape_leaves_lone_asterisk_alone(tmp_path: Path):
