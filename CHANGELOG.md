@@ -4,6 +4,26 @@ All notable changes to resumasher will be captured here. Format loosely follows 
 
 `Unreleased` covers work in progress on `main`. Tagged versions will appear below it once we start cutting releases.
 
+## [0.4.6] — 2026-05-02
+
+v0.4.6 makes the cover letter look like a real cover letter.
+
+The prior cover-letter sub-agent emitted a giant `# Dear {Company} Hiring Team,` H1 followed by three paragraphs and nothing else — no applicant identification, no date, no recipient, no closing. Reported by [@guiqvlaixi2164-max](https://github.com/guiqvlaixi2164-max) in [#64](https://github.com/earino/resumasher/issues/64): the generated PDF was missing the applicant's name/contact, the date, the company's name, the `Re: [position]` subject line, and the `Sincerely, [name]` closing. The original prompt explicitly told the LLM to omit those elements ("the student will add those themselves if needed") — so this was a deliberate-but-wrong design choice, not an LLM failure.
+
+Fixed by reshaping both the prompt and the renderer in lockstep:
+
+- **Prompt** (`scripts/prompts.py`) now requires the sub-agent to emit, in this order: H1 with the candidate's name, contact line, today's date, company name, `**Re:** {Position Title}` subject line, plain-text greeting, three body paragraphs, `Sincerely,`, printed name. The contact header and today's date are pre-formatted by the orchestrator (`Month D, YYYY`) and passed in as variables, so the LLM cannot drift on either — no more cover letters dated last year, no more invented phone numbers.
+- **Renderer** (`scripts/render_pdf.py`) now treats the cover letter as a real business letter rather than a paragraph dump under a giant H1. Visual identity matches the resume header (same Name + Contact styles), so a student's resume + cover letter packet reads as one designed pair. New styles: `LetterBody` (justified text, generous letter-rhythm spacing), `LetterDate` (right-aligned per business-letter convention), `LetterMeta` (tighter spacing for the company/Re: block). Bold "Re:" prefix renders via the existing inline-markdown pass. After "Sincerely," the renderer inserts ~36pt of vertical space before the printed name so a printed copy has somewhere to sign.
+- **Side effect on [#63](https://github.com/earino/resumasher/issues/63):** because `LetterBody` is justified, the cover letter PDF no longer has a ragged right edge. The resume's summary paragraph still does — that's [#63](https://github.com/earino/resumasher/issues/63) proper, untouched here.
+
+Consciously skipped, per discussion: street addresses (resumasher has never captured them, modern letters often omit them, and the student can add their own by editing the markdown) and the inline handwritten-signature image suggestion from the same report (a meaningful separate feature; will track in a follow-up issue).
+
+No breaking changes; students on v0.4.5 upgrade in-place. Anyone re-rendering an old `cover-letter.md` with the new renderer will see the old shape (H1 = greeting, no header, no date, no closing) render through the fallback path — readable but not the new format. Re-running the full flow will produce the new shape.
+
+### Changed
+
+- **Cover letter is now a real letter, not three paragraphs under a giant greeting** ([#64](https://github.com/earino/resumasher/issues/64), reported by [@guiqvlaixi2164-max](https://github.com/guiqvlaixi2164-max)). Adds applicant header (name + contact line, copied verbatim from `.resumasher/config.json`), date (formatted server-side as `Month D, YYYY` so the LLM can't drift), company name, `**Re:** {Position}` subject, plain-text greeting, three body paragraphs, `Sincerely,`, and the candidate's printed name with a 36pt signature gap. New cover-letter styles in `render_pdf.py`: `LetterBody` (justified, 12pt rhythm), `LetterDate` (right-aligned), `LetterMeta` (tight). H1 = applicant name (matching resume), not the greeting. The previous `# Dear {Company} Hiring Team,` greeting-as-H1 convention is retired — once a header exists above it, the giant H1 reads as broken. SKILL.md Phase 6 documentation updated. Tests in `test_render_pdf.py` and `test_prompts.py` updated for the new structure; `test_render_cover_letter_roundtrip` now asserts every issue-#64 element is present in the rendered PDF (name, contact, date, company, Re:, greeting, body, Sincerely).
+
 ## [0.4.5] — 2026-04-28
 
 v0.4.5 lands two changes that share a theme: the tool was already doing the right thing, but the surface kept burying it.
