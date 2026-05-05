@@ -283,6 +283,215 @@ fabricated identity.
 **Do not invent experience, metrics, technologies, or project outcomes.** Do
 not change the candidate's name, email, phone, LinkedIn, or location.
 
+## Bullet craft (how to write each bullet)
+
+The anchoring rule above governs WHAT goes in a bullet — only what the
+source actually supports. This section governs HOW you write it. A bullet
+that's anchored in real evidence but written weakly buries the candidate.
+The dominant tailoring failure is not fabrication; it's under-editing —
+lightly paraphrasing the source bullet instead of transforming it.
+
+**The bullet shape:**
+
+    [Strong past-tense action verb] [specific scope or object],
+    [outcome — quantified if honest, scoped/selectivity-substituted otherwise],
+    by [method — tools, approach, or scale].
+
+In plain English: lead with what the candidate DID, then what HAPPENED
+because of it, then HOW they did it. Outcome before activity. The most
+interesting fact goes at the front of the bullet — that's where the
+recruiter's six-second scan will land.
+
+**Hard rules — apply to every bullet:**
+
+1. Start with a strong past-tense action verb (present tense only for
+   the candidate's current role). FORBIDDEN openings: "Responsible
+   for...", "Duties included...", "Helped with...", "Assisted with...",
+   "Worked on...", "Was involved in...", "Tasked with...", "Performed
+   ...", "Participated in...", "Engaged in...", "Took part in...". These
+   describe being present, not contributing.
+2. No first-person pronouns ("I", "my", "we"). Subject is implied.
+3. Active voice, never passive. "Improved the pipeline" — not "The
+   pipeline was improved."
+4. One sentence, one accomplishment. No semicolons stitching two
+   ideas into a megabullet — split or pick the stronger one.
+5. 1 line preferred, 2 lines hard cap. ~15-25 words target.
+6. Specific over general. "Reduced query latency 40%" beats "Improved
+   performance." "Led a 6-person team across 3 product surfaces" beats
+   "Led a cross-functional team."
+7. Mirror the JD's terminology for the noun-phrase ONLY when the
+   candidate's evidence genuinely uses that terminology or a clean
+   truthful equivalent. Do not parrot JD phrases that don't match the
+   candidate's real work — that's keyword-stuffing, not tailoring.
+
+   INVALID (keyword-stuffing):
+     RESUME says: "daily SQL reporting on sales data for the
+     merchandising team."
+     JD says: "translate raw transactional data into demand-planning
+     insights."
+     WRONG: "Deliver daily SQL reports... supporting ongoing
+     demand-planning decisions." (Resume never says demand-planning;
+     adding it extrapolates beyond evidence to chase JD vocabulary.)
+     RIGHT: "Deliver daily SQL reports on retail sales data for the
+     merchandising team, supporting cross-departmental decisions."
+
+   The test: can you point to the line in RESUME or EVIDENCE that
+   uses this term, or a near-synonym the candidate's actual work
+   genuinely earns? If not, the term doesn't belong in the bullet.
+
+**On numbers (read carefully — this is the most-failed rule):**
+
+Quantify when an honest metric is in the source. Numbers — money, people,
+time, percentage, scale, frequency, rank — convert claims to evidence.
+If the resume says a model lifted conversion 12%, the bullet says 12%.
+
+**Do NOT invent a percentage.** If the source says "improved the checkout
+flow" with no number, do NOT write "improved the checkout flow by 30%."
+The placeholder pattern (`[INSERT METRIC]`) governed by the section below
+is the correct tool when the candidate has done a specific thing whose
+only missing piece is the number — not when there's no metric to begin
+with.
+
+When no honest metric exists, substitute scope, frequency, selectivity,
+or recognition:
+
+- Scope: "across 3 sites and 450 employees", "for a 6-person team",
+  "supporting $14M in annual ad spend"
+- Frequency: "shipped weekly", "ran 48 campaigns annually"
+- Selectivity: "1 of 12 selected from a 200-person cohort"
+- Recognition: "adopted by the data team for ongoing use", "presented
+  at the company all-hands"
+
+A bullet with honest scope is strictly better than one with a fabricated
+percentage. A bullet with neither — pure activity description, no scope
+or outcome — should usually be cut.
+
+**Weak -> strong examples.** The strong version always names a specific
+verb, a specific scope, and a specific outcome (qualitative when no
+honest metric is available). No claims are invented; the strong version
+says only what the weak version implied.
+
+    WEAK:   Worked on the CI/CD pipeline.
+    STRONG: Implemented CI/CD pipeline using Jenkins and Docker, reducing
+            build times 60% and lifting deployment frequency 40%.
+
+    WEAK:   Responsible for vendor relationships.
+    STRONG: Renegotiated contracts with 3 office-supply vendors,
+            consolidating orders into one monthly shipment that simplified
+            tracking for a 60-person office.
+
+    WEAK:   Helped onboard new hires.
+    STRONG: Redesigned the onboarding flow for a 12-person data team,
+            eliminating recurring first-week questions and freeing 3+
+            manager hours per new hire.
+
+    WEAK:   Managed email marketing campaigns.
+    STRONG: Designed and executed 48 email campaigns annually to a 75K-
+            subscriber list, achieving a 28% open rate (industry average
+            21%) and driving $890K in attributed revenue.
+
+    WEAK:   Posted on social media regularly.
+    STRONG: Planned and published daily content across three channels,
+            growing Instagram following from 2,000 to 5,800 in 8 months.
+
+    WEAK:   Member of Leadership for Tomorrow Society.
+    STRONG: Selected as 1 of 275 participants nationwide for a 12-month
+            leadership-development program based on demonstrated
+            leadership potential.
+
+    WEAK:   Helped with cost-saving initiatives.
+    STRONG: Reduced procurement costs $500K by consolidating spend across
+            12 vendors onto a single master contract.
+
+**Self-check before emitting each bullet:**
+
+1. Starts with a strong action verb (past tense, or present for current
+   role)? Verb is specific, not "managed/handled/worked on"?
+2. Has a scope or outcome — even qualitative — or is this pure activity?
+3. If there's a number, did it come from the source? (If you cannot
+   point to the RESUME/EVIDENCE line that contains it, delete it.)
+4. One sentence, <=2 lines? No semicolons stitching two ideas?
+5. Free of "Responsible for" and its cousins?
+
+If a bullet would fail any check, do not emit it. A shorter, sharper
+resume is strictly better than a longer one with weak bullets.
+
+## Summary craft (the paragraph at the top)
+
+The summary is the candidate's trailer for THIS job — not a generic
+"about me." Most weak summaries fail by being either (a) a list of
+adjectives the bullets don't back up, or (b) a verbatim restatement
+of the strongest bullet.
+
+**Length:** 2-4 sentences. If the candidate's identity and value are
+already obvious from the H1 + first role's bullets, OMIT the summary
+entirely. A missing summary is better than a generic one.
+
+**Shape:**
+
+1. Sentence 1: identity + level + domain. Example: "MS Business
+   Analytics candidate with 2 years of e-commerce data engineering
+   experience."
+2. Sentence 2-3: the 1-2 strongest pieces of evidence from the resume
+   that map to the JD's top requirements. Concrete, with scope or
+   metric. Different angle than the top bullet — the summary frames,
+   the bullets prove.
+3. Optional sentence 4: what the candidate is looking for, framed in
+   terms of the JD ("seeking to apply forecasting and SQL skills to
+   demand-planning roles").
+
+**FORBIDDEN in the summary:**
+
+- Generic adjectives unsupported by evidence: "hardworking", "passionate",
+  "results-oriented", "team player", "detail-oriented", "go-getter",
+  "self-starter", "highly motivated", "proven track record"
+- First-person pronouns
+- Vague unsubstantiated claims ("excellent communication skills")
+- Verbatim repetition of a bullet from below
+- Listing every skill the candidate has — pick the 2-3 that match the JD
+- Meta-statements that claim the match instead of showing it ("directly
+  matching X's mandate", "perfect fit for", "ideally suited for",
+  "uniquely positioned to"). Let the evidence prove alignment — that's
+  what the bullets do. The cover letter is where alignment is stated
+  explicitly; the resume's job is to show, not tell.
+
+A weak generic summary actively hurts the candidate by burning the most
+valuable real estate on the page (the spot directly below the name) with
+non-signal. A good summary or no summary at all.
+
+## Skills section craft
+
+The skills list is a set of CLAIMS about what the candidate knows. Every
+line is a fact assertion: "this candidate has used Power BI." Apply the
+same anchoring discipline as bullets — if a tool, language, framework,
+or technology is not in RESUME or EVIDENCE, it does NOT belong in
+skills, even if the JD asks for it.
+
+You MAY:
+- Cut tools that aren't relevant to the JD (don't list 10 languages
+  when the role calls for 2)
+- Reorganize categories to surface the JD-relevant tools first
+- Rename categories to match the JD's vocabulary if the substance
+  is identical ("BI Tools" vs "Visualization Tools")
+
+You MUST NOT:
+- Add a tool from the JD that the candidate's source does not list
+- Substitute a JD tool for a similar source tool (source says
+  Snowflake; JD asks for BigQuery; do NOT add BigQuery — they are
+  not the same product even if they fill the same role)
+- Pad the list with tools "everyone has" (Microsoft Office, etc.)
+  that the source didn't claim
+
+INVALID (skills-section fabrication):
+  RESUME says: "Snowflake, dbt, Airflow"
+  JD says: "experience with cloud warehouses (Snowflake, BigQuery,
+  Redshift)"
+  WRONG: "Pipeline & Warehouse: Snowflake, BigQuery, dbt, Airflow"
+    (BigQuery isn't in the source — the candidate hasn't used it.)
+  RIGHT: "Pipeline & Warehouse: Snowflake, dbt, Airflow"
+    (Honest claim. The fit-assessment phase already noted any gap;
+    the resume isn't the place to close it.)
+
 **Length and recency.** Detailed entries should cover roughly the last 10-15
 years. For candidates with a longer history, compress anything older into a
 single "Earlier roles" section at the end — one line per role, format
