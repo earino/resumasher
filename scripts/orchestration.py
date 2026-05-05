@@ -32,6 +32,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import date as _date
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -1528,6 +1529,15 @@ def _cli() -> int:
         default=None,
         help="Company name. Required for company-researcher kind.",
     )
+    p.add_argument(
+        "--today",
+        default=None,
+        help=(
+            "ISO date (YYYY-MM-DD) to use for the cover letter's date "
+            "line. Defaults to today. Test-only override; in production "
+            "the orchestrator does not pass this."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1917,6 +1927,7 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
         "company": None,
         "company_research": None,
         "tailored_resume": None,
+        "today_date": None,
     }
 
     def _missing(var: str, expected_path: Path, produced_by: str) -> int:
@@ -2019,6 +2030,19 @@ def _cmd_build_prompt(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+        elif var == "today_date":
+            # Pre-format today's date so the cover-letter sub-agent can't
+            # invent or misformat it. LLMs are unreliable about the current
+            # date (no real-time clock, occasional drift), and a cover
+            # letter dated last year is a credibility failure the student
+            # wouldn't notice until after sending. Pinning it here removes
+            # the entire failure mode. US business-letter convention
+            # "Month D, YYYY" — the most universally readable English
+            # format across US/EU/APAC recruiters. Format the day by hand
+            # rather than relying on platform-specific strftime tokens
+            # (%-d on POSIX vs %#d on Windows).
+            today = _date.today() if args.today is None else _date.fromisoformat(args.today)
+            kwargs[var] = f"{today.strftime('%B')} {today.day}, {today.year}"
 
     prompt = _build_prompt(args.kind, **kwargs)
     sys.stdout.write(prompt)

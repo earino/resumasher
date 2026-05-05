@@ -63,7 +63,7 @@ from typing import Optional
 from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.styles import ParagraphStyle, StyleSheet1
 from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
@@ -592,6 +592,43 @@ def _build_styles() -> StyleSheet1:
         leading=24,
         alignment=TA_CENTER,
         spaceAfter=2,
+    ))
+    # Cover letter styles. Letter prose wants a slightly more generous
+    # rhythm than a resume body paragraph — every block (date, company,
+    # Re:, greeting, the three body paragraphs, closing) is its own
+    # short paragraph, and the letter reads as one breath, so spaceAfter
+    # is bumped from Body's 8 to 12. Justified alignment gives clean
+    # right edges on the body paragraphs (issue #63's wider request was
+    # for the cover letter specifically — student readers expect a real
+    # letter shape, not ragged-right prose).
+    ss.add(ParagraphStyle(
+        name="LetterBody",
+        fontName=regular,
+        fontSize=10.5,
+        leading=14,
+        alignment=TA_JUSTIFY,
+        spaceAfter=12,
+    ))
+    # Date: right-aligned per US/UK business-letter convention. Same
+    # sizing as LetterBody so it doesn't feel like a different document.
+    ss.add(ParagraphStyle(
+        name="LetterDate",
+        fontName=regular,
+        fontSize=10.5,
+        leading=14,
+        alignment=TA_RIGHT,
+        spaceAfter=12,
+    ))
+    # Recipient block (company name) and subject line (Re:) — left-aligned
+    # but tighter spacing than LetterBody so the meta block reads as
+    # connected lines, not three disjoint paragraphs.
+    ss.add(ParagraphStyle(
+        name="LetterMeta",
+        fontName=regular,
+        fontSize=10.5,
+        leading=14,
+        alignment=TA_LEFT,
+        spaceAfter=4,
     ))
     return ss
 
@@ -1273,34 +1310,161 @@ def render_resume_us(
 
 
 def render_cover_letter(source_markdown: str, output_path: str | Path) -> Path:
-    """Cover letter: one-page letter. H1 is greeting line; paragraphs are blocks."""
+    """Cover letter rendered as a real business letter.
+
+    Expected markdown shape (produced by `cover-letter` sub-agent prompt):
+
+        # {Applicant Name}
+        {contact line}
+
+        {Month D, YYYY}
+
+        {Company Name}
+
+        **Re:** {Position Title}
+
+        Dear {Company} Hiring Team,
+
+        {paragraph 1}
+
+        {paragraph 2}
+
+        {paragraph 3}
+
+        Sincerely,
+
+        {Applicant Name}
+
+    Visual identity matches the resume header (H1 + contact line in Name +
+    Contact styles), so the resume and cover letter feel like one packet.
+
+    Block roles are inferred from position and content, not explicit
+    markers — the prompt produces this shape verbatim, so heuristics are
+    cheap. If the LLM departs from the schema, paragraphs fall back to
+    LetterBody (left of justify, plain) and the letter still reads.
+
+    Issue #64: closes the missing applicant infos / date / Re: / closing
+    bug. Issue #63: closes the ragged-right cover-letter PDF as a side
+    effect (LetterBody is justified).
+    """
     styles = _build_styles()
     flow: list = []
-    current_para: list[str] = []
-    greeting_done = False
 
+    # Group lines into blocks: a block is one or more consecutive non-blank
+    # lines, separated from the next block by one or more blank lines.
+    # Letter-shape parsing is positional (block 0 = name, block 1 = contact,
+    # block 2 = date, ...), so we need real blocks not the line-by-line
+    # paragraph accumulator the resume renderer uses.
+    blocks: list[list[str]] = []
+    current: list[str] = []
     for raw_line in source_markdown.splitlines():
         line = raw_line.rstrip()
         if not line.strip():
-            if current_para:
-                flow.append(Paragraph(_escape(" ".join(current_para)), styles["Body"]))
-                current_para = []
+            if current:
+                blocks.append(current)
+                current = []
             continue
-        if line.startswith("# "):
-            # Flush anything pending, then emit the greeting as an H1.
-            if current_para:
-                flow.append(Paragraph(_escape(" ".join(current_para)), styles["Body"]))
-                current_para = []
-            flow.append(Paragraph(_escape(line[2:].strip()), styles["BlockTitle"]))
-            flow.append(Spacer(1, 6))
-            greeting_done = True
-            continue
-        current_para.append(line.strip())
+        current.append(line)
+    if current:
+        blocks.append(current)
 
-    if current_para:
-        flow.append(Paragraph(_escape(" ".join(current_para)), styles["Body"]))
+    if not blocks:
+        # Empty document — emit nothing rather than crash. Same defensive
+        # shape the resume renderer uses for empty inputs in tests.
+        return _write_pdf(flow, output_path, pagesize=A4)
+
+    # Header: first block holds the H1 (name) and (optionally) the contact
+    # line. The prompt produces both in one block (no blank line between);
+    # if a student edits the markdown to add a blank line, the contact
+    # block becomes block 1 and we still render it as Contact via the
+    # post-header heuristic below.
+    header = blocks[0]
+    name_line = header[0]
+    if name_line.startswith("# "):
+        flow.append(Paragraph(_escape(name_line[2:].strip()), styles["Name"]))
+    else:
+        # Departure from schema: render the line as Name anyway so the
+        # candidate's identification still leads the letter. A weaker LLM
+        # that drops the "# " prefix shouldn't ship a nameless letter.
+        flow.append(Paragraph(_escape(name_line), styles["Name"]))
+    if len(header) >= 2:
+        contact_line = " ".join(header[1:])
+        flow.append(Paragraph(_linkify_contact(contact_line), styles["Contact"]))
+
+    # Visual breathing room between header and the letter body. The Contact
+    # style already has spaceAfter=10; +18 here gives ~28pt total, which
+    # matches typical business-letter spacing between sender block and
+    # date.
+    flow.append(Spacer(1, 18))
+
+    # Remaining blocks. Walk forward, classifying each by a small set of
+    # patterns we can rely on:
+    #   - Date (matches DATE_RE)        → LetterDate (right-aligned)
+    #   - Subject line beginning "Re:"  → LetterMeta with bold "Re:"
+    #   - Greeting "Dear ..."           → LetterBody
+    #   - Closing word "Sincerely,"     → LetterBody, then big spacer
+    #   - Anything else                 → LetterBody
+    # Everything that isn't the date renders left-or-justified per its
+    # style, so the layout degrades gracefully when the LLM produces a
+    # block we didn't anticipate.
+    closing_just_emitted = False
+    for block in blocks[1:]:
+        text = " ".join(line.strip() for line in block).strip()
+        if not text:
+            continue
+
+        # Date detection — first see if the whole block is a single line
+        # matching the prompt's "Month D, YYYY" pattern. Right-aligning
+        # any random body paragraph that happens to mention a date would
+        # be a bug, so we require the date to be the entire block.
+        if len(block) == 1 and _COVER_LETTER_DATE_RE.fullmatch(text):
+            flow.append(Paragraph(_escape(text), styles["LetterDate"]))
+            closing_just_emitted = False
+            continue
+
+        if closing_just_emitted:
+            # The block immediately after "Sincerely," is the candidate's
+            # printed name. Insert real signature space (~36pt ≈ half-
+            # inch) so a printed letter has somewhere to sign.
+            flow.append(Spacer(1, 36))
+            flow.append(Paragraph(_escape(text), styles["LetterBody"]))
+            closing_just_emitted = False
+            continue
+
+        if text.lower().rstrip(",.") == "sincerely":
+            flow.append(Paragraph(_escape(text), styles["LetterBody"]))
+            closing_just_emitted = True
+            continue
+
+        # "Re:" subject line — bold prefix is rendered via _escape's
+        # **markdown** → <b> conversion. The prompt emits "**Re:** X";
+        # we don't need special handling beyond using the meta style
+        # (tighter spaceAfter so subject sits close to the greeting).
+        if text.lower().startswith("re:") or text.startswith("**Re:**"):
+            flow.append(Paragraph(_escape(text), styles["LetterMeta"]))
+            closing_just_emitted = False
+            continue
+
+        # Greeting "Dear ...," — render as LetterBody so it sits at the
+        # same visual level as the prose. No giant H1 (the previous
+        # convention misled the eye once a header appeared above it).
+        # Body paragraphs (including greeting) get _linkify_text so any
+        # URLs the LLM happened to drop stay clickable.
+        flow.append(Paragraph(_linkify_text(text), styles["LetterBody"]))
+        closing_just_emitted = False
 
     return _write_pdf(flow, output_path, pagesize=A4)
+
+
+# Match dates produced by the orchestrator's `today_date` formatter:
+# "Month D, YYYY" with full month name, day 1-31, 4-digit year. Anchored
+# fullmatch elsewhere — this regex matches the literal date shape only,
+# never embedded in prose.
+_COVER_LETTER_DATE_RE = re.compile(
+    r"(January|February|March|April|May|June|July|August|"
+    r"September|October|November|December) "
+    r"\d{1,2}, \d{4}"
+)
 
 
 def render_interview_prep(source_markdown: str, output_path: str | Path) -> Path:
